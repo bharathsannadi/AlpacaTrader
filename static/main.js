@@ -208,6 +208,14 @@ function updateUI(s) {
     nfBtn.classList.toggle("off", !on);
   }
 
+  // Trade memory toggle
+  const tmBtn = document.getElementById("btn-trade-memory");
+  if (tmBtn) {
+    const on = s.trade_memory_enabled !== false;
+    tmBtn.textContent = on ? "ON" : "OFF";
+    tmBtn.classList.toggle("off", !on);
+  }
+
   // Sync time inputs (only if user is not actively editing)
   if (s.morning_end) {
     const el = document.getElementById("morning-end");
@@ -326,6 +334,7 @@ function startStream()       { socket.emit("start_stream");          }
 function stopStream()        { socket.emit("stop_stream");           }
 function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule");  }
 function toggleNewsFilter()  { socket.emit("toggle_news_filter");    }
+function toggleTradeMemory() { socket.emit("toggle_trade_memory");   }
 
 function setSessionTimes() {
   socket.emit("set_session_times", {

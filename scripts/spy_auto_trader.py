@@ -54,6 +54,10 @@ DATA_CLIENT    = None
 OPTION_CLIENT  = None
 PAPER_MODE     = True
 
+# ── Trade memory (ChromaDB) ────────────────────────────────────────────────────
+from trade_memory import TradeMemory
+TRADE_MEMORY: TradeMemory = TradeMemory(enabled=False)  # enabled on login
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DRY_RUN         = True
@@ -115,6 +119,12 @@ def init_clients(api_key: str, api_secret: str, paper: bool = True):
 
 def is_authenticated() -> bool:
     return TRADING_CLIENT is not None
+
+
+def init_memory(enabled: bool = True) -> None:
+    """Enable/disable ChromaDB trade memory. Called from app.py on login/logout."""
+    global TRADE_MEMORY
+    TRADE_MEMORY = TradeMemory(enabled=enabled)
 
 
 # ── Market data ───────────────────────────────────────────────────────────────
@@ -665,7 +675,7 @@ def vix_check(vix):
 
 
 # ── Trade execution ───────────────────────────────────────────────────────────
-def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbol: str = "SPY"):
+def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbol: str = "SPY", indicators: dict = None):
     symbol     = symbol.upper()
     opt_type   = option.get("type", "?")
     strike     = option.get("strike_price", "?")
@@ -711,8 +721,9 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
         "target_75":   target_75,
         "max_loss":    max_loss,
         "atr_stop":    atr_stop_und,
-        "dry_run":     DRY_RUN,
-        "paper":       PAPER_MODE,
+        "dry_run":      DRY_RUN,
+        "paper":        PAPER_MODE,
+        "_indicators":  indicators or {},
     }
 
     # Approval
@@ -748,6 +759,11 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
         )
         order = TRADING_CLIENT.submit_order(order_req)
         log.info(f"Order submitted — ID: {order.id}  Status: {order.status}")
+        TRADE_MEMORY.record(
+            symbol=symbol, direction=direction,
+            indicators=details.get("_indicators", {}),
+            entry_price=mid_price, trade_id=str(order.id),
+        )
         return order
     except Exception as e:
         log.error(f"Order failed: {e}")
@@ -885,6 +901,12 @@ def run_session(session_name, session_end_hour, session_end_min,
         direction, reason = evaluate_fn(bar, prev_bar, df)
 
         if direction:
+            # Surface similar past setups from memory before proceeding
+            indicators_snapshot = bar.to_dict()
+            memory_context = TRADE_MEMORY.retrieve_similar(symbol, direction, indicators_snapshot)
+            if memory_context:
+                log.info(memory_context)
+
             expiry = target_expiry(symbol)
             if not expiry:
                 log.warning(f"No {symbol} expiry in DTE range. Skipping.")
@@ -895,7 +917,8 @@ def run_session(session_name, session_end_hour, session_end_min,
                     log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  spread=${spread:.2f}")
                     if mid > 0 and spread <= MAX_SPREAD:
                         contracts = size_contracts(acct_val, mid)
-                        place_trade(option, contracts, mid, direction, reason, atr, symbol)
+                        place_trade(option, contracts, mid, direction, reason, atr, symbol,
+                                    indicators=indicators_snapshot)
                         traded = True
                     else:
                         log.warning(f"Spread ${spread:.2f} > max ${MAX_SPREAD:.2f}. Skipping.")

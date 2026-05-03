@@ -237,8 +237,9 @@ state = {
     "profit_target":   75,    # % of premium paid
     "dte_min":         7,
     "dte_max":         14,
-    "auto_schedule":     True,   # auto-start sessions at market open/close
-    "news_filter_enabled": True,  # veto session if bad headlines detected
+    "auto_schedule":        True,   # auto-start sessions at market open/close
+    "news_filter_enabled":  True,   # veto session if bad headlines detected
+    "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
 }
 
 morning_thread = None
@@ -324,9 +325,10 @@ def _state_snapshot() -> dict:
             "profit_target":   state["profit_target"],
             "dte_min":         state["dte_min"],
             "dte_max":         state["dte_max"],
-            "auto_schedule":       state["auto_schedule"],
-            "news_filter_enabled": state["news_filter_enabled"],
-            "timestamp":           datetime.now(ET).strftime("%H:%M:%S ET"),
+            "auto_schedule":        state["auto_schedule"],
+            "news_filter_enabled":  state["news_filter_enabled"],
+            "trade_memory_enabled": state["trade_memory_enabled"],
+            "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
 
@@ -514,6 +516,7 @@ def on_login(data):
     session["login_time"]     = datetime.now(timezone.utc).isoformat()
     login_tracker.record_success(ip)
     security_log.info(f"Successful Alpaca login from {ip} (paper={paper})")
+    trader.init_memory(enabled=state.get("trade_memory_enabled", True))
     refresh_account()
     refresh_prices()
     socketio.emit("login_result", {"success": True})
@@ -800,6 +803,16 @@ def on_toggle_news_filter():
     with _state_lock:
         state["news_filter_enabled"] = not state["news_filter_enabled"]
     log.info(f"News filter {'enabled' if state['news_filter_enabled'] else 'disabled'}")
+    emit_state()
+
+
+@socketio.on("toggle_trade_memory")
+@require_auth
+def on_toggle_trade_memory():
+    with _state_lock:
+        state["trade_memory_enabled"] = not state["trade_memory_enabled"]
+    trader.init_memory(enabled=state["trade_memory_enabled"])
+    log.info(f"Trade memory {'enabled' if state['trade_memory_enabled'] else 'disabled'} ({trader.TRADE_MEMORY.count} trades stored)")
     emit_state()
 
 
