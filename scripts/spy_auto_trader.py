@@ -17,6 +17,7 @@ Modes     : Paper trading (default) or Live trading
 ⚠️  DRY_RUN = True — set to False only when ready to trade real money.
 """
 
+import os
 import time
 import threading
 import logging
