@@ -802,13 +802,18 @@
       </div>
     </div>
 
-    <!-- Auto-schedule toggle -->
+    <!-- Auto-schedule + News filter toggles -->
     <div class="card auto-schedule-card" data-card-id="auto-schedule">
       <span class="drag-grip">⋮⋮</span>
       <div class="auto-schedule-row">
         <span class="auto-schedule-label">Auto-schedule</span>
         <span class="auto-schedule-hint">Morning 9:30 ET · Evening 3:00 ET</span>
         <button class="auto-schedule-btn" id="btn-auto-schedule" onclick="toggleAutoSchedule()">ON</button>
+      </div>
+      <div class="auto-schedule-row" style="margin-top:8px">
+        <span class="auto-schedule-label">News filter</span>
+        <span class="auto-schedule-hint">Veto session on bad headlines</span>
+        <button class="auto-schedule-btn" id="btn-news-filter" onclick="toggleNewsFilter()">ON</button>
       </div>
     </div>
 

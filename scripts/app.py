@@ -20,6 +20,7 @@ from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
 import spy_auto_trader as trader
+import news_filter
 from security import (
     get_or_create_secret_key,
     LoginTracker,
@@ -236,7 +237,8 @@ state = {
     "profit_target":   75,    # % of premium paid
     "dte_min":         7,
     "dte_max":         14,
-    "auto_schedule":   True,   # auto-start sessions at market open/close
+    "auto_schedule":     True,   # auto-start sessions at market open/close
+    "news_filter_enabled": True,  # veto session if bad headlines detected
 }
 
 morning_thread = None
@@ -322,8 +324,9 @@ def _state_snapshot() -> dict:
             "profit_target":   state["profit_target"],
             "dte_min":         state["dte_min"],
             "dte_max":         state["dte_max"],
-            "auto_schedule":   state["auto_schedule"],
-            "timestamp":       datetime.now(ET).strftime("%H:%M:%S ET"),
+            "auto_schedule":       state["auto_schedule"],
+            "news_filter_enabled": state["news_filter_enabled"],
+            "timestamp":           datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
 
@@ -632,6 +635,16 @@ def _launch_morning(sym: str = None) -> None:
             return
         if sym is None:
             sym = state["active_symbol"]
+        filter_on = state["news_filter_enabled"]
+
+    if filter_on:
+        vetoed, reason = news_filter.check_news_sentiment(sym)
+        if vetoed:
+            log.warning(f"Morning session blocked by news filter: {reason}")
+            socketio.emit("log", {"msg": f"⚠ News filter blocked morning session: {reason}", "level": "warning"})
+            return
+
+    with _state_lock:
         state["morning_running"] = True
         state["morning_symbol"]  = sym
     trader.STOP_MORNING.clear()
@@ -670,6 +683,16 @@ def _launch_evening(sym: str = None) -> None:
             return
         if sym is None:
             sym = state["active_symbol"]
+        filter_on = state["news_filter_enabled"]
+
+    if filter_on:
+        vetoed, reason = news_filter.check_news_sentiment(sym)
+        if vetoed:
+            log.warning(f"Evening session blocked by news filter: {reason}")
+            socketio.emit("log", {"msg": f"⚠ News filter blocked evening session: {reason}", "level": "warning"})
+            return
+
+    with _state_lock:
         state["evening_running"] = True
         state["evening_symbol"]  = sym
     trader.STOP_EVENING.clear()
@@ -768,6 +791,15 @@ def on_toggle_auto_schedule():
     with _state_lock:
         state["auto_schedule"] = not state["auto_schedule"]
     log.info(f"Auto-schedule {'enabled' if state['auto_schedule'] else 'disabled'}")
+    emit_state()
+
+
+@socketio.on("toggle_news_filter")
+@require_auth
+def on_toggle_news_filter():
+    with _state_lock:
+        state["news_filter_enabled"] = not state["news_filter_enabled"]
+    log.info(f"News filter {'enabled' if state['news_filter_enabled'] else 'disabled'}")
     emit_state()
 
 

@@ -200,6 +200,14 @@ function updateUI(s) {
     asBtn.classList.toggle("off", !on);
   }
 
+  // News filter toggle
+  const nfBtn = document.getElementById("btn-news-filter");
+  if (nfBtn) {
+    const on = s.news_filter_enabled !== false;
+    nfBtn.textContent = on ? "ON" : "OFF";
+    nfBtn.classList.toggle("off", !on);
+  }
+
   // Sync time inputs (only if user is not actively editing)
   if (s.morning_end) {
     const el = document.getElementById("morning-end");
@@ -317,6 +325,7 @@ function stopEvening()       { socket.emit("stop_evening");          }
 function startStream()       { socket.emit("start_stream");          }
 function stopStream()        { socket.emit("stop_stream");           }
 function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule");  }
+function toggleNewsFilter()  { socket.emit("toggle_news_filter");    }
 
 function setSessionTimes() {
   socket.emit("set_session_times", {
