@@ -58,8 +58,8 @@ scripts/news_filter.py        — [DONE] Finnhub/yfinance headline scan → veto
                                  called before morning/evening session fires
 scripts/trade_memory.py       — [DONE] ChromaDB: store trade outcomes, retrieve
                                  similar past setups as context (custom numpy embedder)
-scripts/debate.py             — [TODO] Bull agent vs Bear agent LLM debate,
-                                 returns confidence-weighted direction
+scripts/debate.py             — [DONE] Bull agent vs Bear agent LLM debate,
+                                 judge returns (proceed, confidence, reason)
 
 scripts/security.py           — validators, LoginTracker (5-fail / 15-min lockout)
 ```
@@ -157,20 +157,27 @@ pip install overrides typing_extensions pydantic posthog opentelemetry-api opent
     tokenizers tqdm typer "uvicorn[standard]"
 ```
 
-### Bull/Bear debate layer (scripts/debate.py) — TODO
+### Bull/Bear debate layer (scripts/debate.py) — DONE
 
-Two LLM calls (Claude Haiku for cost) argue opposite sides given the same indicator snapshot + news summary + memory context. A third "judge" call weighs both and returns `(direction, confidence_0_to_1, summary)`.
+`run_debate(symbol, direction, indicators, news_summary, memory_context)` → `(proceed: bool, confidence: float, summary: str)`.
 
-- Only fires if `debate_enabled` is True in state AND an API key is configured
-- If `confidence < DEBATE_MIN_CONFIDENCE` (default 0.65), the signal is suppressed even if ORB/VWAP fired
-- Adds ~3–8s latency per signal check (Haiku is fast)
-- Requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`
+**How it works:**
+- Step 1 — Bull agent: makes the strongest bull case (Claude Haiku, ~100 tokens)
+- Step 2 — Bear agent: makes the strongest bear case (Claude Haiku, ~100 tokens)
+- Step 3 — Judge: weighs both and returns JSON `{"proceed": bool, "confidence": 0–1, "reason": "..."}` (Claude Haiku)
+- If `confidence < DEBATE_MIN_CONFIDENCE` (0.65) or `proceed=False`, signal is suppressed; session waits 60s then re-evaluates
+- Falls through as `(True, 1.0, "")` when `ANTHROPIC_API_KEY` is not set — safe by default
 
-**Implementation checklist:**
-1. `pip install anthropic` → add to `requirements.txt`
-2. Create `scripts/debate.py` with `run_debate(symbol, direction, indicators, news_summary, memory_context)` → `(bool, float, str)`
-3. Wire into `run_session()` in `spy_auto_trader.py`: after `evaluate_fn` returns a direction, call `run_debate()` before proceeding to option lookup
-4. Add `"debate_enabled"`, `"debate_confidence"` to state + UI toggle
+**Wiring in spy_auto_trader.py:**
+- `DEBATE_ENABLED` flag (False by default, set by `init_debate()`)
+- `init_debate(enabled)` checks `ANTHROPIC_API_KEY` and sets the flag
+- Called after `TRADE_MEMORY.retrieve_similar()` in `run_session()`, before option lookup
+- Called in `on_login()` and `on_toggle_debate()` socket handler in `app.py`
+
+**Enabling:**
+1. Set `ANTHROPIC_API_KEY=sk-ant-...` in `.env` in project root
+2. Toggle "Bull/Bear debate" pill to ON in the dashboard
+3. Debate starts immediately on the next signal
 
 ### Modifying trade parameters at runtime
 
