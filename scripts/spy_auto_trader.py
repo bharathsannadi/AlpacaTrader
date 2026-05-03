@@ -58,6 +58,11 @@ PAPER_MODE     = True
 from trade_memory import TradeMemory
 TRADE_MEMORY: TradeMemory = TradeMemory(enabled=False)  # enabled on login
 
+# ── Bull/Bear debate ────────────────────────────────────────────────────────────
+import debate as _debate_mod
+DEBATE_ENABLED     = False   # enabled on login if ANTHROPIC_API_KEY present
+DEBATE_MIN_CONFIDENCE = _debate_mod.DEBATE_MIN_CONFIDENCE
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DRY_RUN         = True
@@ -122,9 +127,18 @@ def is_authenticated() -> bool:
 
 
 def init_memory(enabled: bool = True) -> None:
-    """Enable/disable ChromaDB trade memory. Called from app.py on login/logout."""
+    """Enable/disable ChromaDB trade memory. Called from app.py on login/toggle."""
     global TRADE_MEMORY
     TRADE_MEMORY = TradeMemory(enabled=enabled)
+
+
+def init_debate(enabled: bool = True) -> None:
+    """Enable/disable the bull/bear debate layer. Called from app.py on login/toggle."""
+    global DEBATE_ENABLED
+    key_present = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
+    DEBATE_ENABLED = enabled and key_present
+    if enabled and not key_present:
+        log.warning("Debate: ANTHROPIC_API_KEY not set — debate will stay disabled")
 
 
 # ── Market data ───────────────────────────────────────────────────────────────
@@ -906,6 +920,21 @@ def run_session(session_name, session_end_hour, session_end_min,
             memory_context = TRADE_MEMORY.retrieve_similar(symbol, direction, indicators_snapshot)
             if memory_context:
                 log.info(memory_context)
+
+            # Bull/Bear debate gate
+            if DEBATE_ENABLED:
+                proceed, conf, summary = _debate_mod.run_debate(
+                    symbol, direction, indicators_snapshot, memory_context=memory_context
+                )
+                if not proceed or conf < DEBATE_MIN_CONFIDENCE:
+                    log.warning(
+                        f"Debate suppressed signal: conf={conf:.0%}  {summary or 'low confidence'}"
+                    )
+                    if stop_event:
+                        stop_event.wait(timeout=60)
+                    else:
+                        time.sleep(60)
+                    continue
 
             expiry = target_expiry(symbol)
             if not expiry:

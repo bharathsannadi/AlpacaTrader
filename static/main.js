@@ -216,6 +216,14 @@ function updateUI(s) {
     tmBtn.classList.toggle("off", !on);
   }
 
+  // Debate toggle
+  const dbBtn = document.getElementById("btn-debate");
+  if (dbBtn) {
+    const on = s.debate_enabled === true;
+    dbBtn.textContent = on ? "ON" : "OFF";
+    dbBtn.classList.toggle("off", !on);
+  }
+
   // Sync time inputs (only if user is not actively editing)
   if (s.morning_end) {
     const el = document.getElementById("morning-end");
@@ -335,6 +343,7 @@ function stopStream()        { socket.emit("stop_stream");           }
 function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule");  }
 function toggleNewsFilter()  { socket.emit("toggle_news_filter");    }
 function toggleTradeMemory() { socket.emit("toggle_trade_memory");   }
+function toggleDebate()      { socket.emit("toggle_debate");         }
 
 function setSessionTimes() {
   socket.emit("set_session_times", {

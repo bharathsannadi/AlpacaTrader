@@ -56,8 +56,8 @@ scripts/spy_auto_trader.py    — bars + indicators, ORB/gap-fade/VWAP evaluator
 ── Intelligence layer (being built) ──────────────────────────────────
 scripts/news_filter.py        — [DONE] Finnhub/yfinance headline scan → veto flag
                                  called before morning/evening session fires
-scripts/trade_memory.py       — [TODO] ChromaDB: store trade outcomes, retrieve
-                                 similar past setups as context
+scripts/trade_memory.py       — [DONE] ChromaDB: store trade outcomes, retrieve
+                                 similar past setups as context (custom numpy embedder)
 scripts/debate.py             — [TODO] Bull agent vs Bear agent LLM debate,
                                  returns confidence-weighted direction
 
@@ -135,20 +135,27 @@ Keywords live in `NEWS_HIGH_SEVERITY` and `NEWS_MEDIUM_SEVERITY` lists at the to
 **Finnhub key setup:**
 Set `FINNHUB_API_KEY=your_key` in a `.env` file in the project root, or enter it in the UI (TODO: add to login modal). Free tier at finnhub.io covers ~60 req/min.
 
-### ChromaDB trade memory (scripts/trade_memory.py) — TODO
+### ChromaDB trade memory (scripts/trade_memory.py) — DONE
 
-`TradeMemory` class wraps a ChromaDB collection. On each completed trade:
-- Embeds `{symbol, direction, indicators_snapshot, outcome_pct}` as a document
-- Stores outcome (win/loss %, hold time) in metadata
+`TradeMemory` class wraps a ChromaDB PersistentClient at `~/.spy_trader/memory/`.
 
-Before a session fires a signal, `retrieve_similar(symbol, indicators)` returns the N most similar past setups with their outcomes. This context is passed to the bull/bear debate (or logged if debate is disabled).
+**Key design choices:**
+- Uses a custom `_IndicatorEmbedder` (pure numpy, 8-dim cosine vectors) — **no onnxruntime needed** (onnxruntime has no Python 3.14 wheels; install chromadb with `pip install chromadb --no-deps` then install deps manually on Python 3.14)
+- Relative deviations (vwap_dev, ema9_dev) not absolute prices → similarity is market-structure-based
+- `record()` called in `place_trade()` after order submit (uses `order.id` as trade_id)
+- `retrieve_similar()` called in `run_session()` before option lookup; result is logged
+- `update_outcome()` should be called after exit (TODO: wire into exit logic)
+- `init_memory(enabled=True/False)` replaces singleton; called in `on_login()` and `on_toggle_trade_memory()`
+- Toggled via `trade_memory_enabled` in state → `toggle_trade_memory` socket event → Trade Memory ON/OFF pill in UI
 
-**Implementation checklist:**
-1. `pip install chromadb` → add to `requirements.txt`
-2. Create `scripts/trade_memory.py` with `TradeMemory` class
-3. Call `memory.record(...)` in `place_trade()` in `spy_auto_trader.py` after a fill
-4. Call `memory.retrieve_similar(...)` in `morning_session()` / `evening_session()` and log the result
-5. Add `"trade_memory_enabled"` toggle to `state` and `_state_snapshot()`
+**chromadb install on Python 3.14:**
+```bash
+pip install chromadb --no-deps
+pip install overrides typing_extensions pydantic posthog opentelemetry-api opentelemetry-sdk \
+    opentelemetry-exporter-otlp-proto-grpc grpcio httpx bcrypt build importlib-resources \
+    jsonschema mmh3 orjson pybase64 "pydantic-settings>=2.0" pypika pyyaml tenacity \
+    tokenizers tqdm typer "uvicorn[standard]"
+```
 
 ### Bull/Bear debate layer (scripts/debate.py) — TODO
 

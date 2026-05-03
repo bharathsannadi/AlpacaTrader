@@ -240,6 +240,7 @@ state = {
     "auto_schedule":        True,   # auto-start sessions at market open/close
     "news_filter_enabled":  True,   # veto session if bad headlines detected
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
+    "debate_enabled":       False,  # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
 }
 
 morning_thread = None
@@ -328,6 +329,7 @@ def _state_snapshot() -> dict:
             "auto_schedule":        state["auto_schedule"],
             "news_filter_enabled":  state["news_filter_enabled"],
             "trade_memory_enabled": state["trade_memory_enabled"],
+            "debate_enabled":       state["debate_enabled"],
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
@@ -517,6 +519,7 @@ def on_login(data):
     login_tracker.record_success(ip)
     security_log.info(f"Successful Alpaca login from {ip} (paper={paper})")
     trader.init_memory(enabled=state.get("trade_memory_enabled", True))
+    trader.init_debate(enabled=state.get("debate_enabled", False))
     refresh_account()
     refresh_prices()
     socketio.emit("login_result", {"success": True})
@@ -813,6 +816,17 @@ def on_toggle_trade_memory():
         state["trade_memory_enabled"] = not state["trade_memory_enabled"]
     trader.init_memory(enabled=state["trade_memory_enabled"])
     log.info(f"Trade memory {'enabled' if state['trade_memory_enabled'] else 'disabled'} ({trader.TRADE_MEMORY.count} trades stored)")
+    emit_state()
+
+
+@socketio.on("toggle_debate")
+@require_auth
+def on_toggle_debate():
+    with _state_lock:
+        state["debate_enabled"] = not state["debate_enabled"]
+    trader.init_debate(enabled=state["debate_enabled"])
+    status = "enabled" if trader.DEBATE_ENABLED else "disabled (ANTHROPIC_API_KEY missing?)"
+    log.info(f"Bull/Bear debate {status}")
     emit_state()
 
 
