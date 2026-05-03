@@ -6,6 +6,7 @@ Security: security headers, rate limiting, login lockout,
 
 import os
 import logging
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -47,6 +48,8 @@ LOGIN_RATE_LIMIT         = "10 per minute"
 API_STATUS_RATE_LIMIT    = "30 per minute"
 MAX_SIGNAL_HISTORY       = 50
 VALID_SYMBOLS            = frozenset({"SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"})
+MORNING_AUTO_START       = (9,  30)  # ET hour, minute to auto-fire morning session
+EVENING_AUTO_START       = (15,  0)  # ET hour, minute to auto-fire evening session
 
 # ── Concurrency ───────────────────────────────────────────────────────────────
 # Single RLock guards `state`, `signal_history`, `authenticated_sids`,
@@ -233,10 +236,42 @@ state = {
     "profit_target":   75,    # % of premium paid
     "dte_min":         7,
     "dte_max":         14,
+    "auto_schedule":   True,   # auto-start sessions at market open/close
 }
 
 morning_thread = None
 evening_thread = None
+
+# ── Sleep prevention (macOS caffeinate) ──────────────────────────────────────
+_caffeinate_proc: "subprocess.Popen | None" = None
+_caffeinate_lock = threading.Lock()
+
+
+def _ensure_awake() -> None:
+    """Start caffeinate so the Mac won't sleep during an active session."""
+    global _caffeinate_proc
+    with _caffeinate_lock:
+        if _caffeinate_proc and _caffeinate_proc.poll() is None:
+            return
+        try:
+            _caffeinate_proc = subprocess.Popen(["caffeinate", "-i"])
+            log.info("Sleep prevention ON (caffeinate -i started)")
+        except FileNotFoundError:
+            log.warning("caffeinate not found — system may sleep during session")
+
+
+def _release_awake() -> None:
+    """Stop caffeinate once no sessions are running."""
+    global _caffeinate_proc
+    with _state_lock:
+        still_active = state["morning_running"] or state["evening_running"]
+    if still_active:
+        return
+    with _caffeinate_lock:
+        if _caffeinate_proc and _caffeinate_proc.poll() is None:
+            _caffeinate_proc.terminate()
+            _caffeinate_proc = None
+            log.info("Sleep prevention OFF (caffeinate stopped)")
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -287,6 +322,7 @@ def _state_snapshot() -> dict:
             "profit_target":   state["profit_target"],
             "dte_min":         state["dte_min"],
             "dte_max":         state["dte_max"],
+            "auto_schedule":   state["auto_schedule"],
             "timestamp":       datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
@@ -588,19 +624,18 @@ def on_set_session_times(data):
         socketio.emit("log", {"message": f"Invalid time: {e}", "level": "WARNING"})
 
 
-@socketio.on("start_morning")
-@require_auth
-def on_start_morning():
+def _launch_morning(sym: str = None) -> None:
+    """Start the morning session thread. Safe to call from any thread."""
     global morning_thread
-    if state["morning_running"]:
-        return
-
-    # Snapshot the symbol at start — switching tabs later doesn't affect this session.
     with _state_lock:
-        sym = state["active_symbol"]
+        if state["morning_running"]:
+            return
+        if sym is None:
+            sym = state["active_symbol"]
         state["morning_running"] = True
         state["morning_symbol"]  = sym
     trader.STOP_MORNING.clear()
+    _ensure_awake()
     emit_state()
 
     def run():
@@ -619,6 +654,7 @@ def on_start_morning():
             with _state_lock:
                 state["morning_running"] = False
                 state["morning_symbol"]  = None
+            _release_awake()
             refresh_account()
             emit_state()
 
@@ -626,27 +662,18 @@ def on_start_morning():
     morning_thread.start()
 
 
-@socketio.on("stop_morning")
-@require_auth
-def on_stop_morning():
-    trader.STOP_MORNING.set()
-    state["morning_running"] = False
-    log.info("Morning session stopped by user.")
-    emit_state()
-
-
-@socketio.on("start_evening")
-@require_auth
-def on_start_evening():
+def _launch_evening(sym: str = None) -> None:
+    """Start the evening session thread. Safe to call from any thread."""
     global evening_thread
-    if state["evening_running"]:
-        return
-
     with _state_lock:
-        sym = state["active_symbol"]
+        if state["evening_running"]:
+            return
+        if sym is None:
+            sym = state["active_symbol"]
         state["evening_running"] = True
         state["evening_symbol"]  = sym
     trader.STOP_EVENING.clear()
+    _ensure_awake()
     emit_state()
 
     def run():
@@ -664,11 +691,66 @@ def on_start_evening():
             with _state_lock:
                 state["evening_running"] = False
                 state["evening_symbol"]  = None
+            _release_awake()
             refresh_account()
             emit_state()
 
     evening_thread = threading.Thread(target=run, daemon=True)
     evening_thread.start()
+
+
+def scheduler():
+    """Background task: auto-start sessions at market open/close on weekdays."""
+    morning_fired_on = None
+    evening_fired_on = None
+
+    while True:
+        socketio.sleep(30)
+        now = datetime.now(ET)
+
+        if now.weekday() > 4:   # skip weekends
+            continue
+
+        with _state_lock:
+            if not state["logged_in"] or not state["auto_schedule"]:
+                continue
+            sym = state["active_symbol"]
+
+        today = now.date()
+        h, m  = now.hour, now.minute
+
+        mh, mm = MORNING_AUTO_START
+        if (h, m) == (mh, mm) and morning_fired_on != today:
+            morning_fired_on = today
+            log.info("Auto-scheduler: starting morning session")
+            _launch_morning(sym)
+
+        eh, em = EVENING_AUTO_START
+        if (h, m) == (eh, em) and evening_fired_on != today:
+            evening_fired_on = today
+            log.info("Auto-scheduler: starting evening session")
+            _launch_evening(sym)
+
+
+@socketio.on("start_morning")
+@require_auth
+def on_start_morning():
+    _launch_morning()
+
+
+@socketio.on("stop_morning")
+@require_auth
+def on_stop_morning():
+    trader.STOP_MORNING.set()
+    state["morning_running"] = False
+    log.info("Morning session stopped by user.")
+    emit_state()
+
+
+@socketio.on("start_evening")
+@require_auth
+def on_start_evening():
+    _launch_evening()
 
 
 @socketio.on("stop_evening")
@@ -677,6 +759,15 @@ def on_stop_evening():
     trader.STOP_EVENING.set()
     state["evening_running"] = False
     log.info("Evening session stopped by user.")
+    emit_state()
+
+
+@socketio.on("toggle_auto_schedule")
+@require_auth
+def on_toggle_auto_schedule():
+    with _state_lock:
+        state["auto_schedule"] = not state["auto_schedule"]
+    log.info(f"Auto-schedule {'enabled' if state['auto_schedule'] else 'disabled'}")
     emit_state()
 
 
@@ -799,6 +890,7 @@ def on_stop_stream():
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     socketio.start_background_task(price_ticker)
+    socketio.start_background_task(scheduler)
 
     print("\n" + "=" * 55)
     print("  SPY Auto Trader — Dashboard")

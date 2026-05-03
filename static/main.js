@@ -192,6 +192,14 @@ function updateUI(s) {
   setSession("evening", s.evening_running);
   setStreamButtons(s.streaming);
 
+  // Auto-schedule toggle
+  const asBtn = document.getElementById("btn-auto-schedule");
+  if (asBtn) {
+    const on = s.auto_schedule !== false;
+    asBtn.textContent = on ? "ON" : "OFF";
+    asBtn.classList.toggle("off", !on);
+  }
+
   // Sync time inputs (only if user is not actively editing)
   if (s.morning_end) {
     const el = document.getElementById("morning-end");
@@ -301,13 +309,14 @@ function doLogin() {
   socket.emit("login", { api_key: apiKey, api_secret: apiSecret, paper });
 }
 
-function doLogout()    { socket.emit("logout");        }
-function startMorning(){ socket.emit("start_morning"); }
-function stopMorning() { socket.emit("stop_morning");  }
-function startEvening(){ socket.emit("start_evening"); }
-function stopEvening() { socket.emit("stop_evening");  }
-function startStream() { socket.emit("start_stream"); }
-function stopStream()  { socket.emit("stop_stream");  }
+function doLogout()          { socket.emit("logout");               }
+function startMorning()      { socket.emit("start_morning");         }
+function stopMorning()       { socket.emit("stop_morning");          }
+function startEvening()      { socket.emit("start_evening");         }
+function stopEvening()       { socket.emit("stop_evening");          }
+function startStream()       { socket.emit("start_stream");          }
+function stopStream()        { socket.emit("stop_stream");           }
+function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule");  }
 
 function setSessionTimes() {
   socket.emit("set_session_times", {

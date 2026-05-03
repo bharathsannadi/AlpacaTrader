@@ -300,6 +300,18 @@
   .btn-stop:hover   { background: var(--red); color: #fff; }
   .btn-stop:disabled { opacity: .35; cursor: not-allowed; }
 
+  /* Auto-schedule toggle */
+  .auto-schedule-card { padding: 10px 14px; }
+  .auto-schedule-row  { display: flex; align-items: center; gap: 10px; }
+  .auto-schedule-label { font-weight: 700; font-size: 13px; }
+  .auto-schedule-hint  { font-size: 11px; color: var(--muted); flex: 1; }
+  .auto-schedule-btn {
+    padding: 4px 14px; border-radius: 12px; font-size: 12px; font-weight: 700;
+    border: none; cursor: pointer; transition: all .2s;
+    background: var(--green); color: #000;
+  }
+  .auto-schedule-btn.off { background: var(--surface2); color: var(--muted); }
+
   /* Config (compact) */
   .config-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-2); }
   .config-row:last-child { margin-bottom: 0; }
@@ -787,6 +799,16 @@
           <span class="stepper-value" id="val-dte-max">14</span>
           <button class="stepper-btn" onclick="adjustParam('dte_max', 1, 0, 60)" aria-label="Increase DTE max">+</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Auto-schedule toggle -->
+    <div class="card auto-schedule-card" data-card-id="auto-schedule">
+      <span class="drag-grip">⋮⋮</span>
+      <div class="auto-schedule-row">
+        <span class="auto-schedule-label">Auto-schedule</span>
+        <span class="auto-schedule-hint">Morning 9:30 ET · Evening 3:00 ET</span>
+        <button class="auto-schedule-btn" id="btn-auto-schedule" onclick="toggleAutoSchedule()">ON</button>
       </div>
     </div>
 
