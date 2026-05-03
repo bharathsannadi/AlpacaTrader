@@ -1,0 +1,23 @@
+{
+  "skill_name": "spy-trader",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I want to add TSLA as a tradeable symbol in the dashboard. What files do I need to change and what exactly needs to be updated in each?",
+      "expected_output": "Precise list of changes: VALID_SYMBOLS in app.py, _strike_window() verification in spy_auto_trader.py, tab button in templates/index.html. Should confirm no other files need changes because the code is already symbol-agnostic.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "My morning session has been running for 20 minutes but never fires a signal. The log shows it's fetching bars every minute but no trade ever happens. How do I figure out why?",
+      "expected_output": "Directs to the evaluate_orb() and evaluate_gap_fade() functions in spy_auto_trader.py. Lists the multi-condition gates that could block a signal (vol_ratio, RSI range, or_width_pct, MACD). Suggests adding a log line after the evaluator calls in run_session() to trace what's being evaluated. Mentions common blockers like low volume and tight OR width.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "The chart on the dashboard is showing no candles — just a blank canvas. I'm logged in and can see prices in the ticker. What should I check?",
+      "expected_output": "Points to fetch_chart_bars() in spy_auto_trader.py. Explains the IEX→SIP→yfinance fallback chain. Says to check the log for '0 bars' messages that show which feed was tried. Notes that 1D mode filters to the most recent ET date and on weekends rolls back to last trading day. Mentions DATA_CLIENT must be initialized (login required) and yfinance as final fallback.",
+      "files": []
+    }
+  ]
+}

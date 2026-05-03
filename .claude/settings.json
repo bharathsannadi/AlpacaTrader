@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:3117)",
+      "Bash(open http://localhost:3117)",
+      "Read(//Users/bsannadi/.claude/skills/**)",
+      "Bash(mkdir -p /Users/bsannadi/Desktop/alpaca_trader/.claude/skills)",
+      "Bash(cp -r /Users/bsannadi/.claude/skills/spy-trader /Users/bsannadi/Desktop/alpaca_trader/.claude/skills/)",
+      "Bash(rm -rf /Users/bsannadi/.claude/skills/spy-trader)",
+      "Bash(/Users/bsannadi/Desktop/alpaca_trader/venv/bin/python app.py)",
+      "Bash(/Users/bsannadi/Desktop/alpaca_trader/venv/bin/python /Users/bsannadi/Desktop/alpaca_trader/scripts/app.py)",
+      "Bash(/Users/bsannadi/Desktop/alpaca_trader/venv/bin/pip install *)"
+    ],
+    "additionalDirectories": [
+      "/Users/bsannadi/Desktop/alpaca_trader",
+      "/Users/bsannadi/Desktop"
+    ]
+  },
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreCompact\",\"additionalContext\":\"⚠️ Context is about to be compacted. BEFORE doing anything else, write a comprehensive resume note to .claude/session_summary.md that the user can read in their next session to skip replaying this conversation.\\n\\nInclude:\\n(1) Current state of the project — what works, what is being built.\\n(2) Files recently modified with one-line descriptions.\\n(3) Key architectural decisions made with rationale.\\n(4) What was just completed.\\n(5) What is queued or in-progress.\\n(6) Any TODOs or open questions.\\n\\nKeep it under 400 words. OVERWRITE the file (do not append).\"}}'",
+            "statusMessage": "Asking Claude to write session_summary.md before compaction..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SUMMARY=\"$(pwd)/.claude/session_summary.md\"; if [ -f \"$SUMMARY\" ]; then python3 -c \"import json,sys; print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':'📋 RESUME FROM PREVIOUS SESSION (read this first, then continue work):\\n\\n'+open(sys.argv[1]).read()}}))\" \"$SUMMARY\"; fi",
+            "statusMessage": "Loading session_summary.md from previous session..."
+          },
+          {
+            "type": "command",
+            "command": "lsof -i :5000 -t >/dev/null 2>&1 || /Users/bsannadi/Desktop/alpaca_trader/venv/bin/python /Users/bsannadi/Desktop/alpaca_trader/scripts/app.py",
+            "statusMessage": "Starting SPY trader dashboard...",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
