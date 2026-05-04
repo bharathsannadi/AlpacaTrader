@@ -121,13 +121,15 @@ def add_signal_marker(direction: str, price: float, reason: str, symbol: str = "
 class TradeApproval:
     """Coordinates signal → UI alert → user response.
     Lock guards against late `respond()` from a previous trade overwriting
-    the current trade's outcome."""
+    the current trade's outcome.
+    When auto_trade=True, approves immediately without waiting for the user."""
 
     def __init__(self) -> None:
-        self._event    = threading.Event()
-        self._approved = False
-        self._pending  = False
-        self._lock     = threading.Lock()
+        self._event      = threading.Event()
+        self._approved   = False
+        self._pending    = False
+        self._lock       = threading.Lock()
+        self.auto_trade  = False   # set by toggle_auto_trade handler
 
     def request(self, details: dict) -> bool:
         with self._lock:
@@ -135,7 +137,8 @@ class TradeApproval:
             self._pending  = True
             self._event.clear()
             payload = dict(details)
-            payload["timeout"] = APPROVAL_TIMEOUT_SEC
+            payload["timeout"]    = APPROVAL_TIMEOUT_SEC
+            payload["auto_trade"] = self.auto_trade
             socketio.emit("trade_signal", payload)
             add_signal_marker(
                 direction = details.get("direction", "bull"),
@@ -143,6 +146,12 @@ class TradeApproval:
                 reason    = details.get("reason", ""),
                 symbol    = details.get("symbol", "SPY"),
             )
+
+        if self.auto_trade:
+            with self._lock:
+                self._pending = False
+            log.info("Auto-trade: signal AUTO-APPROVED — placing order without user prompt.")
+            return True
 
         if self._event.wait(timeout=APPROVAL_TIMEOUT_SEC):
             return self._approved
@@ -241,6 +250,7 @@ state = {
     "news_filter_enabled":  True,   # veto session if bad headlines detected
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
     "debate_enabled":       False,  # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
+    "auto_trade":           False,  # skip approval modal — orders placed automatically
 }
 
 morning_thread = None
@@ -330,6 +340,7 @@ def _state_snapshot() -> dict:
             "news_filter_enabled":  state["news_filter_enabled"],
             "trade_memory_enabled": state["trade_memory_enabled"],
             "debate_enabled":       state["debate_enabled"],
+            "auto_trade":           state["auto_trade"],
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
@@ -827,6 +838,19 @@ def on_toggle_debate():
     trader.init_debate(enabled=state["debate_enabled"])
     status = "enabled" if trader.DEBATE_ENABLED else "disabled (ANTHROPIC_API_KEY missing?)"
     log.info(f"Bull/Bear debate {status}")
+    emit_state()
+
+
+@socketio.on("toggle_auto_trade")
+@require_auth
+def on_toggle_auto_trade():
+    with _state_lock:
+        state["auto_trade"] = not state["auto_trade"]
+    trade_approval.auto_trade = state["auto_trade"]
+    if state["auto_trade"]:
+        log.warning("AUTO-TRADE ENABLED — orders will be placed without user approval!")
+    else:
+        log.info("Auto-trade disabled — manual approval required.")
     emit_state()
 
 

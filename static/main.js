@@ -224,6 +224,14 @@ function updateUI(s) {
     dbBtn.classList.toggle("off", !on);
   }
 
+  // Auto-trade toggle
+  const atBtn = document.getElementById("btn-auto-trade");
+  if (atBtn) {
+    const on = s.auto_trade === true;
+    atBtn.textContent = on ? "ON" : "OFF";
+    atBtn.classList.toggle("off", !on);
+  }
+
   // Sync time inputs (only if user is not actively editing)
   if (s.morning_end) {
     const el = document.getElementById("morning-end");
@@ -344,6 +352,7 @@ function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule");  }
 function toggleNewsFilter()  { socket.emit("toggle_news_filter");    }
 function toggleTradeMemory() { socket.emit("toggle_trade_memory");   }
 function toggleDebate()      { socket.emit("toggle_debate");         }
+function toggleAutoTrade()   { socket.emit("toggle_auto_trade");     }
 
 function setSessionTimes() {
   socket.emit("set_session_times", {
