@@ -40,17 +40,18 @@ load_dotenv()
 ET = ZoneInfo("America/New_York")
 
 # ── Tunables (named constants over magic numbers) ─────────────────────────────
-TICKER_INTERVAL_SEC      = 15        # price + state push cadence
+TICKER_INTERVAL_SEC      = 5         # price + state push cadence
 VIX_CACHE_TTL_SEC        = 120       # VIX rarely changes
 PRIOR_LEVELS_CACHE_SEC   = 3600      # prior-day OHLC: refresh hourly
-CHART_CACHE_TTL_SEC      = 30        # short-window bar cache
+CHART_CACHE_TTL_SEC      = 8         # short-window bar cache (matches 10s JS refresh)
 APPROVAL_TIMEOUT_SEC     = 60
+POSITION_MONITOR_SEC     = 30        # position monitor poll interval
 LOGIN_RATE_LIMIT         = "10 per minute"
 API_STATUS_RATE_LIMIT    = "30 per minute"
 MAX_SIGNAL_HISTORY       = 50
 VALID_SYMBOLS            = frozenset({"SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"})
-MORNING_AUTO_START       = (9,  30)  # ET hour, minute to auto-fire morning session
-EVENING_AUTO_START       = (15,  0)  # ET hour, minute to auto-fire evening session
+_SYMBOLS_ORDERED         = ["SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"]
+SESSION_AUTO_START       = (9, 30)   # ET hour, minute to auto-fire all-day sessions
 
 # ── Concurrency ───────────────────────────────────────────────────────────────
 # Single RLock guards `state`, `signal_history`, `authenticated_sids`,
@@ -223,17 +224,13 @@ def add_security_headers(response):
 # ── State ─────────────────────────────────────────────────────────────────────
 state = {
     "logged_in":       False,
-    "morning_running": False,
-    "evening_running": False,
+    # Per-symbol running state (tabs are chart-only; any symbol can trade anytime)
+    "sessions":        {s: False for s in _SYMBOLS_ORDERED},
     "streaming":       True,         # Live price + log streaming
     "dry_run":         True,
     "paper_mode":      True,         # Alpaca paper vs live
-    "active_symbol":   "SPY",        # currently selected tab
-    "morning_symbol":  None,         # symbol the running morning session is trading
-    "evening_symbol":  None,         # symbol the running evening session is trading
-    # Configurable session end times (24h HH:MM)
-    "morning_end":     "10:00",
-    "evening_end":     "15:30",
+    "active_symbol":   "SPY",        # currently selected chart tab
+    "session_end":     "15:45",      # all-day session end time (HH:MM ET)
     "account_value":   0.0,
     "buying_power":    0.0,
     "trades_today":    [],
@@ -246,15 +243,18 @@ state = {
     "profit_target":   75,    # % of premium paid
     "dte_min":         7,
     "dte_max":         14,
-    "auto_schedule":        True,   # auto-start sessions at market open/close
+    "auto_schedule":        True,   # auto-start sessions at 9:30 ET on weekdays
     "news_filter_enabled":  True,   # veto session if bad headlines detected
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
     "debate_enabled":       False,  # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
     "auto_trade":           False,  # skip approval modal — orders placed automatically
 }
 
-morning_thread = None
-evening_thread = None
+# Per-symbol session threads and stop events
+_session_threads:     dict[str, threading.Thread] = {}
+_session_stop_events: dict[str, threading.Event]  = {
+    sym: threading.Event() for sym in _SYMBOLS_ORDERED
+}
 
 # ── Sleep prevention (macOS caffeinate) ──────────────────────────────────────
 _caffeinate_proc: "subprocess.Popen | None" = None
@@ -278,7 +278,7 @@ def _release_awake() -> None:
     """Stop caffeinate once no sessions are running."""
     global _caffeinate_proc
     with _state_lock:
-        still_active = state["morning_running"] or state["evening_running"]
+        still_active = any(state["sessions"].values())
     if still_active:
         return
     with _caffeinate_lock:
@@ -315,22 +315,18 @@ def _state_snapshot() -> dict:
     with _state_lock:
         return {
             "logged_in":       state["logged_in"],
-            "morning_running": state["morning_running"],
-            "evening_running": state["evening_running"],
-            "morning_symbol":  state["morning_symbol"],
-            "evening_symbol":  state["evening_symbol"],
+            "sessions":        dict(state["sessions"]),   # per-symbol {SPY: bool, ...}
             "streaming":       state["streaming"],
             "dry_run":         state["dry_run"],
             "paper_mode":      state["paper_mode"],
             "active_symbol":   state["active_symbol"],
+            "session_end":     state["session_end"],
             "account_value":   state["account_value"],
             "buying_power":    state["buying_power"],
             "spy_price":       state["spy_price"],
             "spy_change_pct":  state["spy_change_pct"],
             "vix":             state["vix"],
             "trades_today":    list(state["trades_today"]),
-            "morning_end":     state["morning_end"],
-            "evening_end":     state["evening_end"],
             "vix_max":         state["vix_max"],
             "stop_loss":       state["stop_loss"],
             "profit_target":   state["profit_target"],
@@ -341,6 +337,8 @@ def _state_snapshot() -> dict:
             "trade_memory_enabled": state["trade_memory_enabled"],
             "debate_enabled":       state["debate_enabled"],
             "auto_trade":           state["auto_trade"],
+            "open_positions":       trader.open_positions_snapshot(),
+            "deployed_risk_pct":    round(trader.deployed_risk_pct(state["account_value"]) * 100, 2),
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
@@ -438,6 +436,43 @@ def price_ticker() -> None:
         except Exception as e:
             log.warning(f"price_ticker iteration failed: {e}")
         socketio.sleep(TICKER_INTERVAL_SEC)
+
+
+def position_monitor() -> None:
+    """Background thread: evaluate open positions every 30s.
+    Closes at stop-loss, profit target 1 (partial), profit target 2, or hard-close time."""
+    while True:
+        socketio.sleep(POSITION_MONITOR_SEC)
+        try:
+            with _state_lock:
+                should_run = state["logged_in"] and bool(authenticated_sids)
+            if not should_run:
+                continue
+
+            events = trader.check_positions()
+            for ev in events:
+                arrow = "▲" if ev["pnl_pct"] > 0 else "▼"
+                tag   = "PARTIAL" if ev.get("is_partial") else "CLOSED"
+                msg   = (
+                    f"{arrow} {tag} {ev['close_qty']}x {ev['occ_symbol']}  "
+                    f"{ev['reason']}  P&L {ev['pnl_pct']:+.1f}%"
+                )
+                socketio.emit("log", {"message": msg, "level": "INFO"})
+                with _state_lock:
+                    state["trades_today"].append({
+                        "symbol":    ev["symbol"],
+                        "direction": ev["direction"],
+                        "pnl_pct":   ev["pnl_pct"],
+                        "reason":    ev["reason"],
+                        "time":      datetime.now(ET).strftime("%H:%M"),
+                    })
+
+            if events:
+                refresh_account()
+                emit_state()
+
+        except Exception as e:
+            log.warning(f"position_monitor error: {e}")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -541,15 +576,17 @@ def on_login(data):
 @socketio.on("logout")
 @require_auth
 def on_logout():
-    # No real "logout" with Alpaca — just clear local clients/state
+    # Stop all running sessions before clearing clients
+    for sym in _SYMBOLS_ORDERED:
+        _session_stop_events[sym].set()
     trader.TRADING_CLIENT = None
     trader.DATA_CLIENT    = None
     trader.OPTION_CLIENT  = None
     with _state_lock:
         authenticated_sids.discard(request.sid)
-        state["logged_in"]       = False
-        state["morning_running"] = False
-        state["evening_running"] = False
+        state["logged_in"] = False
+        for sym in _SYMBOLS_ORDERED:
+            state["sessions"][sym] = False
     session.clear()
     security_log.info(f"Logout from {request.remote_addr}")
     emit_state()
@@ -624,125 +661,94 @@ def on_set_param(data):
         socketio.emit("log", {"message": f"Invalid value: {e}", "level": "WARNING"})
 
 
-@socketio.on("set_session_times")
+@socketio.on("set_session_end")
 @require_auth
-def on_set_session_times(data):
-    """Update morning_end and/or evening_end times. Format HH:MM (24h)."""
+def on_set_session_end(data):
+    """Update the all-day session end time. Format HH:MM (24h)."""
     try:
-        m_end = data.get("morning_end")
-        e_end = data.get("evening_end")
-        if m_end:
-            validate_time(m_end)            # raises if invalid
-            state["morning_end"] = m_end
-            log.info(f"Morning session end time set to {m_end} ET")
-        if e_end:
-            validate_time(e_end)
-            state["evening_end"] = e_end
-            log.info(f"Evening session end time set to {e_end} ET")
+        end_time = (data or {}).get("session_end", "15:45")
+        validate_time(end_time)
+        with _state_lock:
+            state["session_end"] = end_time
+        log.info(f"Session end time set to {end_time} ET")
         emit_state()
     except ValueError as e:
         socketio.emit("log", {"message": f"Invalid time: {e}", "level": "WARNING"})
 
 
-def _launch_morning(sym: str = None) -> None:
-    """Start the morning session thread. Safe to call from any thread."""
-    global morning_thread
+def _launch_session(sym: str) -> None:
+    """Start all-day trading session for `sym`. Safe to call from any thread."""
+    sym = sym.upper()
+    if sym not in VALID_SYMBOLS:
+        log.warning(f"_launch_session: invalid symbol {sym}")
+        return
+
     with _state_lock:
-        if state["morning_running"]:
+        if state["sessions"].get(sym, False):
+            log.info(f"Session for {sym} already running — ignoring duplicate start.")
             return
-        if sym is None:
-            sym = state["active_symbol"]
         filter_on = state["news_filter_enabled"]
+
+    # Portfolio risk cap: refuse to open a new session if total deployed risk
+    # across all open positions already meets or exceeds MAX_PORTFOLIO_RISK (3%).
+    acct = trader.account_value()
+    deployed = trader.deployed_risk_pct(acct)
+    if deployed >= trader.MAX_PORTFOLIO_RISK:
+        msg = (
+            f"{sym} session blocked — portfolio already at "
+            f"{deployed*100:.1f}% risk "
+            f"(cap={trader.MAX_PORTFOLIO_RISK*100:.0f}%)"
+        )
+        log.warning(msg)
+        socketio.emit("log", {"message": f"⚠ {msg}", "level": "WARNING"})
+        return
 
     if filter_on:
         vetoed, reason = news_filter.check_news_sentiment(sym)
         if vetoed:
-            log.warning(f"Morning session blocked by news filter: {reason}")
-            socketio.emit("log", {"msg": f"⚠ News filter blocked morning session: {reason}", "level": "warning"})
+            log.warning(f"{sym} session blocked by news filter: {reason}")
+            socketio.emit("log", {
+                "message": f"⚠ News filter blocked {sym} session: {reason}",
+                "level": "WARNING",
+            })
             return
 
+    stop_ev = _session_stop_events[sym]
+    stop_ev.clear()
+
     with _state_lock:
-        state["morning_running"] = True
-        state["morning_symbol"]  = sym
-    trader.STOP_MORNING.clear()
+        state["sessions"][sym] = True
     _ensure_awake()
     emit_state()
 
     def run():
         try:
-            eh, em = validate_time(state["morning_end"])
-            log.info("=" * 50)
-            log.info(f"MORNING SESSION STARTED ({sym}) — runs until {eh:02d}:{em:02d} ET")
-            log.info("=" * 50)
+            with _state_lock:
+                end_val = state.get("session_end", "15:45")
+            eh, em = validate_time(end_val)
             prior = _cached_prior_levels(sym)
             vix   = _cached_vix()
-            trader.morning_session(prior, vix, stop_event=trader.STOP_MORNING,
-                                   end_hour=eh, end_minute=em, symbol=sym)
+            trader.all_day_session(
+                symbol=sym, prior_levels=prior, vix=vix,
+                stop_event=stop_ev, end_hour=eh, end_minute=em,
+            )
         except Exception as e:
-            log.error(f"Morning session error: {e}")
+            log.error(f"Session error ({sym}): {e}")
         finally:
             with _state_lock:
-                state["morning_running"] = False
-                state["morning_symbol"]  = None
+                state["sessions"][sym] = False
             _release_awake()
             refresh_account()
             emit_state()
 
-    morning_thread = threading.Thread(target=run, daemon=True)
-    morning_thread.start()
-
-
-def _launch_evening(sym: str = None) -> None:
-    """Start the evening session thread. Safe to call from any thread."""
-    global evening_thread
-    with _state_lock:
-        if state["evening_running"]:
-            return
-        if sym is None:
-            sym = state["active_symbol"]
-        filter_on = state["news_filter_enabled"]
-
-    if filter_on:
-        vetoed, reason = news_filter.check_news_sentiment(sym)
-        if vetoed:
-            log.warning(f"Evening session blocked by news filter: {reason}")
-            socketio.emit("log", {"msg": f"⚠ News filter blocked evening session: {reason}", "level": "warning"})
-            return
-
-    with _state_lock:
-        state["evening_running"] = True
-        state["evening_symbol"]  = sym
-    trader.STOP_EVENING.clear()
-    _ensure_awake()
-    emit_state()
-
-    def run():
-        try:
-            eh, em = validate_time(state["evening_end"])
-            log.info("=" * 50)
-            log.info(f"EVENING SESSION STARTED ({sym}) — runs until {eh:02d}:{em:02d} ET")
-            log.info("=" * 50)
-            prior = _cached_prior_levels(sym)
-            trader.evening_session(prior, stop_event=trader.STOP_EVENING,
-                                   end_hour=eh, end_minute=em, symbol=sym)
-        except Exception as e:
-            log.error(f"Evening session error: {e}")
-        finally:
-            with _state_lock:
-                state["evening_running"] = False
-                state["evening_symbol"]  = None
-            _release_awake()
-            refresh_account()
-            emit_state()
-
-    evening_thread = threading.Thread(target=run, daemon=True)
-    evening_thread.start()
+    t = threading.Thread(target=run, daemon=True, name=f"session-{sym}")
+    _session_threads[sym] = t
+    t.start()
 
 
 def scheduler():
-    """Background task: auto-start sessions at market open/close on weekdays."""
-    morning_fired_on = None
-    evening_fired_on = None
+    """Background task: auto-start all-day sessions at 9:30 ET on weekdays."""
+    session_fired_on = None
 
     while True:
         socketio.sleep(30)
@@ -754,51 +760,56 @@ def scheduler():
         with _state_lock:
             if not state["logged_in"] or not state["auto_schedule"]:
                 continue
-            sym = state["active_symbol"]
 
         today = now.date()
-        h, m  = now.hour, now.minute
-
-        mh, mm = MORNING_AUTO_START
-        if (h, m) == (mh, mm) and morning_fired_on != today:
-            morning_fired_on = today
-            log.info("Auto-scheduler: starting morning session")
-            _launch_morning(sym)
-
-        eh, em = EVENING_AUTO_START
-        if (h, m) == (eh, em) and evening_fired_on != today:
-            evening_fired_on = today
-            log.info("Auto-scheduler: starting evening session")
-            _launch_evening(sym)
+        sh, sm = SESSION_AUTO_START
+        if (now.hour, now.minute) == (sh, sm) and session_fired_on != today:
+            session_fired_on = today
+            log.info("Auto-scheduler: starting all-day sessions for all symbols")
+            for sym in _SYMBOLS_ORDERED:
+                _launch_session(sym)
 
 
-@socketio.on("start_morning")
+@socketio.on("start_session")
 @require_auth
-def on_start_morning():
-    _launch_morning()
+def on_start_session(data=None):
+    """Start all-day session for the requested symbol (defaults to active_symbol)."""
+    sym = ((data or {}).get("symbol") or state["active_symbol"]).upper()
+    _launch_session(sym)
 
 
-@socketio.on("stop_morning")
+@socketio.on("stop_session")
 @require_auth
-def on_stop_morning():
-    trader.STOP_MORNING.set()
-    state["morning_running"] = False
-    log.info("Morning session stopped by user.")
+def on_stop_session(data=None):
+    """Stop the all-day session for the requested symbol."""
+    sym = ((data or {}).get("symbol") or state["active_symbol"]).upper()
+    if sym not in VALID_SYMBOLS:
+        return
+    _session_stop_events[sym].set()
+    with _state_lock:
+        state["sessions"][sym] = False
+    log.info(f"{sym} session stopped by user.")
     emit_state()
 
 
-@socketio.on("start_evening")
+@socketio.on("start_all_sessions")
 @require_auth
-def on_start_evening():
-    _launch_evening()
+def on_start_all_sessions():
+    """Start all-day sessions for every configured symbol simultaneously."""
+    for sym in _SYMBOLS_ORDERED:
+        _launch_session(sym)
 
 
-@socketio.on("stop_evening")
+@socketio.on("stop_all_sessions")
 @require_auth
-def on_stop_evening():
-    trader.STOP_EVENING.set()
-    state["evening_running"] = False
-    log.info("Evening session stopped by user.")
+def on_stop_all_sessions():
+    """Stop all running sessions."""
+    for sym in _SYMBOLS_ORDERED:
+        _session_stop_events[sym].set()
+    with _state_lock:
+        for sym in _SYMBOLS_ORDERED:
+            state["sessions"][sym] = False
+    log.info("All sessions stopped by user.")
     emit_state()
 
 
@@ -869,15 +880,16 @@ _chart_cache: dict[tuple[str, str], tuple[list, float]] = {}
 _chart_cache_lock = threading.Lock()
 
 
-def _cached_chart_bars(timeframe: str, symbol: str) -> list:
+def _cached_chart_bars(timeframe: str, symbol: str, force_refresh: bool = False) -> list:
     """Cache chart bars per (symbol, timeframe) for CHART_CACHE_TTL_SEC.
-    Avoids re-fetching the same window when the user toggles tabs/timeframes rapidly."""
+    Pass force_refresh=True to bypass the cache (e.g. on explicit user refresh)."""
     key = (symbol, timeframe)
     now = time.monotonic()
-    with _chart_cache_lock:
-        cached = _chart_cache.get(key)
-        if cached and now - cached[1] < CHART_CACHE_TTL_SEC:
-            return cached[0]
+    if not force_refresh:
+        with _chart_cache_lock:
+            cached = _chart_cache.get(key)
+            if cached and now - cached[1] < CHART_CACHE_TTL_SEC:
+                return cached[0]
     bars = trader.fetch_chart_bars(timeframe, symbol)
     with _chart_cache_lock:
         _chart_cache[key] = (bars, now)
@@ -901,7 +913,8 @@ def on_set_active_symbol(data):
 @require_auth
 def on_get_chart_data(data=None):
     """Return bars + signal markers for the active symbol & requested timeframe."""
-    timeframe = (data or {}).get("timeframe", "1D")
+    timeframe     = (data or {}).get("timeframe", "1D")
+    force_refresh = bool((data or {}).get("force_refresh", False))
     if timeframe not in _VALID_TIMEFRAMES:
         timeframe = "1D"
     with _state_lock:
@@ -910,7 +923,7 @@ def on_get_chart_data(data=None):
     if symbol not in VALID_SYMBOLS:
         symbol = "SPY"
     try:
-        bars = _cached_chart_bars(timeframe, symbol)
+        bars = _cached_chart_bars(timeframe, symbol, force_refresh=force_refresh)
         with _state_lock:
             # Show only the markers tagged for this symbol.
             # Older markers without a `symbol` key default to SPY for back-compat.
@@ -952,21 +965,7 @@ def on_start_stream():
 @require_auth
 def on_stop_stream():
     state["streaming"] = False
-    # One last state push so UI knows it stopped
-    socketio.emit("state", {
-        "logged_in":       state["logged_in"],
-        "morning_running": state["morning_running"],
-        "evening_running": state["evening_running"],
-        "streaming":       False,
-        "dry_run":         state["dry_run"],
-        "account_value":   state["account_value"],
-        "buying_power":    state["buying_power"],
-        "spy_price":       state["spy_price"],
-        "spy_change_pct":  state["spy_change_pct"],
-        "vix":             state["vix"],
-        "trades_today":    state["trades_today"],
-        "timestamp":       datetime.now(ET).strftime("%H:%M:%S ET"),
-    })
+    emit_state()
     log.info("Live stream paused — UI feed stopped (sessions still run)")
 
 
@@ -974,6 +973,7 @@ def on_stop_stream():
 if __name__ == "__main__":
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
+    socketio.start_background_task(position_monitor)
 
     print("\n" + "=" * 55)
     print("  SPY Auto Trader — Dashboard")

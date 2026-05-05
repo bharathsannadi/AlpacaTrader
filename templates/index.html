@@ -242,25 +242,52 @@
     font-weight: 600; cursor: pointer; transition: all .15s;
     border-bottom: 2px solid transparent;
     white-space: nowrap;
+    display: flex; align-items: center; gap: 5px;
   }
   .symbol-tab:hover  { color: var(--text); background: var(--bg); }
   .symbol-tab.active {
     color: var(--green); border-bottom-color: var(--green);
     background: var(--bg);
   }
+  /* Per-symbol session-running dot in tab */
+  .tab-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: transparent; flex-shrink: 0; transition: background .3s;
+  }
+  .tab-dot.running {
+    background: var(--green);
+    box-shadow: 0 0 4px var(--green);
+    animation: pulse 1.5s infinite;
+  }
 
-  /* ── Layout (compact for 13" screen) ── */
+  /* ── Layout ── */
   .dashboard {
     display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: var(--s-3); padding: var(--s-3) var(--s-4);
-    height: calc(100vh - 56px - 36px);   /* header (56) + tab bar (36) */
+    grid-template-columns: clamp(200px, 280px, 45vw) 5px 1fr;
+    column-gap: 0; row-gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    height: calc(100vh - 56px - 36px);
     overflow: hidden;
   }
 
-  /* ── Left panel (compact) ── */
-  .left-panel  { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 2px; }
-  .right-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  /* ── Panel resize divider (VS Code–style) ── */
+  .panel-divider {
+    width: 5px; align-self: stretch;
+    cursor: col-resize; background: transparent;
+    border-radius: 3px; transition: background .15s;
+    position: relative; z-index: 20;
+    flex-shrink: 0;
+  }
+  /* wider invisible hit-area so it's easy to grab */
+  .panel-divider::after {
+    content: ""; position: absolute; inset: 0 -6px;
+  }
+  .panel-divider:hover,
+  .panel-divider.resizing { background: var(--blue); }
+
+  /* ── Left panel ── */
+  .left-panel  { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 4px; min-width: 0; }
+  .right-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; padding-left: 4px; }
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 12px 14px;
@@ -300,17 +327,22 @@
   .btn-stop:hover   { background: var(--red); color: #fff; }
   .btn-stop:disabled { opacity: .35; cursor: not-allowed; }
 
-  /* Auto-schedule toggle */
+  /* Automation toggles card */
   .auto-schedule-card { padding: 10px 14px; }
-  .auto-schedule-row  { display: flex; align-items: center; gap: 10px; }
-  .auto-schedule-label { font-weight: 700; font-size: 13px; }
-  .auto-schedule-hint  { font-size: 11px; color: var(--muted); flex: 1; }
-  .auto-schedule-btn {
-    padding: 4px 14px; border-radius: 12px; font-size: 12px; font-weight: 700;
-    border: none; cursor: pointer; transition: all .2s;
-    background: var(--green); color: #000;
+  .auto-schedule-row  {
+    display: grid;
+    grid-template-columns: 110px 1fr auto;
+    align-items: center; gap: 8px;
+    min-height: 28px;
   }
-  .auto-schedule-btn.off { background: var(--surface2); color: var(--muted); }
+  .auto-schedule-label { font-weight: 700; font-size: 12px; white-space: nowrap; }
+  .auto-schedule-hint  { font-size: 11px; color: var(--muted); }
+  .auto-schedule-btn {
+    padding: 3px 12px; border-radius: 12px; font-size: 11px; font-weight: 700;
+    border: none; cursor: pointer; transition: all .2s;
+    background: var(--green); color: #000; white-space: nowrap;
+  }
+  .auto-schedule-btn.off { background: var(--border-strong); color: var(--muted); }
 
   /* Config (compact) */
   .config-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-2); }
@@ -352,25 +384,71 @@
 
   /* ── Drag-and-drop reorder ── */
   .card { position: relative; transition: opacity .15s, box-shadow .15s, transform .15s; }
-  .card[data-card-id] { cursor: grab; }
-  .card.dragging  { opacity: 0.35; cursor: grabbing; transform: scale(0.98); }
+  /* cursor stays default — only the grip is the drag handle */
+  .card[data-card-id] { cursor: default; user-select: text; }
+  .card.dragging  { opacity: 0.35; transform: scale(0.98); }
   .card.drag-above { box-shadow: 0 -3px 0 0 var(--blue), 0 8px 24px rgba(0,0,0,0.3); }
   .card.drag-below { box-shadow: 0  3px 0 0 var(--blue), 0 8px 24px rgba(0,0,0,0.3); }
 
+  /* Grip is now an actual clickable/draggable handle */
   .drag-grip {
     position: absolute; top: 10px; right: 10px;
     color: var(--muted); font-size: 12px; line-height: 1;
     opacity: 0.3; transition: opacity .15s;
-    user-select: none; pointer-events: none;
+    user-select: none; cursor: grab;
     letter-spacing: -2px;
   }
-  .card[data-card-id]:hover .drag-grip { opacity: 0.7; }
+  .card[data-card-id]:hover .drag-grip { opacity: 0.8; }
+  .drag-grip:active { cursor: grabbing; }
 
-  /* Responsive grid — collapse columns when empty */
+  /* ── Clipboard copy button ── */
+  .copy-btn-sm {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted-2); border-radius: 4px;
+    padding: 2px 7px; font-size: 10px; cursor: pointer;
+    font-family: var(--mono); transition: all .15s;
+    user-select: none;
+  }
+  .copy-btn-sm:hover   { border-color: var(--green); color: var(--green); }
+  .copy-btn-sm.copied  { border-color: var(--green); color: var(--green); }
+
+  /* ── Selectable content areas ── */
+  #log-output, .log-line,
+  .stat-value, .header-stat .value,
+  .ticker-price, .ticker-chg,
+  #signal-text,
+  .trade-title, .trade-reason, .trade-row .val,
+  .session-desc {
+    user-select: text; cursor: text;
+  }
+  /* Log is also vertically resizable */
+  #log-output { resize: vertical; min-height: 100px; }
+
+  /* Collapse empty panels */
   .left-panel:empty,
   .right-panel:empty { display: none; }
-  .dashboard.no-left  { grid-template-columns: 1fr !important; }
-  .dashboard.no-right { grid-template-columns: 1fr !important; }
+  .dashboard.no-left  { grid-template-columns: 0 5px 1fr !important; }
+  .dashboard.no-right { grid-template-columns: 1fr 5px 0 !important; }
+
+  /* ── Responsive breakpoints ── */
+  @media (max-width: 900px) {
+    .dashboard {
+      grid-template-columns: 1fr !important;
+      grid-template-rows: auto 1fr;
+      height: auto; min-height: calc(100vh - 56px - 36px);
+      overflow-y: auto;
+    }
+    .panel-divider { display: none; }
+    .left-panel  { overflow-y: visible; max-height: none; padding-right: 0; }
+    .right-panel { padding-left: 0; }
+  }
+  @media (max-width: 600px) {
+    header { flex-wrap: wrap; height: auto; padding: 8px; gap: 8px; }
+    .stats-group { flex-wrap: wrap; height: auto; gap: 8px; padding: 4px 0; }
+    .header-right { width: 100%; justify-content: flex-end; }
+    .tab-bar { height: auto; flex-wrap: wrap; padding: 4px 8px; }
+    .symbol-tab { padding: 6px 10px; }
+  }
 
   /* Reset layout button */
   .reset-layout-btn {
@@ -696,21 +774,21 @@
   </div>
 </header>
 
-<!-- ── Symbol tabs ───────────────────────────────────────────────────────── -->
+<!-- ── Symbol tabs (chart-only switches — sessions run independently) ────── -->
 <div class="tab-bar">
-  <button class="symbol-tab active" data-symbol="SPY"  onclick="setActiveSymbol('SPY')">SPY</button>
-  <button class="symbol-tab"        data-symbol="AMZN" onclick="setActiveSymbol('AMZN')">AMZN</button>
-  <button class="symbol-tab"        data-symbol="GOOG" onclick="setActiveSymbol('GOOG')">GOOG</button>
-  <button class="symbol-tab"        data-symbol="MSFT" onclick="setActiveSymbol('MSFT')">MSFT</button>
-  <button class="symbol-tab"        data-symbol="NVDA" onclick="setActiveSymbol('NVDA')">NVDA</button>
-  <button class="symbol-tab"        data-symbol="META" onclick="setActiveSymbol('META')">META</button>
+  <button class="symbol-tab active" data-symbol="SPY"  onclick="setActiveSymbol('SPY')"><span class="tab-dot" id="tab-dot-SPY"></span>SPY</button>
+  <button class="symbol-tab"        data-symbol="AMZN" onclick="setActiveSymbol('AMZN')"><span class="tab-dot" id="tab-dot-AMZN"></span>AMZN</button>
+  <button class="symbol-tab"        data-symbol="GOOG" onclick="setActiveSymbol('GOOG')"><span class="tab-dot" id="tab-dot-GOOG"></span>GOOG</button>
+  <button class="symbol-tab"        data-symbol="MSFT" onclick="setActiveSymbol('MSFT')"><span class="tab-dot" id="tab-dot-MSFT"></span>MSFT</button>
+  <button class="symbol-tab"        data-symbol="NVDA" onclick="setActiveSymbol('NVDA')"><span class="tab-dot" id="tab-dot-NVDA"></span>NVDA</button>
+  <button class="symbol-tab"        data-symbol="META" onclick="setActiveSymbol('META')"><span class="tab-dot" id="tab-dot-META"></span>META</button>
 </div>
 
 <!-- ── Dashboard ─────────────────────────────────────────────────────────── -->
 <div class="dashboard">
 
   <!-- Left panel -->
-  <div class="left-panel">
+  <div class="left-panel" id="left-panel">
 
     <!-- Config (top of panel) -->
     <div class="card" data-card-id="config">
@@ -802,88 +880,72 @@
       </div>
     </div>
 
-    <!-- Auto-schedule + News filter toggles -->
+    <!-- Automation toggles -->
     <div class="card auto-schedule-card" data-card-id="auto-schedule">
       <span class="drag-grip">⋮⋮</span>
+      <div class="card-title">Automation</div>
       <div class="auto-schedule-row">
         <span class="auto-schedule-label">Auto-schedule</span>
-        <span class="auto-schedule-hint">Morning 9:30 ET · Evening 3:00 ET</span>
+        <span class="auto-schedule-hint">Start all symbols at 9:30 ET</span>
         <button class="auto-schedule-btn" id="btn-auto-schedule" onclick="toggleAutoSchedule()">ON</button>
       </div>
-      <div class="auto-schedule-row" style="margin-top:8px">
+      <div class="auto-schedule-row" style="margin-top:6px">
         <span class="auto-schedule-label">News filter</span>
-        <span class="auto-schedule-hint">Veto session on bad headlines</span>
+        <span class="auto-schedule-hint">Veto on bad headlines</span>
         <button class="auto-schedule-btn" id="btn-news-filter" onclick="toggleNewsFilter()">ON</button>
       </div>
-      <div class="auto-schedule-row" style="margin-top:8px">
+      <div class="auto-schedule-row" style="margin-top:6px">
         <span class="auto-schedule-label">Trade memory</span>
-        <span class="auto-schedule-hint">ChromaDB similarity recall</span>
+        <span class="auto-schedule-hint">ChromaDB recall</span>
         <button class="auto-schedule-btn" id="btn-trade-memory" onclick="toggleTradeMemory()">ON</button>
       </div>
-      <div class="auto-schedule-row" style="margin-top:8px">
-        <span class="auto-schedule-label">Bull/Bear debate</span>
-        <span class="auto-schedule-hint">LLM gate (needs ANTHROPIC_API_KEY)</span>
+      <div class="auto-schedule-row" style="margin-top:6px">
+        <span class="auto-schedule-label">Bull/Bear LLM</span>
+        <span class="auto-schedule-hint">Needs ANTHROPIC_API_KEY</span>
         <button class="auto-schedule-btn off" id="btn-debate" onclick="toggleDebate()">OFF</button>
       </div>
-      <div class="auto-schedule-row" style="margin-top:8px">
+      <div class="auto-schedule-row" style="margin-top:6px">
         <span class="auto-schedule-label" style="color:var(--yellow)">Auto-trade</span>
-        <span class="auto-schedule-hint">Skip approval — orders placed instantly</span>
+        <span class="auto-schedule-hint">Skip approval modal</span>
         <button class="auto-schedule-btn off" id="btn-auto-trade" onclick="toggleAutoTrade()">OFF</button>
       </div>
     </div>
 
-    <!-- Morning session -->
-    <div class="card session-card" data-card-id="morning">
+    <!-- All-day trading session -->
+    <div class="card session-card" data-card-id="session">
       <span class="drag-grip">⋮⋮</span>
       <div class="session-header">
-        <div class="session-dot stopped" id="dot-morning"></div>
-        <span class="session-name">Morning Session</span>
-        <span class="session-time" id="morning-window">9:30 – 10:00 ET</span>
+        <span class="session-name">All Day Session</span>
+        <span class="session-time">9:30 ET → end time</span>
       </div>
       <div class="session-desc">
-        Opening Range Breakout + Gap Fade<br/>
-        EMA9/21/200 · VWAP · RSI · MACD · ATR
+        ORB breakout · Gap fade · VWAP momentum<br/>
+        EMA9/21/200 · RSI · MACD · Bollinger · ATR<br/>
+        Tabs switch chart only — each symbol trades independently
       </div>
       <div class="time-row">
         <span>End at</span>
-        <input class="time-input" type="time" id="morning-end" value="10:00"
-               min="09:30" max="16:00" onchange="setSessionTimes()"/>
+        <input class="time-input" type="time" id="session-end" value="15:45"
+               min="09:30" max="16:00" onchange="setSessionEnd()"/>
         <span>ET</span>
       </div>
-      <div class="btn-row">
-        <button class="btn-run"  id="btn-start-morning" onclick="startMorning()">▶ Run</button>
-        <button class="btn-stop" id="btn-stop-morning"  onclick="stopMorning()" disabled>■ Stop</button>
-      </div>
-    </div>
-
-    <!-- Evening session -->
-    <div class="card session-card" data-card-id="evening">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="session-header">
-        <div class="session-dot stopped" id="dot-evening"></div>
-        <span class="session-name">Evening Session</span>
-        <span class="session-time" id="evening-window">3:00 – 3:30 ET</span>
-      </div>
-      <div class="session-desc">
-        VWAP Momentum Close<br/>
-        Bollinger Bands · EMA trend · Volume ratio
-      </div>
-      <div class="time-row">
-        <span>End at</span>
-        <input class="time-input" type="time" id="evening-end" value="15:30"
-               min="09:30" max="16:00" onchange="setSessionTimes()"/>
-        <span>ET</span>
+      <div class="btn-row" style="margin-bottom:6px">
+        <button class="btn-run"  id="btn-start-session" onclick="startSession()">▶ Start (tab)</button>
+        <button class="btn-stop" id="btn-stop-session"  onclick="stopSession()" disabled>■ Stop (tab)</button>
       </div>
       <div class="btn-row">
-        <button class="btn-run"  id="btn-start-evening" onclick="startEvening()">▶ Run</button>
-        <button class="btn-stop" id="btn-stop-evening"  onclick="stopEvening()" disabled>■ Stop</button>
+        <button class="btn-run"  style="background:var(--blue);font-size:11px" onclick="startAllSessions()">▶▶ All</button>
+        <button class="btn-stop" style="font-size:11px" onclick="stopAllSessions()">■■ Stop All</button>
       </div>
     </div>
 
   </div>
 
+  <!-- Panel resize handle -->
+  <div class="panel-divider" id="panel-divider" title="Drag to resize panels"></div>
+
   <!-- Right panel -->
-  <div class="right-panel">
+  <div class="right-panel" id="right-panel">
     <!-- SPY chart -->
     <div class="card chart-card" data-card-id="chart">
       <span class="drag-grip">⋮⋮</span>
@@ -932,6 +994,7 @@
           <span class="stream-dot live" id="dot-stream"></span>
           <button class="stream-btn start" id="btn-start-stream" onclick="startStream()" disabled>▶</button>
           <button class="stream-btn stop"  id="btn-stop-stream"  onclick="stopStream()">■</button>
+          <button class="copy-btn-sm" id="btn-copy-log" onclick="copyLog()">Copy</button>
           <button class="clear-btn" onclick="clearLog()">Clear</button>
         </div>
       </div>

@@ -131,18 +131,17 @@ function playAlertSound() {
 
 // ── UI update ─────────────────────────────────────────────────────────────────
 function updateUI(s) {
-  // Show login if not authenticated
   if (!s.logged_in) {
     document.getElementById("login-overlay").classList.remove("hidden");
   }
 
-  // SPY price
+  // SPY price (or active symbol price)
   if (s.spy_price) {
-    const chg   = s.spy_change_pct ?? 0;
-    const cls   = chg > 0 ? "up" : chg < 0 ? "down" : "neutral";
-    const sign  = chg > 0 ? "+" : "";
-    setEl("spy-price", `$${s.spy_price.toFixed(2)}`,  `ticker-price ${cls}`);
-    setEl("spy-chg",   `${sign}${chg.toFixed(2)}%`,   `ticker-chg ${cls}`);
+    const chg  = s.spy_change_pct ?? 0;
+    const cls  = chg > 0 ? "up" : chg < 0 ? "down" : "neutral";
+    const sign = chg > 0 ? "+" : "";
+    setEl("spy-price", `$${s.spy_price.toFixed(2)}`, `ticker-price ${cls}`);
+    setEl("spy-chg",   `${sign}${chg.toFixed(2)}%`,  `ticker-chg ${cls}`);
   }
 
   // VIX
@@ -156,13 +155,11 @@ function updateUI(s) {
     const fmt = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2 });
     setEl("hdr-account", fmt(s.account_value));
     setEl("hdr-bp",      fmt(s.buying_power ?? 0));
-
     const riskPct = parseFloat(document.getElementById("risk-pct").value) / 100;
-    const maxRisk = s.account_value * riskPct;
-    setEl("hdr-risk", fmt(maxRisk));
+    setEl("hdr-risk", fmt(s.account_value * riskPct));
   }
 
-  // Active symbol — keep tab + ticker label + chart title in sync
+  // Active symbol — sync tab highlight + header ticker + chart title
   if (s.active_symbol) {
     currentSymbol = s.active_symbol;
     setEl("ticker-symbol", s.active_symbol);
@@ -172,78 +169,48 @@ function updateUI(s) {
     });
   }
 
-  // Unified mode pill — accounts for paper/live AND dry/live trading
+  // Per-symbol session dots in tab bar + Start/Stop button state
+  if (s.sessions) {
+    let anyRunning = false;
+    Object.entries(s.sessions).forEach(([sym, running]) => {
+      const dot = document.getElementById(`tab-dot-${sym}`);
+      if (dot) dot.className = `tab-dot${running ? " running" : ""}`;
+      if (running) anyRunning = true;
+    });
+    // Active-symbol session drives the tab-level Start/Stop buttons
+    const activeRunning = !!(s.sessions[s.active_symbol || "SPY"]);
+    const startBtn = document.getElementById("btn-start-session");
+    const stopBtn  = document.getElementById("btn-stop-session");
+    if (startBtn) startBtn.disabled = activeRunning;
+    if (stopBtn)  stopBtn.disabled  = !activeRunning;
+  }
+
+  // Mode pill
   const pill = document.getElementById("mode-pill");
   if (pill) {
     const accountLabel = s.paper_mode ? "PAPER" : "LIVE";
     const tradeLabel   = s.dry_run    ? "DRY RUN" : "LIVE TRADING";
     pill.textContent = `${accountLabel} · ${tradeLabel}`;
-    // Class precedence: live trading > paper > dry-run
     pill.className = "mode-pill" +
-      (!s.dry_run     ? " live" :
-       s.paper_mode   ? " paper-on" : "");
+      (!s.dry_run   ? " live" :
+       s.paper_mode ? " paper-on" : "");
   }
 
-  // Toggle sync
   document.getElementById("dry-run-toggle").checked = !!s.dry_run;
 
-  // Sessions
-  setSession("morning", s.morning_running);
-  setSession("evening", s.evening_running);
   setStreamButtons(s.streaming);
 
-  // Auto-schedule toggle
-  const asBtn = document.getElementById("btn-auto-schedule");
-  if (asBtn) {
-    const on = s.auto_schedule !== false;
-    asBtn.textContent = on ? "ON" : "OFF";
-    asBtn.classList.toggle("off", !on);
-  }
+  // Automation toggles
+  syncToggleBtn("btn-auto-schedule", s.auto_schedule !== false);
+  syncToggleBtn("btn-news-filter",   s.news_filter_enabled !== false);
+  syncToggleBtn("btn-trade-memory",  s.trade_memory_enabled !== false);
+  syncToggleBtn("btn-debate",        s.debate_enabled === true);
+  syncToggleBtn("btn-auto-trade",    s.auto_trade === true);
 
-  // News filter toggle
-  const nfBtn = document.getElementById("btn-news-filter");
-  if (nfBtn) {
-    const on = s.news_filter_enabled !== false;
-    nfBtn.textContent = on ? "ON" : "OFF";
-    nfBtn.classList.toggle("off", !on);
-  }
-
-  // Trade memory toggle
-  const tmBtn = document.getElementById("btn-trade-memory");
-  if (tmBtn) {
-    const on = s.trade_memory_enabled !== false;
-    tmBtn.textContent = on ? "ON" : "OFF";
-    tmBtn.classList.toggle("off", !on);
-  }
-
-  // Debate toggle
-  const dbBtn = document.getElementById("btn-debate");
-  if (dbBtn) {
-    const on = s.debate_enabled === true;
-    dbBtn.textContent = on ? "ON" : "OFF";
-    dbBtn.classList.toggle("off", !on);
-  }
-
-  // Auto-trade toggle
-  const atBtn = document.getElementById("btn-auto-trade");
-  if (atBtn) {
-    const on = s.auto_trade === true;
-    atBtn.textContent = on ? "ON" : "OFF";
-    atBtn.classList.toggle("off", !on);
-  }
-
-  // Sync time inputs (only if user is not actively editing)
-  if (s.morning_end) {
-    const el = document.getElementById("morning-end");
-    if (el && document.activeElement !== el) el.value = s.morning_end;
-    const win = document.getElementById("morning-window");
-    if (win) win.textContent = `9:30 – ${formatTime12h(s.morning_end)} ET`;
-  }
-  if (s.evening_end) {
-    const el = document.getElementById("evening-end");
-    if (el && document.activeElement !== el) el.value = s.evening_end;
-    const win = document.getElementById("evening-window");
-    if (win) win.textContent = `3:00 – ${formatTime12h(s.evening_end)} ET`;
+  // Session end time input
+  if (s.session_end) {
+    const el = document.getElementById("session-end");
+    if (el && document.activeElement !== el) el.value = s.session_end;
   }
 
   // Stepper values
@@ -253,8 +220,14 @@ function updateUI(s) {
   if (s.dte_min != null)       setEl("val-dte-min",       s.dte_min);
   if (s.dte_max != null)       setEl("val-dte-max",       s.dte_max);
 
-  // Timestamp
   if (s.timestamp) setEl("hdr-time", s.timestamp);
+}
+
+function syncToggleBtn(id, on) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.textContent = on ? "ON" : "OFF";
+  btn.classList.toggle("off", !on);
 }
 
 function setEl(id, text, className) {
@@ -264,15 +237,7 @@ function setEl(id, text, className) {
   if (className !== undefined) el.className = className;
 }
 
-function setSession(name, running) {
-  const dot   = document.getElementById(`dot-${name}`);
-  const start = document.getElementById(`btn-start-${name}`);
-  const stop  = document.getElementById(`btn-stop-${name}`);
-  if (!dot) return;
-  dot.className  = `session-dot ${running ? "running" : "stopped"}`;
-  start.disabled = !!running;
-  stop.disabled  = !running;
-}
+function setSession(_name, _running) { /* legacy stub — unused */ }
 
 function setStreamButtons(streaming) {
   const dot   = document.getElementById("dot-stream");
@@ -341,23 +306,28 @@ function doLogin() {
   socket.emit("login", { api_key: apiKey, api_secret: apiSecret, paper });
 }
 
-function doLogout()          { socket.emit("logout");               }
-function startMorning()      { socket.emit("start_morning");         }
-function stopMorning()       { socket.emit("stop_morning");          }
-function startEvening()      { socket.emit("start_evening");         }
-function stopEvening()       { socket.emit("stop_evening");          }
-function startStream()       { socket.emit("start_stream");          }
-function stopStream()        { socket.emit("stop_stream");           }
-function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule");  }
-function toggleNewsFilter()  { socket.emit("toggle_news_filter");    }
-function toggleTradeMemory() { socket.emit("toggle_trade_memory");   }
-function toggleDebate()      { socket.emit("toggle_debate");         }
-function toggleAutoTrade()   { socket.emit("toggle_auto_trade");     }
+function doLogout()          { socket.emit("logout");              }
+function startStream()       { socket.emit("start_stream");         }
+function stopStream()        { socket.emit("stop_stream");          }
+function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule"); }
+function toggleNewsFilter()  { socket.emit("toggle_news_filter");   }
+function toggleTradeMemory() { socket.emit("toggle_trade_memory");  }
+function toggleDebate()      { socket.emit("toggle_debate");        }
+function toggleAutoTrade()   { socket.emit("toggle_auto_trade");    }
 
-function setSessionTimes() {
-  socket.emit("set_session_times", {
-    morning_end: document.getElementById("morning-end").value,
-    evening_end: document.getElementById("evening-end").value,
+// Per-symbol session controls
+function startSession(sym) {
+  socket.emit("start_session", { symbol: sym || currentSymbol });
+}
+function stopSession(sym) {
+  socket.emit("stop_session", { symbol: sym || currentSymbol });
+}
+function startAllSessions() { socket.emit("start_all_sessions"); }
+function stopAllSessions()  { socket.emit("stop_all_sessions");  }
+
+function setSessionEnd() {
+  socket.emit("set_session_end", {
+    session_end: document.getElementById("session-end").value,
   });
 }
 
@@ -406,6 +376,10 @@ document.addEventListener("DOMContentLoaded", () => {
   restoreCardOrder();
   initDragDrop();
   updateGridLayout();
+
+  // Panel resize divider
+  restorePanelWidth();
+  initPanelResize();
 });
 
 // ── Drag-and-drop card reordering ─────────────────────────────────────────────
@@ -414,7 +388,13 @@ let draggedCard   = null;
 
 function initDragDrop() {
   document.querySelectorAll(".card[data-card-id]").forEach(card => {
-    card.draggable = true;
+    // Default NOT draggable — only the grip enables dragging so text stays selectable
+    card.draggable = false;
+
+    const grip = card.querySelector(".drag-grip");
+    if (grip) {
+      grip.addEventListener("mousedown", () => { card.draggable = true; });
+    }
 
     card.addEventListener("dragstart", (e) => {
       draggedCard = card;
@@ -424,6 +404,7 @@ function initDragDrop() {
     });
 
     card.addEventListener("dragend", () => {
+      card.draggable = false;        // re-lock after drag completes
       card.classList.remove("dragging");
       clearDragMarkers();
       saveCardOrder();
@@ -509,7 +490,79 @@ function resetLayout() {
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem("spyTraderLayout_v2");
   localStorage.removeItem("spyTraderLayoutLocked");
+  localStorage.removeItem(PANEL_WIDTH_KEY);
   location.reload();
+}
+
+// ── Panel resize (drag the vertical divider) ──────────────────────────────────
+const PANEL_WIDTH_KEY = "spyTraderPanelWidth";
+
+function initPanelResize() {
+  const divider   = document.getElementById("panel-divider");
+  const dashboard = document.querySelector(".dashboard");
+  if (!divider || !dashboard) return;
+
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    startX     = e.clientX;
+    startWidth = document.getElementById("left-panel").getBoundingClientRect().width;
+    divider.classList.add("resizing");
+
+    const onMove = (ev) => {
+      const delta    = ev.clientX - startX;
+      const totalW   = dashboard.getBoundingClientRect().width - 5; // minus divider
+      const newLeft  = Math.max(160, Math.min(startWidth + delta, totalW - 200));
+      dashboard.style.gridTemplateColumns = `${newLeft}px 5px 1fr`;
+    };
+
+    const onUp = () => {
+      divider.classList.remove("resizing");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup",   onUp);
+      // Persist the left-panel pixel width
+      const leftW = document.getElementById("left-panel").getBoundingClientRect().width;
+      localStorage.setItem(PANEL_WIDTH_KEY, Math.round(leftW));
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup",   onUp);
+  });
+}
+
+function restorePanelWidth() {
+  const saved     = localStorage.getItem(PANEL_WIDTH_KEY);
+  const dashboard = document.querySelector(".dashboard");
+  if (saved && dashboard) {
+    dashboard.style.gridTemplateColumns = `${saved}px 5px 1fr`;
+  }
+}
+
+// ── Clipboard copy helpers ────────────────────────────────────────────────────
+function copyLog() {
+  const lines = Array.from(document.querySelectorAll("#log-output .log-line"))
+    .map(el => el.textContent.trimEnd())
+    .join("\n");
+  navigator.clipboard.writeText(lines).then(() => {
+    showCopied("btn-copy-log");
+  }).catch(() => {
+    // Fallback: select all text in the element
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById("log-output"));
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  });
+}
+
+function showCopied(btnId) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  const orig = btn.textContent;
+  btn.textContent = "Copied!";
+  btn.classList.add("copied");
+  setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1500);
 }
 
 function updateGridLayout() {
@@ -529,10 +582,27 @@ let candleSeries     = null;
 let currentTimeframe = "1D";
 let currentSymbol    = "SPY";
 let chartInitialized = false;
+let chartRefreshTimer = null;
+
+const CHART_AUTO_REFRESH_MS = 10_000;   // refresh 1D bars every 10s while live
+
+function startChartAutoRefresh() {
+  stopChartAutoRefresh();
+  chartRefreshTimer = setInterval(() => {
+    if (currentTimeframe === "1D" && chartInitialized) {
+      socket.emit("get_chart_data", { timeframe: "1D", symbol: currentSymbol });
+    }
+  }, CHART_AUTO_REFRESH_MS);
+}
+
+function stopChartAutoRefresh() {
+  if (chartRefreshTimer) { clearInterval(chartRefreshTimer); chartRefreshTimer = null; }
+}
 
 function initChart() {
   if (chartInitialized) {
-    socket.emit("get_chart_data", { timeframe: currentTimeframe });
+    socket.emit("get_chart_data", { timeframe: currentTimeframe, symbol: currentSymbol });
+    startChartAutoRefresh();
     return;
   }
   const container = document.getElementById("chart-container");
@@ -579,7 +649,8 @@ function initChart() {
   }).observe(container);
 
   chartInitialized = true;
-  socket.emit("get_chart_data", { timeframe: currentTimeframe });
+  socket.emit("get_chart_data", { timeframe: currentTimeframe, symbol: currentSymbol });
+  startChartAutoRefresh();
 }
 
 function setTimeframe(tf) {
@@ -587,11 +658,20 @@ function setTimeframe(tf) {
   document.querySelectorAll(".tf-btn").forEach(b => {
     b.classList.toggle("active", b.dataset.tf === tf);
   });
-  if (chartInitialized) socket.emit("get_chart_data", { timeframe: tf });
+  if (chartInitialized) {
+    socket.emit("get_chart_data", { timeframe: tf, symbol: currentSymbol });
+    if (tf === "1D") startChartAutoRefresh(); else stopChartAutoRefresh();
+  }
 }
 
 function refreshChart() {
-  if (chartInitialized) socket.emit("get_chart_data", { timeframe: currentTimeframe });
+  if (chartInitialized) {
+    socket.emit("get_chart_data", {
+      timeframe:     currentTimeframe,
+      symbol:        currentSymbol,
+      force_refresh: true,
+    });
+  }
 }
 
 function setActiveSymbol(symbol) {
