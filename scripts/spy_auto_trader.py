@@ -97,13 +97,22 @@ TIME_STOP_MINS       = 60
 POSITION_CLOSE_TIME  = (15, 50)   # hard-close all open option positions at 3:50 ET
 FILL_POLL_INTERVAL   = 15         # seconds between fill-status checks
 FILL_TIMEOUT_MINS    = 3          # cancel unfilled order after this many minutes
-MAX_PORTFOLIO_RISK   = 0.03       # 3% max total deployed risk across all symbols
+MAX_PORTFOLIO_RISK    = 0.03       # 3% max total deployed risk across all symbols
+DAILY_LOSS_LIMIT_PCT  = 0.015     # halt new entries if down ≥ 1.5% from day-start equity
+MAX_SECTOR_POSITIONS  = 2         # max concurrent open positions in the same sector
+
+SECTOR_MAP: dict[str, str] = {
+    "SPY": "index",  "QQQ": "index",  "IWM": "index",  "DIA": "index",
+    "AMZN": "tech",  "GOOG": "tech",  "META": "tech",
+    "MSFT": "tech",  "NVDA": "tech",  "AAPL": "tech",
+}
 MIN_OPTION_OI        = 100        # minimum open interest at the selected strike
 MIN_OPTION_VOLUME    = 10         # minimum contracts traded today at the strike
 IV_RANK_MAX          = 50         # skip buying options when IVR > 50% (premium too expensive)
 IV_RANK_WARN         = 35         # log a caution when IVR is in the 35–50% zone
 DELTA_TARGET_MIN     = 0.40       # prefer contracts with delta in [0.40, 0.65]
 DELTA_TARGET_MAX     = 0.65       # outside this range we still trade but log a warning
+IV_RANK_REFRESH_MIN  = 60         # re-fetch IV rank every N minutes during a session
 
 
 # ── Greeks helpers ───────────────────────────────────────────────────────────
@@ -259,7 +268,17 @@ def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
                 yf_df["begins_at"] = yf_df["begins_at"].dt.tz_localize("UTC")
             yf_df["begins_at"] = yf_df["begins_at"].dt.tz_convert(ET)
             yf_df = yf_df.sort_values("begins_at").reset_index(drop=True)
-            log.info(f"fetch_bars({symbol}): yfinance fallback — {len(yf_df)} bars")
+            # Strip pre-market bars so VWAP anchors correctly at 9:30 ET.
+            # yfinance `period="1d"` can include pre-market rows; including them
+            # shifts the cumulative VWAP anchor before the regular session opens.
+            market_open_time = yf_df["begins_at"].iloc[0].replace(
+                hour=9, minute=30, second=0, microsecond=0
+            )
+            yf_df = yf_df[yf_df["begins_at"] >= market_open_time].reset_index(drop=True)
+            if yf_df.empty:
+                log.warning(f"fetch_bars({symbol}): no bars at or after 9:30 ET")
+                return None
+            log.info(f"fetch_bars({symbol}): yfinance fallback — {len(yf_df)} bars (from 9:30 ET)")
             return _add_indicators(yf_df)
         except Exception as e:
             log.warning(f"fetch_bars({symbol}): yfinance fallback failed: {e}")
@@ -873,6 +892,29 @@ def fetch_iv_rank(symbol: str) -> tuple[float | None, float | None]:
         return None, None
 
 
+def fetch_30min_trend(symbol: str) -> str:
+    """Return 'bull', 'bear', or 'neutral' based on the 30-min EMA9 vs EMA21.
+
+    Fetches the last 5 trading days of 30-min bars (covers ~65 bars, enough for
+    EMA21 to stabilise). Called once at all_day_session start; refreshed along
+    with IV rank every IV_RANK_REFRESH_MIN minutes.
+    """
+    try:
+        ticker = yf.Ticker(symbol.upper())
+        df = ticker.history(period="5d", interval="30m")
+        if df.empty or len(df) < 22:
+            return "neutral"
+        closes = df["Close"]
+        ema9  = float(closes.ewm(span=9,  adjust=False).mean().iloc[-1])
+        ema21 = float(closes.ewm(span=21, adjust=False).mean().iloc[-1])
+        trend = "bull" if ema9 > ema21 else "bear" if ema9 < ema21 else "neutral"
+        log.info(f"  30-min trend ({symbol}): EMA9={ema9:.2f}  EMA21={ema21:.2f}  → {trend.upper()}")
+        return trend
+    except Exception as e:
+        log.warning(f"fetch_30min_trend({symbol}): {e}")
+        return "neutral"
+
+
 def detect_gap(df, prior_close):
     if not prior_close or df is None or df.empty:
         return 0.0, None
@@ -995,8 +1037,13 @@ def _strike_window(current_price: float) -> float:
     return max(5.0, current_price * 0.025)
 
 
-def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY"):
-    """Find ATM call (bull) or put (bear) for `symbol` at given expiry."""
+def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY",
+                    current_iv: float | None = None):
+    """Find ATM call (bull) or put (bear) for `symbol` at given expiry.
+
+    current_iv: annualised IV as a percentage (e.g. 18.5 means 18.5%).
+    Used for delta scoring; falls back to 25% when None.
+    """
     if not TRADING_CLIENT:
         return None, None
     symbol = symbol.upper()
@@ -1053,20 +1100,20 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY"):
         tte_days = max(1, (expiry_date - today).days)
         opt_type_str = "call" if contract_type == ContractType.CALL else "put"
 
+        iv_decimal = (current_iv / 100.0) if (current_iv and current_iv > 0) else 0.25
+
         def _score(c):
             strike = float(c.strike_price)
-            # Use a rough IV estimate (25% annualised) when live IV unavailable
-            delta = bs_delta(current_price, strike, tte_days, iv=0.25, option_type=opt_type_str)
+            delta = bs_delta(current_price, strike, tte_days, iv=iv_decimal, option_type=opt_type_str)
             return abs(abs(delta) - 0.50)   # 0 = perfect ATM delta
 
         contracts_sorted = sorted(liquid, key=_score)
         c = contracts_sorted[0]
         oi_val = int(c.open_interest or 0)
 
-        # Log the chosen delta for transparency
         chosen_delta = bs_delta(
             current_price, float(c.strike_price), tte_days,
-            iv=0.25, option_type=opt_type_str
+            iv=iv_decimal, option_type=opt_type_str
         )
         if abs(chosen_delta) < DELTA_TARGET_MIN or abs(chosen_delta) > DELTA_TARGET_MAX:
             log.warning(
@@ -1095,9 +1142,9 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY"):
 
 
 def option_mid_and_spread(option):
-    """Return (mid, spread) for an option using its OCC symbol."""
+    """Return (mid, spread, bid, ask) for an option using its OCC symbol."""
     if not OPTION_CLIENT:
-        return 0.0, 999.0
+        return 0.0, 999.0, 0.0, 0.0
     try:
         request = OptionLatestQuoteRequest(symbol_or_symbols=[option["symbol"]])
         result  = OPTION_CLIENT.get_option_latest_quote(request)
@@ -1107,22 +1154,29 @@ def option_mid_and_spread(option):
             ask    = float(quote.ask_price or 0)
             spread = round(ask - bid, 2)
             mid    = round((bid + ask) / 2, 2) if (bid > 0 and ask > 0) else 0
-            return mid, spread
+            return mid, spread, bid, ask
     except Exception as e:
         log.warning(f"Could not fetch option quote: {e}")
-    return 0.0, 999.0
+    return 0.0, 999.0, 0.0, 0.0
 
 
 def size_contracts(acct_val, mid_price):
     if mid_price <= 0:
         return 0
-    max_risk          = acct_val * MAX_RISK_PCT
-    cost_per_contract = mid_price * 100
-    n = int(max_risk / cost_per_contract)
+    max_risk = acct_val * MAX_RISK_PCT
+    # Risk at stop = STOP_LOSS_PCT of premium (not full cost).
+    # Sizing on full cost wastes half the risk budget since max loss is only 50%.
+    risk_per_contract = mid_price * STOP_LOSS_PCT * 100
+    n = int(max_risk / risk_per_contract)
     if n == 0:
         log.warning(
-            f"size_contracts: option costs ${cost_per_contract:.0f} but risk budget is "
-            f"${max_risk:.0f} — skipping (would exceed {MAX_RISK_PCT*100:.1f}% risk rule)"
+            f"size_contracts: stop-risk ${risk_per_contract:.0f}/contract exceeds "
+            f"budget ${max_risk:.0f} — skipping"
+        )
+    else:
+        log.info(
+            f"  Sizing: {n} contract(s)  entry=${mid_price:.2f}  "
+            f"risk/contract=${risk_per_contract:.0f}  total-risk=${risk_per_contract*n:.0f}"
         )
     return n
 
@@ -1133,6 +1187,23 @@ def is_lunch_hour():
     s   = now.replace(hour=LUNCH_START[0], minute=LUNCH_START[1], second=0)
     e   = now.replace(hour=LUNCH_END[0],   minute=LUNCH_END[1],   second=0)
     return s <= now < e
+
+
+def sector_risk_check(symbol: str) -> bool:
+    """Return False when MAX_SECTOR_POSITIONS already open in the same sector."""
+    sector = SECTOR_MAP.get(symbol.upper(), symbol.upper())
+    with _positions_lock:
+        sector_count = sum(
+            1 for p in _open_positions
+            if p["remaining"] > 0 and SECTOR_MAP.get(p["symbol"], p["symbol"]) == sector
+        )
+    if sector_count >= MAX_SECTOR_POSITIONS:
+        log.warning(
+            f"  Sector cap: {sector_count} open {sector} positions "
+            f"(max {MAX_SECTOR_POSITIONS}) — skipping {symbol} entry."
+        )
+        return False
+    return True
 
 
 def pdt_check():
@@ -1154,23 +1225,60 @@ def vix_check(vix):
     return True
 
 
+# ── Daily loss circuit-breaker ────────────────────────────────────────────────
+_day_start_equity: float = 0.0
+_day_start_date:   object = None   # datetime.date
+
+def set_day_start_equity(acct_val: float) -> None:
+    """Record start-of-day equity once per calendar day."""
+    global _day_start_equity, _day_start_date
+    today = datetime.now(ET).date()
+    if _day_start_date != today:
+        _day_start_equity = acct_val
+        _day_start_date   = today
+        log.info(f"Day-start equity set: ${acct_val:,.2f}")
+
+def daily_loss_check(acct_val: float) -> bool:
+    """Return False (halt entries) if today's loss exceeds DAILY_LOSS_LIMIT_PCT."""
+    if _day_start_equity <= 0:
+        return True
+    loss_pct = (_day_start_equity - acct_val) / _day_start_equity
+    if loss_pct >= DAILY_LOSS_LIMIT_PCT:
+        log.warning(
+            f"  ⛔ Daily loss limit reached: down {loss_pct*100:.2f}% "
+            f"(limit {DAILY_LOSS_LIMIT_PCT*100:.1f}%). "
+            f"No new entries for the rest of the day."
+        )
+        return False
+    return True
+
+
 # ── Trade execution ───────────────────────────────────────────────────────────
-def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbol: str = "SPY", indicators: dict = None):
+def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbol: str = "SPY",
+                indicators: dict = None, ask_price: float = 0.0,
+                underlying_price: float = 0.0):
     symbol     = symbol.upper()
     opt_type   = option.get("type", "?")
     strike     = option.get("strike_price", "?")
     expiry     = option.get("expiration_date", "?")
     occ_symbol = option.get("symbol", "?")
-    limit      = round(mid_price + 0.02, 2)
+    # Use ask * 1.002 when available — guarantees fill without chasing too far.
+    # Fall back to mid + $0.05 if ask is unknown (e.g. DRY_RUN with no live quote).
+    if ask_price > 0:
+        limit = round(ask_price * 1.002, 2)
+    else:
+        limit = round(mid_price + 0.05, 2)
     stop_opt   = round(mid_price * (1 - STOP_LOSS_PCT), 2)
     target_50  = round(mid_price * 1.50, 2)
     target_75  = round(mid_price * (1 + PROFIT_TARGET), 2)
     max_loss   = round(mid_price * 100 * contracts, 2)
 
+    # ATR-based underlying stop: "if SPY drops below $X, exit the option position."
+    # Applies to the underlying price, NOT the option premium.
     atr_stop_und = None
-    if atr:
-        atr_stop_und = round(mid_price - (atr * ATR_MULT_TREND), 2) if direction == "bull" \
-                       else round(mid_price + (atr * ATR_MULT_TREND), 2)
+    if atr and underlying_price > 0:
+        atr_stop_und = round(underlying_price - (atr * ATR_MULT_TREND), 2) if direction == "bull" \
+                       else round(underlying_price + (atr * ATR_MULT_TREND), 2)
 
     log.info("─" * 60)
     log.info(f"SIGNAL [{direction.upper()}]  {reason}")
@@ -1181,7 +1289,7 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
     log.info(f"  Target 1 : ${target_50:.2f}  (+50% → close 50%)")
     log.info(f"  Target 2 : ${target_75:.2f}  (+{int(PROFIT_TARGET*100)}% → trail rest)")
     if atr_stop_und:
-        log.info(f"  ATR stop : ${atr_stop_und:.2f} (ATR={atr:.2f} × {ATR_MULT_TREND})")
+        log.info(f"  ATR stop : {symbol} underlying ${atr_stop_und:.2f}  (ATR={atr:.2f} × {ATR_MULT_TREND})")
     log.info(f"  Mode     : {'PAPER' if PAPER_MODE else 'LIVE'}  |  Hard close {HARD_CLOSE[0]}:{HARD_CLOSE[1]:02d} ET")
     log.info("─" * 60)
 
@@ -1329,7 +1437,7 @@ def evaluate_vwap_momentum(bar, prev_bar, df):
 def run_session(session_name, session_end_hour, session_end_min,
                 evaluate_fn, prior_levels, gap_info=None, stop_event=None,
                 symbol: str = "SPY", daily_ema200: float | None = None,
-                iv_rank: float | None = None):
+                iv_rank: float | None = None, current_iv: float | None = None):
     symbol = symbol.upper()
     session_end = datetime.now(ET).replace(
         hour=session_end_hour, minute=session_end_min, second=0, microsecond=0
@@ -1426,24 +1534,45 @@ def run_session(session_name, session_end_hour, session_end_min,
                         time.sleep(60)
                     continue
 
-            expiry = target_expiry(symbol)
-            if not expiry:
-                log.warning(f"No {symbol} expiry in DTE range. Skipping.")
-            else:
-                option, strike = find_atm_option(direction, expiry, current, symbol)
-                if option:
-                    mid, spread = option_mid_and_spread(option)
-                    log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  spread=${spread:.2f}")
-                    if mid > 0 and spread <= MAX_SPREAD:
-                        contracts = size_contracts(acct_val, mid)
-                        if contracts > 0:
-                            place_trade(option, contracts, mid, direction, reason, atr, symbol,
-                                        indicators=indicators_snapshot)
-                            traded = True
-                    else:
-                        log.warning(f"Spread ${spread:.2f} > max ${MAX_SPREAD:.2f}. Skipping.")
+            # Daily loss circuit-breaker
+            if not daily_loss_check(acct_val):
+                if stop_event:
+                    stop_event.wait(timeout=60)
                 else:
-                    log.warning(f"Could not find ATM {symbol} option. Skipping.")
+                    time.sleep(60)
+                continue
+
+            # Portfolio-level risk gate — refuse new entries when total deployed
+            # premium already consumes the daily risk budget across all symbols.
+            deployed = deployed_risk_pct(acct_val)
+            if deployed >= MAX_PORTFOLIO_RISK:
+                log.warning(
+                    f"  Portfolio risk {deployed*100:.1f}% >= max {MAX_PORTFOLIO_RISK*100:.0f}% "
+                    f"— no new entries until positions close."
+                )
+            elif not sector_risk_check(symbol):
+                pass  # warning already logged inside sector_risk_check
+            else:
+                expiry = target_expiry(symbol)
+                if not expiry:
+                    log.warning(f"No {symbol} expiry in DTE range. Skipping.")
+                else:
+                    option, strike = find_atm_option(direction, expiry, current, symbol,
+                                                        current_iv=current_iv)
+                    if option:
+                        mid, spread, _bid, ask = option_mid_and_spread(option)
+                        log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  ask=${ask:.2f}  spread=${spread:.2f}")
+                        if mid > 0 and spread <= MAX_SPREAD:
+                            contracts = size_contracts(acct_val, mid)
+                            if contracts > 0:
+                                place_trade(option, contracts, mid, direction, reason, atr, symbol,
+                                            indicators=indicators_snapshot, ask_price=ask,
+                                            underlying_price=current)
+                                traded = True
+                        else:
+                            log.warning(f"Spread ${spread:.2f} > max ${MAX_SPREAD:.2f}. Skipping.")
+                    else:
+                        log.warning(f"Could not find ATM {symbol} option. Skipping.")
 
         if not traded:
             if stop_event:
@@ -1501,7 +1630,7 @@ def morning_session(prior_levels, vix, stop_event=None, end_hour=None, end_minut
             return evaluate_gap_fade(bar, gap_pct, gap_dir, df)
         run_session("Morning (gap fade)", eh, em, gap_only, prior_levels,
                     stop_event=stop_event, symbol=symbol, daily_ema200=daily_ema200,
-                    iv_rank=iv_rank)
+                    iv_rank=iv_rank, current_iv=_current_iv)
         return
 
     def morning_eval(bar, prev_bar, df):
@@ -1511,7 +1640,7 @@ def morning_session(prior_levels, vix, stop_event=None, end_hour=None, end_minut
 
     run_session("Morning", eh, em, morning_eval, prior_levels,
                 stop_event=stop_event, symbol=symbol, daily_ema200=daily_ema200,
-                iv_rank=iv_rank)
+                iv_rank=iv_rank, current_iv=_current_iv)
 
 
 def evening_session(prior_levels, stop_event=None, end_hour=None, end_minute=None,
@@ -1539,7 +1668,7 @@ def evening_session(prior_levels, stop_event=None, end_hour=None, end_minute=Non
 
     run_session("Evening", eh, em, evening_eval, prior_levels,
                 stop_event=stop_event, symbol=symbol, daily_ema200=daily_ema200,
-                iv_rank=iv_rank)
+                iv_rank=iv_rank, current_iv=_current_iv)
 
 
 # ── All-day session (replaces separate morning/evening) ───────────────────────
@@ -1574,6 +1703,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
     breadth_ctx    = fetch_market_breadth()
 
     acct_val = account_value()
+    set_day_start_equity(acct_val)
     log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * MAX_RISK_PCT:,.2f}  |  {symbol}")
     if prior_levels:
         log.info(
@@ -1602,7 +1732,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
     # Intraday EMA200 is meaningless (needs 13+ days of 5-min bars to stabilize).
     daily_ema200 = fetch_daily_ema200(symbol)
 
-    # IV Rank — computed once at session start from nearest-expiry ATM call.
+    # IV Rank + 30-min trend — computed once at session start, refreshed hourly.
     _current_iv, iv_rank = fetch_iv_rank(symbol)
     if iv_rank is not None:
         if iv_rank > IV_RANK_MAX:
@@ -1612,6 +1742,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             )
         elif iv_rank > IV_RANK_WARN:
             log.warning(f"  ⚠️  IVR={iv_rank:.0f}% — elevated. Proceeding with caution.")
+    htf_trend = fetch_30min_trend(symbol)
 
     # Compute opening-range data once at session start
     df_init = fetch_bars(symbol)
@@ -1631,10 +1762,11 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             width = (or_high - or_low) / or_low
             log.info(f"Opening range: ${or_low:.2f}–${or_high:.2f} (width {width:.2%})")
 
-    session_end   = datetime.now(ET).replace(
+    session_end        = datetime.now(ET).replace(
         hour=end_hour, minute=end_minute, second=0, microsecond=0
     )
-    last_trade_ts = None  # 5-minute cool-down guard
+    last_trade_ts      = None  # 5-minute cool-down guard
+    iv_rank_fetched_at = datetime.now(ET)  # track when IV rank was last refreshed
 
     while datetime.now(ET) < session_end:
         if stop_event and stop_event.is_set():
@@ -1642,6 +1774,15 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             break
 
         now = datetime.now(ET)
+
+        # Refresh IV rank + 30-min trend every IV_RANK_REFRESH_MIN minutes
+        if (now - iv_rank_fetched_at).total_seconds() >= IV_RANK_REFRESH_MIN * 60:
+            _current_iv, iv_rank = fetch_iv_rank(symbol)
+            htf_trend = fetch_30min_trend(symbol)
+            iv_rank_fetched_at = now
+            if iv_rank is not None:
+                tag = "EXPENSIVE" if iv_rank > IV_RANK_MAX else "elevated" if iv_rank > IV_RANK_WARN else "normal"
+                log.info(f"  IV Rank refresh ({symbol}): IVR={iv_rank:.0f}% [{tag}]")
 
         if is_lunch_hour():
             log.info("Lunch-hour block (11:30–13:30 ET). Waiting 5 min…")
@@ -1694,9 +1835,41 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             direction, reason = evaluate_vwap_momentum(bar, prev_bar, df)
 
         if direction:
-            # Cool-down: suppress re-entry within 5 minutes
-            if last_trade_ts and (now - last_trade_ts).total_seconds() < 300:
-                log.info("  Cool-down active (< 5 min since last entry). Waiting.")
+            # Cool-down: 5 min normally; 20 min after a stop hit
+            last_stop = get_last_stop(symbol)
+            stop_recently = (
+                last_stop is not None
+                and (now - last_stop["time"]).total_seconds() < STOP_COOLDOWN_SEC
+            )
+            cooldown_sec = STOP_COOLDOWN_SEC if stop_recently else 300
+            if last_trade_ts and (now - last_trade_ts).total_seconds() < cooldown_sec:
+                mins = cooldown_sec // 60
+                log.info(f"  Cool-down active (< {mins} min since last entry). Waiting.")
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
+            # Same-direction block after stop — don't re-enter the direction that lost
+            if last_stop and (now - last_stop["time"]).total_seconds() < STOP_COOLDOWN_SEC:
+                if last_stop["direction"] == direction:
+                    log.warning(
+                        f"  ⛔ Same-direction block: last stop was {direction.upper()} "
+                        f"— waiting {STOP_COOLDOWN_SEC//60} min before re-entering same side."
+                    )
+                    if stop_event:
+                        stop_event.wait(timeout=60)
+                    else:
+                        time.sleep(60)
+                    continue
+
+            # 30-min higher-timeframe trend filter — skip when signal opposes trend
+            if htf_trend != "neutral" and htf_trend != direction:
+                log.warning(
+                    f"  ⚠️  HTF filter: 30-min trend={htf_trend.upper()} opposes "
+                    f"{direction.upper()} signal — skipping counter-trend entry."
+                )
                 if stop_event:
                     stop_event.wait(timeout=60)
                 else:
@@ -1763,46 +1936,63 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                         time.sleep(60)
                     continue
 
-            expiry = target_expiry(symbol)
-            if not expiry:
-                log.warning(f"No {symbol} expiry in DTE range. Skipping.")
+            if not daily_loss_check(acct_val):
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
+            deployed = deployed_risk_pct(acct_val)
+            if deployed >= MAX_PORTFOLIO_RISK:
+                log.warning(
+                    f"  Portfolio risk {deployed*100:.1f}% >= max {MAX_PORTFOLIO_RISK*100:.0f}% "
+                    f"— no new entries until positions close."
+                )
+            elif not sector_risk_check(symbol):
+                pass  # warning already logged inside sector_risk_check
             else:
-                option, strike = find_atm_option(direction, expiry, current, symbol)
-                if option:
-                    mid, spread = option_mid_and_spread(option)
-                    log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  spread=${spread:.2f}")
-                    if mid > 0 and spread <= MAX_SPREAD:
-                        contracts = size_contracts(acct_val, mid)
-                        if contracts > 0:
-                            order = place_trade(
-                                option, contracts, mid, direction, reason, atr, symbol,
-                                indicators=indicators_snapshot,
-                            )
-                        last_trade_ts = now  # always update — prevents flood in DRY_RUN
-                        if order and not DRY_RUN:
-                            filled = wait_for_fill(str(order.id), stop_event=stop_event)
-                            if filled:
-                                acct_val = account_value()
-                            else:
-                                log.warning(
-                                    f"Entry order {order.id} not filled — position NOT registered."
+                expiry = target_expiry(symbol)
+                if not expiry:
+                    log.warning(f"No {symbol} expiry in DTE range. Skipping.")
+                else:
+                    option, strike = find_atm_option(direction, expiry, current, symbol,
+                                                        current_iv=_current_iv)
+                    if option:
+                        mid, spread, _bid, ask = option_mid_and_spread(option)
+                        log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  ask=${ask:.2f}  spread=${spread:.2f}")
+                        if mid > 0 and spread <= MAX_SPREAD:
+                            contracts = size_contracts(acct_val, mid)
+                            if contracts > 0:
+                                order = place_trade(
+                                    option, contracts, mid, direction, reason, atr, symbol,
+                                    indicators=indicators_snapshot, ask_price=ask,
+                                    underlying_price=current,
                                 )
-                                # Remove the speculatively registered position
-                                with _positions_lock:
-                                    _open_positions[:] = [
-                                        p for p in _open_positions
-                                        if p.get("order_id") != str(order.id)
-                                    ]
-                    elif mid <= 0:
-                        log.warning(
-                            f"  Option quote returned mid=$0 — Alpaca returned no bid/ask. "
-                            f"Market may be closed or option data unavailable for {symbol}."
-                        )
-                    else:
-                        log.warning(
-                            f"  Spread ${spread:.2f} > max ${MAX_SPREAD:.2f} — skipping. "
-                            f"Consider raising MAX_SPREAD for {symbol}."
-                        )
+                            last_trade_ts = now  # always update — prevents flood in DRY_RUN
+                            if order and not DRY_RUN:
+                                filled = wait_for_fill(str(order.id), stop_event=stop_event)
+                                if filled:
+                                    acct_val = account_value()
+                                else:
+                                    log.warning(
+                                        f"Entry order {order.id} not filled — position NOT registered."
+                                    )
+                                    with _positions_lock:
+                                        _open_positions[:] = [
+                                            p for p in _open_positions
+                                            if p.get("order_id") != str(order.id)
+                                        ]
+                        elif mid <= 0:
+                            log.warning(
+                                f"  Option quote returned mid=$0 — Alpaca returned no bid/ask. "
+                                f"Market may be closed or option data unavailable for {symbol}."
+                            )
+                        else:
+                            log.warning(
+                                f"  Spread ${spread:.2f} > max ${MAX_SPREAD:.2f} — skipping. "
+                                f"Consider raising MAX_SPREAD for {symbol}."
+                            )
 
         if stop_event:
             stop_event.wait(timeout=60)
@@ -1815,6 +2005,25 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 # ── Position registry ─────────────────────────────────────────────────────────
 _open_positions: list[dict] = []
 _positions_lock = threading.Lock()
+
+# ── Stop-hit registry ─────────────────────────────────────────────────────────
+# Maps symbol → {"direction": str, "time": datetime} for the most recent stop.
+# Written by check_positions(); read by all_day_session() to extend cooldown
+# and block same-direction re-entry.
+_last_stop: dict[str, dict] = {}
+_stop_lock = threading.Lock()
+STOP_COOLDOWN_SEC  = 1200   # 20-min cooldown after a stop hit (vs 5 min normally)
+
+def record_stop_hit(symbol: str, direction: str) -> None:
+    with _stop_lock:
+        _last_stop[symbol.upper()] = {
+            "direction": direction,
+            "time":      datetime.now(ET),
+        }
+
+def get_last_stop(symbol: str) -> dict | None:
+    with _stop_lock:
+        return _last_stop.get(symbol.upper())
 
 
 def register_trade(occ_symbol: str, entry_price: float, contracts: int,
@@ -1957,6 +2166,7 @@ def check_positions() -> list[dict]:
         elif mid <= pos["stop_price"]:
             close_qty = remaining
             reason    = f"STOP HIT ${mid:.2f} <= ${pos['stop_price']:.2f} ({pnl_pct:+.1f}%)"
+            record_stop_hit(pos["symbol"], pos["direction"])
         elif mid >= pos["target_75"]:
             close_qty = remaining
             reason    = f"TARGET 2 ${mid:.2f} >= ${pos['target_75']:.2f} ({pnl_pct:+.1f}%)"
