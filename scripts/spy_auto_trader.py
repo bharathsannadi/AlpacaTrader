@@ -24,6 +24,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import math
+
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -96,6 +98,51 @@ POSITION_CLOSE_TIME  = (15, 50)   # hard-close all open option positions at 3:50
 FILL_POLL_INTERVAL   = 15         # seconds between fill-status checks
 FILL_TIMEOUT_MINS    = 3          # cancel unfilled order after this many minutes
 MAX_PORTFOLIO_RISK   = 0.03       # 3% max total deployed risk across all symbols
+MIN_OPTION_OI        = 100        # minimum open interest at the selected strike
+MIN_OPTION_VOLUME    = 10         # minimum contracts traded today at the strike
+IV_RANK_MAX          = 50         # skip buying options when IVR > 50% (premium too expensive)
+IV_RANK_WARN         = 35         # log a caution when IVR is in the 35–50% zone
+DELTA_TARGET_MIN     = 0.40       # prefer contracts with delta in [0.40, 0.65]
+DELTA_TARGET_MAX     = 0.65       # outside this range we still trade but log a warning
+
+
+# ── Greeks helpers ───────────────────────────────────────────────────────────
+def bs_delta(spot: float, strike: float, tte_days: float,
+             iv: float, option_type: str = "call") -> float:
+    """Black-Scholes delta approximation.
+
+    spot       : underlying price
+    strike     : option strike
+    tte_days   : calendar days until expiry
+    iv         : implied volatility as a decimal (e.g. 0.18 for 18%)
+    option_type: "call" or "put"
+
+    Returns delta in [0, 1] for calls, [-1, 0] for puts.
+    Falls back to 0.50 on any math error.
+    """
+    try:
+        if tte_days <= 0 or iv <= 0 or spot <= 0 or strike <= 0:
+            return 0.50
+        T = tte_days / 365.0
+        r = 0.05   # approximate risk-free rate
+        d1 = (math.log(spot / strike) + (r + 0.5 * iv ** 2) * T) / (iv * math.sqrt(T))
+        # Standard normal CDF approximation (Abramowitz & Stegun)
+        def _norm_cdf(x):
+            sign = 1 if x >= 0 else -1
+            x = abs(x)
+            t = 1.0 / (1.0 + 0.2316419 * x)
+            poly = t * (0.319381530
+                        + t * (-0.356563782
+                               + t * (1.781477937
+                                      + t * (-1.821255978
+                                             + t * 1.330274429))))
+            return 0.5 + sign * (0.5 - math.exp(-0.5 * x * x) / math.sqrt(2 * math.pi) * poly)
+        if option_type == "call":
+            return round(_norm_cdf(d1), 3)
+        else:
+            return round(_norm_cdf(d1) - 1, 3)
+    except Exception:
+        return 0.50
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -249,7 +296,9 @@ def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["ema9"]   = c.ewm(span=9,   adjust=False).mean()
     df["ema21"]  = c.ewm(span=21,  adjust=False).mean()
-    df["ema200"] = c.ewm(span=200, adjust=False).mean()
+    # ema200 is filled in from daily bars by inject_daily_ema200(); placeholder here.
+    if "ema200" not in df.columns:
+        df["ema200"] = np.nan
 
     delta = c.diff()
     gain  = delta.clip(lower=0).ewm(span=14, adjust=False).mean()
@@ -485,6 +534,52 @@ def fetch_prior_day_levels(symbol: str = "SPY"):
         return {}
 
 
+def check_earnings_risk(symbol: str) -> tuple[bool, str]:
+    """Return (risky, reason) if earnings fall within the active DTE window.
+
+    Buying options when earnings land inside DTE_MIN–DTE_MAX means the
+    announcement is priced into the premium — IV crush will destroy the trade
+    even if price moves the right direction.
+
+    Returns (True, reason_str) to WARN (not block) the session; caller logs it.
+    SPY/QQQ/IWM are index ETFs with no earnings — always returns (False, "").
+    """
+    INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "SLV", "TLT", "XLF",
+                  "XLK", "XLE", "XLV", "XLI", "XLU", "XLRE", "XLP", "XLY", "XLB"}
+    sym = symbol.upper()
+    if sym in INDEX_ETFS:
+        return False, ""
+    try:
+        ticker   = yf.Ticker(sym)
+        calendar = ticker.calendar
+        if calendar is None or calendar.empty:
+            return False, ""
+        # calendar index contains "Earnings Date" row
+        if "Earnings Date" not in calendar.index:
+            return False, ""
+        earnings_dates = calendar.loc["Earnings Date"]
+        today = datetime.now(ET).date()
+        for ed in (earnings_dates if hasattr(earnings_dates, "__iter__") else [earnings_dates]):
+            try:
+                ed_date = pd.Timestamp(ed).date()
+            except Exception:
+                continue
+            days_out = (ed_date - today).days
+            if DTE_MIN <= days_out <= DTE_MAX:
+                return (True,
+                    f"⚠️  EARNINGS RISK: {sym} reports in {days_out}d ({ed_date}) — "
+                    f"falls inside DTE window ({DTE_MIN}–{DTE_MAX}d). "
+                    f"IV crush likely post-announcement even if direction is correct.")
+            if 0 <= days_out < DTE_MIN:
+                return (True,
+                    f"⚠️  EARNINGS IMMINENT: {sym} reports in {days_out}d ({ed_date}) — "
+                    f"IV will be heavily inflated today.")
+        return False, ""
+    except Exception as e:
+        log.warning(f"check_earnings_risk({symbol}): {e}")
+        return False, ""
+
+
 def fetch_vix():
     """Fetch VIX via yfinance (Alpaca's free IEX feed doesn't support index symbols)."""
     try:
@@ -496,6 +591,156 @@ def fetch_vix():
         log.warning(f"fetch_vix yfinance failed: {e}")
     log.warning("Could not fetch VIX — proceeding without VIX filter")
     return None
+
+
+def fetch_futures_context() -> dict:
+    """Fetch ES (S&P 500) and NQ (Nasdaq) futures overnight context via yfinance.
+
+    Returns a dict with:
+      es_last, es_overnight_high, es_overnight_low, es_overnight_range_pct,
+      es_above_midpoint (bool), es_direction ("up"/"down"/"flat"),
+      nq_last, nq_direction, futures_bias ("bull"/"bear"/"neutral")
+
+    Called once at session start to add directional context to the log.
+    Does NOT block a trade — purely informational signal.
+    """
+    result = {}
+    for sym, key in (("ES=F", "es"), ("NQ=F", "nq")):
+        try:
+            ticker = yf.Ticker(sym)
+            # 2-day 5-min bars covers the overnight session
+            df = ticker.history(period="2d", interval="5m", prepost=True)
+            if df.empty:
+                continue
+            df.index = pd.to_datetime(df.index)
+            if df.index.tz is None:
+                df.index = df.index.tz_localize("UTC")
+            df.index = df.index.tz_convert(ET)
+
+            # Overnight = bars from yesterday 18:00 ET through today 09:30 ET
+            now = datetime.now(ET)
+            overnight_start = now.replace(hour=18, minute=0, second=0, microsecond=0) - timedelta(days=1)
+            market_open     = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+            overnight = df[(df.index >= overnight_start) & (df.index < market_open)]
+
+            if overnight.empty:
+                continue
+
+            o_high  = float(overnight["High"].max())
+            o_low   = float(overnight["Low"].min())
+            o_range = round((o_high - o_low) / o_low * 100, 2)
+            o_mid   = (o_high + o_low) / 2
+            last    = float(overnight["Close"].iloc[-1])
+            first   = float(overnight["Open"].iloc[0])
+            direction = "up" if last > first * 1.001 else "down" if last < first * 0.999 else "flat"
+            above_mid = last > o_mid
+
+            result[f"{key}_last"]              = round(last, 2)
+            result[f"{key}_overnight_high"]    = round(o_high, 2)
+            result[f"{key}_overnight_low"]     = round(o_low, 2)
+            result[f"{key}_overnight_range_pct"] = o_range
+            result[f"{key}_above_midpoint"]    = above_mid
+            result[f"{key}_direction"]         = direction
+        except Exception as e:
+            log.warning(f"fetch_futures_context({sym}): {e}")
+
+    # Derive overall bias
+    es_dir = result.get("es_direction", "flat")
+    nq_dir = result.get("nq_direction", "flat")
+    if es_dir == "up" and nq_dir in ("up", "flat"):
+        result["futures_bias"] = "bull"
+    elif es_dir == "down" and nq_dir in ("down", "flat"):
+        result["futures_bias"] = "bear"
+    else:
+        result["futures_bias"] = "neutral"
+
+    if result:
+        log.info(
+            f"  Futures: ES={result.get('es_last','?')} [{result.get('es_direction','?')}]  "
+            f"NQ={result.get('nq_last','?')} [{result.get('nq_direction','?')}]  "
+            f"Bias={result.get('futures_bias','?')}  "
+            f"ES overnight range={result.get('es_overnight_range_pct','?')}%"
+        )
+    return result
+
+
+def fetch_market_breadth() -> dict:
+    """Fetch market breadth indicators: put/call ratio and sector relative strength.
+
+    Returns a dict with:
+      pcr_equity   : CBOE equity put/call ratio (>0.80 = bearish extremity/contrarian bull;
+                     <0.50 = bullish extremity/contrarian bear)
+      pcr_total    : Total put/call ratio (equity + index options)
+      pcr_signal   : "bullish_extreme" | "bearish_extreme" | "neutral"
+      qqq_vs_spy   : QQQ day change minus SPY day change (positive = tech leading)
+      iwm_vs_spy   : IWM day change minus SPY day change (negative = risk-off)
+      breadth_bias : "bull" | "bear" | "neutral"
+
+    All sourced from free yfinance data.
+    """
+    result = {"pcr_equity": None, "pcr_total": None, "pcr_signal": "neutral",
+              "qqq_vs_spy": None, "iwm_vs_spy": None, "breadth_bias": "neutral"}
+    try:
+        # CBOE equity put/call ratio — yfinance symbol
+        for pcr_sym, pcr_key in (("^PCALL", "pcr_equity"), ("^PCRATIO", "pcr_total")):
+            try:
+                t = yf.Ticker(pcr_sym)
+                hist = t.history(period="1d", interval="1m")
+                if not hist.empty:
+                    result[pcr_key] = round(float(hist["Close"].iloc[-1]), 2)
+            except Exception:
+                pass  # P/C ratio tickers are flaky on yfinance — silently skip
+
+        pcr = result["pcr_equity"]
+        if pcr is not None:
+            if pcr > 0.80:
+                result["pcr_signal"] = "bearish_extreme"   # put buyers panicking → contrarian bull
+            elif pcr < 0.50:
+                result["pcr_signal"] = "bullish_extreme"   # call buyers euphoric → contrarian bear
+
+        # Relative sector strength: compare QQQ, IWM vs SPY
+        tickers = yf.download("SPY QQQ IWM", period="2d", interval="1d", progress=False)
+        if not tickers.empty and "Close" in tickers:
+            closes = tickers["Close"]
+            if len(closes) >= 2:
+                chg = closes.pct_change().iloc[-1] * 100
+                spy_chg = float(chg.get("SPY", 0))
+                qqq_chg = float(chg.get("QQQ", 0))
+                iwm_chg = float(chg.get("IWM", 0))
+                result["qqq_vs_spy"] = round(qqq_chg - spy_chg, 2)
+                result["iwm_vs_spy"] = round(iwm_chg - spy_chg, 2)
+
+        # Derive breadth bias
+        biases = []
+        if result["pcr_signal"] == "bearish_extreme":
+            biases.append("bull")   # contrarian
+        elif result["pcr_signal"] == "bullish_extreme":
+            biases.append("bear")   # contrarian
+
+        qqq_rel = result.get("qqq_vs_spy")
+        iwm_rel = result.get("iwm_vs_spy")
+        if qqq_rel is not None and iwm_rel is not None:
+            if qqq_rel > 0.3 and iwm_rel > -0.2:
+                biases.append("bull")   # tech and small-caps both participating
+            elif qqq_rel < -0.3 or iwm_rel < -0.5:
+                biases.append("bear")   # leadership breaking down
+
+        if biases.count("bull") > biases.count("bear"):
+            result["breadth_bias"] = "bull"
+        elif biases.count("bear") > biases.count("bull"):
+            result["breadth_bias"] = "bear"
+
+        pcr_str = f"{pcr:.2f}" if pcr else "n/a"
+        log.info(
+            f"  Market breadth: PCR(equity)={pcr_str}  [{result['pcr_signal']}]  "
+            f"QQQ-SPY={result.get('qqq_vs_spy','?'):+.2f}%  "
+            f"IWM-SPY={result.get('iwm_vs_spy','?'):+.2f}%  "
+            f"Bias={result['breadth_bias']}"
+        )
+    except Exception as e:
+        log.warning(f"fetch_market_breadth: {e}")
+
+    return result
 
 
 def fetch_historical_vol_baseline(symbol: str, days: int = 5, interval_min: int = 5) -> dict:
@@ -526,6 +771,106 @@ def fetch_historical_vol_baseline(symbol: str, days: int = 5, interval_min: int 
     except Exception as e:
         log.warning(f"fetch_historical_vol_baseline({symbol}): {e}")
         return {}
+
+
+def fetch_daily_ema200(symbol: str) -> float | None:
+    """Compute EMA200 from the last 300 daily closes.
+
+    Intraday 5-min bars only accumulate ~78 bars/day, so the rolling EMA200
+    needs 13+ trading days to have any data and is distorted noise until then.
+    A single daily EMA200 value is far more meaningful as a macro trend filter.
+    Returns None if insufficient history is available.
+    """
+    try:
+        ticker = yf.Ticker(symbol.upper())
+        df = ticker.history(period="400d", interval="1d")
+        if len(df) < 201:
+            log.warning(f"fetch_daily_ema200({symbol}): only {len(df)} daily bars — need 201+")
+            return None
+        ema200 = float(df["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
+        log.info(f"  Daily EMA200 ({symbol}): ${ema200:.2f}")
+        return round(ema200, 2)
+    except Exception as e:
+        log.warning(f"fetch_daily_ema200({symbol}): {e}")
+        return None
+
+
+def inject_daily_ema200(df: pd.DataFrame, ema200_val: float | None) -> pd.DataFrame:
+    """Broadcast the daily EMA200 scalar into every row of the intraday df."""
+    if ema200_val is not None:
+        df = df.copy()
+        df["ema200"] = ema200_val
+    return df
+
+
+def fetch_iv_rank(symbol: str) -> tuple[float | None, float | None]:
+    """Compute IV Rank (IVR) from the past 52 weeks of the nearest ATM option IV.
+
+    IVR = (current_iv - 52w_low_iv) / (52w_high_iv - 52w_low_iv) * 100
+
+    Uses yfinance options chain: fetches the nearest expiry, picks the ATM
+    call's impliedVolatility, then builds a rolling 1-year IV history from
+    weekly closes of the underlying's HV (historical volatility) as a proxy
+    when live option history isn't available.
+
+    Returns (current_iv_pct, iv_rank_pct) or (None, None) on failure.
+    current_iv_pct: e.g. 18.5 means 18.5% annualised IV
+    iv_rank_pct   : 0–100; higher = more expensive relative to past year
+    """
+    try:
+        ticker = yf.Ticker(symbol.upper())
+
+        # --- Current IV: nearest-expiry ATM call ---
+        expirations = ticker.options
+        if not expirations:
+            return None, None
+        nearest_expiry = expirations[0]
+        chain = ticker.option_chain(nearest_expiry)
+        calls = chain.calls
+        if calls.empty:
+            return None, None
+
+        # Current price for ATM selection
+        hist_1d = ticker.history(period="1d", interval="1m")
+        if hist_1d.empty:
+            return None, None
+        spot = float(hist_1d["Close"].iloc[-1])
+
+        # Pick closest strike to spot
+        calls = calls.copy()
+        calls["dist"] = (calls["strike"] - spot).abs()
+        atm_call = calls.sort_values("dist").iloc[0]
+        current_iv = float(atm_call["impliedVolatility"]) * 100  # convert to %
+
+        # --- 52-week IV history proxy: 30-day historical volatility ---
+        # True option IV history requires expensive data; HV30 correlates well
+        # and is derivable from free daily bars.
+        daily = ticker.history(period="1y", interval="1d")
+        if len(daily) < 31:
+            return current_iv, None
+
+        log_ret = np.log(daily["Close"] / daily["Close"].shift(1)).dropna()
+        hv30 = log_ret.rolling(21).std() * np.sqrt(252) * 100  # annualised %
+        hv30 = hv30.dropna()
+        if hv30.empty:
+            return current_iv, None
+
+        iv_52w_low  = float(hv30.min())
+        iv_52w_high = float(hv30.max())
+        iv_range    = iv_52w_high - iv_52w_low
+        if iv_range < 0.1:
+            return current_iv, 50.0  # flat IV history — treat as neutral
+
+        iv_rank = round((current_iv - iv_52w_low) / iv_range * 100, 1)
+        iv_rank = max(0.0, min(100.0, iv_rank))
+        log.info(
+            f"  IV Rank ({symbol}): current={current_iv:.1f}%  "
+            f"52w [{iv_52w_low:.1f}%–{iv_52w_high:.1f}%]  IVR={iv_rank:.0f}%"
+        )
+        return round(current_iv, 2), iv_rank
+    except Exception as e:
+        log.warning(f"fetch_iv_rank({symbol}): {e}")
+        return None, None
 
 
 def detect_gap(df, prior_close):
@@ -676,17 +1021,73 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY"):
             log.warning(f"No {symbol} {contract_type.value} contracts in [{lo:.2f}, {hi:.2f}] for {expiry_str}")
             return None, None
 
-        # Pick the contract closest to ATM
-        contracts_sorted = sorted(contracts, key=lambda c: abs(float(c.strike_price) - current_price))
+        # Filter by open interest and today's volume — low OI means illiquid exit.
+        liquid = []
+        for c in contracts:
+            oi  = int(c.open_interest  or 0)
+            vol = int(c.close_price    or 0)  # Alpaca uses close_price for daily volume in contract object
+            # open_interest is the reliable field; volume_today may not be populated
+            if oi >= MIN_OPTION_OI:
+                liquid.append(c)
+            else:
+                log.info(
+                    f"  Skipping {c.symbol} strike=${c.strike_price} "
+                    f"OI={oi} (min {MIN_OPTION_OI}) — too illiquid"
+                )
+
+        if not liquid:
+            # Fall back to full list with a warning so we don't block trading on
+            # symbols that simply have low OI reported (data can lag by a day)
+            log.warning(
+                f"find_atm_option({symbol}): no contracts pass OI≥{MIN_OPTION_OI} — "
+                f"falling back to full list (OI data may be stale)"
+            )
+            liquid = contracts
+
+        # Compute BS delta for each liquid contract and prefer those closest to
+        # DELTA_TARGET (0.50 ideal for directional bets). Sort by |delta - 0.50|
+        # rather than purely by strike distance — avoids picking far-OTM contracts
+        # when the ATM strike happens to be mid-spread.
+        today = datetime.now(ET).date()
+        expiry_date = datetime.fromisoformat(expiry_str).date()
+        tte_days = max(1, (expiry_date - today).days)
+        opt_type_str = "call" if contract_type == ContractType.CALL else "put"
+
+        def _score(c):
+            strike = float(c.strike_price)
+            # Use a rough IV estimate (25% annualised) when live IV unavailable
+            delta = bs_delta(current_price, strike, tte_days, iv=0.25, option_type=opt_type_str)
+            return abs(abs(delta) - 0.50)   # 0 = perfect ATM delta
+
+        contracts_sorted = sorted(liquid, key=_score)
         c = contracts_sorted[0]
+        oi_val = int(c.open_interest or 0)
+
+        # Log the chosen delta for transparency
+        chosen_delta = bs_delta(
+            current_price, float(c.strike_price), tte_days,
+            iv=0.25, option_type=opt_type_str
+        )
+        if abs(chosen_delta) < DELTA_TARGET_MIN or abs(chosen_delta) > DELTA_TARGET_MAX:
+            log.warning(
+                f"  Delta={chosen_delta:.2f} outside target [{DELTA_TARGET_MIN},{DELTA_TARGET_MAX}] "
+                f"— best available strike=${c.strike_price}"
+            )
+        else:
+            log.info(
+                f"  Selected: {c.symbol}  strike=${c.strike_price}  "
+                f"delta≈{chosen_delta:.2f}  OI={oi_val}"
+            )
 
         return {
             "symbol":           c.symbol,        # OCC symbol (used for orders)
             "id":               c.id,
             "strike_price":     str(c.strike_price),
             "expiration_date":  c.expiration_date.isoformat(),
-            "type":             "call" if contract_type == ContractType.CALL else "put",
+            "type":             opt_type_str,
             "underlying":       symbol,
+            "open_interest":    oi_val,
+            "delta":            chosen_delta,
         }, float(c.strike_price)
     except Exception as e:
         log.warning(f"Could not find ATM option for {symbol}: {e}")
@@ -927,7 +1328,8 @@ def evaluate_vwap_momentum(bar, prev_bar, df):
 # ── Session runner ────────────────────────────────────────────────────────────
 def run_session(session_name, session_end_hour, session_end_min,
                 evaluate_fn, prior_levels, gap_info=None, stop_event=None,
-                symbol: str = "SPY"):
+                symbol: str = "SPY", daily_ema200: float | None = None,
+                iv_rank: float | None = None):
     symbol = symbol.upper()
     session_end = datetime.now(ET).replace(
         hour=session_end_hour, minute=session_end_min, second=0, microsecond=0
@@ -966,16 +1368,18 @@ def run_session(session_name, session_end_hour, session_end_min,
                 time.sleep(60)
             continue
 
+        df       = inject_daily_ema200(df, daily_ema200)
         bar      = df.iloc[-1]
         prev_bar = df.iloc[-2] if len(df) > 1 else bar
         current  = float(bar["close_price"])
         atr      = float(bar["atr"]) if not np.isnan(bar["atr"]) else None
+        ema200_str = f"{daily_ema200:.2f}" if daily_ema200 else "—"
 
         atr_str = f"{atr:.2f}" if atr else "—"
         log.info(
             f"  {bar['begins_at'].strftime('%H:%M')}  "
             f"{symbol}=${current:.2f}  VWAP={bar['vwap']:.2f}  "
-            f"EMA9={bar['ema9']:.2f}  EMA21={bar['ema21']:.2f}  "
+            f"EMA9={bar['ema9']:.2f}  EMA21={bar['ema21']:.2f}  EMA200d={ema200_str}  "
             f"RSI={bar['rsi']:.1f}  MACD={bar['macd_hist']:.3f}  "
             f"ATR={atr_str}  Vol={bar['vol_ratio']:.2f}x  "
             f"BB[{bar['bb_lower']:.2f}–{bar['bb_upper']:.2f}]"
@@ -984,6 +1388,23 @@ def run_session(session_name, session_end_hour, session_end_min,
         direction, reason = evaluate_fn(bar, prev_bar, df)
 
         if direction:
+            # IV Rank gate — skip buying when options are too expensive
+            if iv_rank is not None:
+                if iv_rank > IV_RANK_MAX:
+                    log.warning(
+                        f"  IV Rank={iv_rank:.0f}% > {IV_RANK_MAX}% — options overpriced. "
+                        f"Skipping entry to avoid paying inflated premium."
+                    )
+                    if stop_event:
+                        stop_event.wait(timeout=60)
+                    else:
+                        time.sleep(60)
+                    continue
+                elif iv_rank > IV_RANK_WARN:
+                    log.warning(
+                        f"  IV Rank={iv_rank:.0f}% — elevated. Proceeding with caution."
+                    )
+
             # Surface similar past setups from memory before proceeding
             indicators_snapshot = bar.to_dict()
             memory_context = TRADE_MEMORY.retrieve_similar(symbol, direction, indicators_snapshot)
@@ -1044,10 +1465,22 @@ def morning_session(prior_levels, vix, stop_event=None, end_hour=None, end_minut
     log.info(f"MORNING SESSION ({symbol})  —  ends at {eh:02d}:{em:02d} ET")
     log.info("=" * 60)
 
+    earnings_risky, earnings_msg = check_earnings_risk(symbol)
+    if earnings_risky:
+        log.warning(earnings_msg)
+
+    fetch_futures_context()    # logged; morning sessions don't gate on it
+    fetch_market_breadth()     # logged; context only
+    daily_ema200 = fetch_daily_ema200(symbol)
+    _current_iv, iv_rank = fetch_iv_rank(symbol)
+    if iv_rank is not None and iv_rank > IV_RANK_WARN:
+        log.warning(f"  IV Rank={iv_rank:.0f}% — {'EXPENSIVE, entries will be skipped' if iv_rank > IV_RANK_MAX else 'elevated, proceed with caution'}")
+
     df = fetch_bars(symbol)
     if df is None:
         log.warning(f"Could not fetch {symbol} data. Skipping morning session.")
         return
+    df = inject_daily_ema200(df, daily_ema200)
 
     prior_close = prior_levels.get("prev_close")
     gap_pct, gap_dir = detect_gap(df, prior_close)
@@ -1067,7 +1500,8 @@ def morning_session(prior_levels, vix, stop_event=None, end_hour=None, end_minut
         def gap_only(bar, prev_bar, df):
             return evaluate_gap_fade(bar, gap_pct, gap_dir, df)
         run_session("Morning (gap fade)", eh, em, gap_only, prior_levels,
-                    stop_event=stop_event, symbol=symbol)
+                    stop_event=stop_event, symbol=symbol, daily_ema200=daily_ema200,
+                    iv_rank=iv_rank)
         return
 
     def morning_eval(bar, prev_bar, df):
@@ -1076,7 +1510,8 @@ def morning_session(prior_levels, vix, stop_event=None, end_hour=None, end_minut
         return evaluate_gap_fade(bar, gap_pct, gap_dir, df)
 
     run_session("Morning", eh, em, morning_eval, prior_levels,
-                stop_event=stop_event, symbol=symbol)
+                stop_event=stop_event, symbol=symbol, daily_ema200=daily_ema200,
+                iv_rank=iv_rank)
 
 
 def evening_session(prior_levels, stop_event=None, end_hour=None, end_minute=None,
@@ -1088,11 +1523,23 @@ def evening_session(prior_levels, stop_event=None, end_hour=None, end_minute=Non
     log.info(f"EVENING SESSION ({symbol})  —  ends at {eh:02d}:{em:02d} ET")
     log.info("=" * 60)
 
+    earnings_risky, earnings_msg = check_earnings_risk(symbol)
+    if earnings_risky:
+        log.warning(earnings_msg)
+
+    fetch_futures_context()    # logged; evening sessions don't gate on it
+    fetch_market_breadth()     # logged; context only
+    daily_ema200 = fetch_daily_ema200(symbol)
+    _current_iv, iv_rank = fetch_iv_rank(symbol)
+    if iv_rank is not None and iv_rank > IV_RANK_WARN:
+        log.warning(f"  IV Rank={iv_rank:.0f}% — {'EXPENSIVE, entries will be skipped' if iv_rank > IV_RANK_MAX else 'elevated, proceed with caution'}")
+
     def evening_eval(bar, prev_bar, df):
         return evaluate_vwap_momentum(bar, prev_bar, df)
 
     run_session("Evening", eh, em, evening_eval, prior_levels,
-                stop_event=stop_event, symbol=symbol)
+                stop_event=stop_event, symbol=symbol, daily_ema200=daily_ema200,
+                iv_rank=iv_rank)
 
 
 # ── All-day session (replaces separate morning/evening) ───────────────────────
@@ -1119,6 +1566,13 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
         log.warning(f"VIX too high — {symbol} all-day session blocked.")
         return
 
+    earnings_risky, earnings_msg = check_earnings_risk(symbol)
+    if earnings_risky:
+        log.warning(earnings_msg)
+
+    futures_ctx    = fetch_futures_context()
+    breadth_ctx    = fetch_market_breadth()
+
     acct_val = account_value()
     log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * MAX_RISK_PCT:,.2f}  |  {symbol}")
     if prior_levels:
@@ -1144,10 +1598,26 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
         df_out["vol_ratio"] = df_out.apply(_ratio, axis=1)
         return df_out
 
+    # Daily EMA200 — fetched once; injected into every intraday bar fetch.
+    # Intraday EMA200 is meaningless (needs 13+ days of 5-min bars to stabilize).
+    daily_ema200 = fetch_daily_ema200(symbol)
+
+    # IV Rank — computed once at session start from nearest-expiry ATM call.
+    _current_iv, iv_rank = fetch_iv_rank(symbol)
+    if iv_rank is not None:
+        if iv_rank > IV_RANK_MAX:
+            log.warning(
+                f"  ⚠️  IVR={iv_rank:.0f}% — options EXPENSIVE. "
+                f"Entries will be skipped until IV normalises below {IV_RANK_MAX}%."
+            )
+        elif iv_rank > IV_RANK_WARN:
+            log.warning(f"  ⚠️  IVR={iv_rank:.0f}% — elevated. Proceeding with caution.")
+
     # Compute opening-range data once at session start
     df_init = fetch_bars(symbol)
     if df_init is not None and not df_init.empty:
         df_init = _apply_vol_baseline(df_init)
+        df_init = inject_daily_ema200(df_init, daily_ema200)
     or_high = or_low = None
     gap_pct = gap_dir = None
 
@@ -1192,15 +1662,17 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             continue
 
         df       = _apply_vol_baseline(df)
+        df       = inject_daily_ema200(df, daily_ema200)
         bar      = df.iloc[-1]
         prev_bar = df.iloc[-2] if len(df) > 1 else bar
         current  = float(bar["close_price"])
         atr      = float(bar["atr"]) if not np.isnan(bar["atr"]) else None
+        ema200_str = f"{daily_ema200:.2f}" if daily_ema200 else "—"
 
         log.info(
             f"  {bar['begins_at'].strftime('%H:%M')}  "
             f"{symbol}=${current:.2f}  VWAP={bar['vwap']:.2f}  "
-            f"EMA9={bar['ema9']:.2f}  EMA21={bar['ema21']:.2f}  "
+            f"EMA9={bar['ema9']:.2f}  EMA21={bar['ema21']:.2f}  EMA200d={ema200_str}  "
             f"RSI={bar['rsi']:.1f}  MACD={bar['macd_hist']:.3f}  "
             f"ATR={f'{atr:.2f}' if atr else '—'}  Vol={bar['vol_ratio']:.2f}x  "
             f"BB[{bar['bb_lower']:.2f}–{bar['bb_upper']:.2f}]"
@@ -1231,7 +1703,47 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                     time.sleep(60)
                 continue
 
+            # IV Rank gate — skip when options are too expensive
+            if iv_rank is not None and iv_rank > IV_RANK_MAX:
+                log.warning(
+                    f"  IV Rank={iv_rank:.0f}% > {IV_RANK_MAX}% — options overpriced. "
+                    f"Skipping entry to avoid paying inflated premium."
+                )
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+            if iv_rank is not None and iv_rank > IV_RANK_WARN:
+                log.warning(f"  IV Rank={iv_rank:.0f}% — elevated. Proceeding with caution.")
+
             indicators_snapshot = bar.to_dict()
+            if futures_ctx:
+                indicators_snapshot["futures_bias"]           = futures_ctx.get("futures_bias", "neutral")
+                indicators_snapshot["es_direction"]           = futures_ctx.get("es_direction", "flat")
+                indicators_snapshot["es_overnight_range_pct"] = futures_ctx.get("es_overnight_range_pct", 0)
+            if breadth_ctx:
+                indicators_snapshot["breadth_bias"]  = breadth_ctx.get("breadth_bias", "neutral")
+                indicators_snapshot["pcr_equity"]    = breadth_ctx.get("pcr_equity")
+                indicators_snapshot["qqq_vs_spy"]    = breadth_ctx.get("qqq_vs_spy")
+                indicators_snapshot["pcr_signal"]    = breadth_ctx.get("pcr_signal", "neutral")
+
+            # Log breadth/futures alignment warning if they oppose the signal
+            if breadth_ctx:
+                b_bias = breadth_ctx.get("breadth_bias", "neutral")
+                if b_bias != "neutral" and b_bias != direction:
+                    log.warning(
+                        f"  ⚠️  Breadth bias={b_bias} opposes {direction} signal — "
+                        f"proceed with reduced conviction."
+                    )
+            if futures_ctx:
+                f_bias = futures_ctx.get("futures_bias", "neutral")
+                if f_bias != "neutral" and f_bias != direction:
+                    log.warning(
+                        f"  ⚠️  Futures bias={f_bias} opposes {direction} signal — "
+                        f"proceed with reduced conviction."
+                    )
+
             memory_context = TRADE_MEMORY.retrieve_similar(symbol, direction, indicators_snapshot)
             if memory_context:
                 log.info(memory_context)
