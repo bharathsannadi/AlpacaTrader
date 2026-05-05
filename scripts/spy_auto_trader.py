@@ -1994,6 +1994,8 @@ def check_positions() -> list[dict]:
             "pnl_pct":     round(pnl_pct, 1),
             "reason":      reason,
             "is_partial":  is_partial,
+            "order_id":    pos.get("order_id"),
+            "opened_at":   pos.get("opened_at"),
         })
 
     return events
@@ -2064,6 +2066,103 @@ def main():
     vix   = fetch_vix()
     if vix_check(vix):
         morning_session(prior, vix)
+
+
+# ── End-of-day learning review ────────────────────────────────────────────────
+
+_EOD_REVIEW_PATTERNS = {
+    "signal":    r"SIGNAL \[(BULL|BEAR)\]",
+    "order":     r"Order submitted",
+    "dry_run":   r"\[DRY RUN\] User (ALLOWED|SKIPPED)",
+    "iv_gate":   r"IV rank gate",
+    "vol_gate":  r"vol_ratio.*below",
+    "news_veto": r"News veto",
+    "debate_ok": r"Debate.*PROCEED",
+    "debate_no": r"Debate.*SUPPRESS",
+    "stop":      r"STOP HIT",
+    "target1":   r"TARGET 1 partial",
+    "target2":   r"TARGET 2",
+    "hard_close":r"HARD CLOSE",
+}
+
+
+def _parse_today_log(log_path: str) -> dict:
+    """Scan today's lines from the log file and tally key events."""
+    import re
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    counts = {k: 0 for k in _EOD_REVIEW_PATTERNS}
+    try:
+        with open(log_path, "r", errors="replace") as fh:
+            for line in fh:
+                if today not in line:
+                    continue
+                for key, pat in _EOD_REVIEW_PATTERNS.items():
+                    if re.search(pat, line):
+                        counts[key] += 1
+    except FileNotFoundError:
+        pass
+    return counts
+
+
+def eod_review(log_path: str, trades_today: list) -> str:
+    """Parse today's log + closed trades and ask Claude Haiku for insights.
+
+    Returns a formatted multi-line review string.
+    Falls back to a plain-text summary when ANTHROPIC_API_KEY is not set.
+    """
+    counts = _parse_today_log(log_path)
+
+    wins  = [t for t in trades_today if not t.get("is_partial") and t.get("pnl_pct", 0) > 0]
+    loses = [t for t in trades_today if not t.get("is_partial") and t.get("pnl_pct", 0) < 0]
+    flat  = [t for t in trades_today if not t.get("is_partial") and t.get("pnl_pct", 0) == 0]
+    avg_win  = round(sum(t["pnl_pct"] for t in wins)  / len(wins),  1) if wins  else 0
+    avg_loss = round(sum(t["pnl_pct"] for t in loses) / len(loses), 1) if loses else 0
+
+    summary_lines = [
+        f"Signals fired: {counts['signal']}",
+        f"Orders placed: {counts['order']}  (dry-run allowed: {counts['dry_run']})",
+        f"IV rank gates: {counts['iv_gate']}  |  Vol gates: {counts['vol_gate']}",
+        f"News vetoes: {counts['news_veto']}  |  Debate suppressed: {counts['debate_no']}  |  Debate proceed: {counts['debate_ok']}",
+        f"Exits — stops: {counts['stop']}  T1-partial: {counts['target1']}  T2: {counts['target2']}  hard-close: {counts['hard_close']}",
+        f"Closed trades: {len(wins)} wins ({avg_win:+.1f}% avg)  {len(loses)} losses ({avg_loss:+.1f}% avg)  {len(flat)} flat",
+    ]
+    if trades_today:
+        for t in trades_today:
+            if not t.get("is_partial"):
+                summary_lines.append(
+                    f"  {t.get('symbol','?')} {t.get('direction','?').upper()} "
+                    f"{t.get('pnl_pct',0):+.1f}% — {t.get('reason','')}"
+                )
+
+    plain_summary = "\n".join(summary_lines)
+    log.info(f"EOD summary:\n{plain_summary}")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "── EOD Review (no API key — plain stats) ──\n" + plain_summary
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = (
+            "You are a quantitative trading coach reviewing a day of automated options trading.\n"
+            "Given the stats below, provide:\n"
+            "1. What worked today (2 bullets max)\n"
+            "2. What didn't work (2 bullets max)\n"
+            "3. One concrete parameter tweak to try tomorrow (be specific: name the constant and new value)\n"
+            "Be concise. No preamble.\n\n"
+            f"Stats:\n{plain_summary}"
+        )
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        insight = resp.content[0].text.strip()
+        return "── EOD Review ──\n" + plain_summary + "\n\n── Insights ──\n" + insight
+    except Exception as e:
+        log.warning(f"eod_review: LLM call failed: {e}")
+        return "── EOD Review (LLM unavailable) ──\n" + plain_summary
 
 
 if __name__ == "__main__":

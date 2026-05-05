@@ -458,14 +458,28 @@ def position_monitor() -> None:
                     f"{ev['reason']}  P&L {ev['pnl_pct']:+.1f}%"
                 )
                 socketio.emit("log", {"message": msg, "level": "INFO"})
+                close_entry = {
+                    "symbol":     ev["symbol"],
+                    "direction":  ev["direction"],
+                    "pnl_pct":    ev["pnl_pct"],
+                    "reason":     ev["reason"],
+                    "time":       datetime.now(ET).strftime("%H:%M"),
+                    "is_partial": ev.get("is_partial", False),
+                }
                 with _state_lock:
-                    state["trades_today"].append({
-                        "symbol":    ev["symbol"],
-                        "direction": ev["direction"],
-                        "pnl_pct":   ev["pnl_pct"],
-                        "reason":    ev["reason"],
-                        "time":      datetime.now(ET).strftime("%H:%M"),
-                    })
+                    state["trades_today"].append(close_entry)
+                # Wire update_outcome into ChromaDB for full (non-partial) closes
+                if not ev.get("is_partial") and ev.get("order_id"):
+                    hold_min = 0.0
+                    if ev.get("opened_at"):
+                        try:
+                            opened = datetime.fromisoformat(ev["opened_at"])
+                            hold_min = (datetime.now(ET) - opened).total_seconds() / 60
+                        except Exception:
+                            pass
+                    trader.TRADE_MEMORY.update_outcome(
+                        ev["order_id"], ev["pnl_pct"], hold_min
+                    )
 
             if events:
                 refresh_account()
@@ -473,6 +487,20 @@ def position_monitor() -> None:
 
         except Exception as e:
             log.warning(f"position_monitor error: {e}")
+
+
+def _run_eod_review(trades_snapshot: list) -> None:
+    """Run end-of-day learning review and broadcast results to the UI."""
+    log.info("EOD Review: starting analysis…")
+    socketio.emit("log", {"message": "── EOD Learning Review starting… ──", "level": "INFO"})
+    try:
+        review = trader.eod_review(LOG_PATH, trades_snapshot)
+        for line in review.splitlines():
+            if line.strip():
+                socketio.emit("log", {"message": line, "level": "INFO"})
+        log.info("EOD Review: complete")
+    except Exception as e:
+        log.warning(f"EOD Review failed: {e}")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -746,9 +774,16 @@ def _launch_session(sym: str) -> None:
     t.start()
 
 
+EOD_REVIEW_HOUR   = 15
+EOD_REVIEW_MINUTE = 35
+LOG_PATH = os.path.join(os.path.dirname(__file__), "spy_trader.log")
+
+
 def scheduler():
-    """Background task: auto-start all-day sessions at 9:30 ET on weekdays."""
+    """Background task: auto-start all-day sessions at 9:30 ET on weekdays,
+    and fire end-of-day learning review at 15:35 ET."""
     session_fired_on = None
+    eod_fired_on     = None
 
     while True:
         socketio.sleep(30)
@@ -768,6 +803,13 @@ def scheduler():
             log.info("Auto-scheduler: starting all-day sessions for all symbols")
             for sym in _SYMBOLS_ORDERED:
                 _launch_session(sym)
+
+        # EOD learning review — fires once at 15:35 ET after all sessions have ended
+        if (now.hour, now.minute) == (EOD_REVIEW_HOUR, EOD_REVIEW_MINUTE) and eod_fired_on != today:
+            eod_fired_on = today
+            with _state_lock:
+                trades_snapshot = list(state["trades_today"])
+            socketio.start_background_task(_run_eod_review, trades_snapshot)
 
 
 @socketio.on("start_session")
