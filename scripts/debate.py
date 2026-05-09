@@ -72,19 +72,25 @@ def run_debate(
 ) -> tuple[bool, float, str]:
     """
     Run bull/bear debate and return (proceed, confidence, summary).
-    Falls back to (True, 1.0, "") if API key missing or call fails.
+
+    Failure semantics:
+      - "Gate is OFF" cases (no API key, client init fails) → fail OPEN with
+        (True, 1.0, ...). Caller should already be checking DEBATE_ENABLED.
+      - "Gate is ON but broke" cases (any LLM call fails, judge response unparseable)
+        → fail CLOSED with (False, 0.0, ...). A risk gate that silently disappears
+        on a network blip is no gate at all.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        log.debug("debate: ANTHROPIC_API_KEY not set — skipping debate")
-        return True, 1.0, ""
+        log.debug("debate: ANTHROPIC_API_KEY not set — skipping debate (gate OFF)")
+        return True, 1.0, "no_api_key"
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
     except Exception as e:
-        log.warning(f"debate: failed to create Anthropic client: {e}")
-        return True, 1.0, ""
+        log.warning(f"debate: failed to create Anthropic client: {e} — gate OFF")
+        return True, 1.0, f"client_init_failed: {e}"
 
     setup = _fmt_indicators(symbol, direction, indicators)
     if news_summary:
@@ -95,12 +101,14 @@ def run_debate(
     # ── Step 1: Bull agent ────────────────────────────────────────────────────
     bull_arg = _call_llm(client, _BULL_SYSTEM, f"Setup:\n{setup}\n\nMake the bull case.")
     if bull_arg is None:
-        return True, 1.0, ""
+        log.warning("debate: bull LLM call failed — failing CLOSED (suppressing trade)")
+        return False, 0.0, "bull_llm_failed"
 
     # ── Step 2: Bear agent ────────────────────────────────────────────────────
     bear_arg = _call_llm(client, _BEAR_SYSTEM, f"Setup:\n{setup}\n\nMake the bear case.")
     if bear_arg is None:
-        return True, 1.0, ""
+        log.warning("debate: bear LLM call failed — failing CLOSED (suppressing trade)")
+        return False, 0.0, "bear_llm_failed"
 
     # ── Step 3: Judge ────────────────────────────────────────────────────────
     judge_prompt = (
@@ -111,7 +119,8 @@ def run_debate(
     )
     judge_raw = _call_llm(client, _JUDGE_SYSTEM, judge_prompt)
     if judge_raw is None:
-        return True, 1.0, ""
+        log.warning("debate: judge LLM call failed — failing CLOSED (suppressing trade)")
+        return False, 0.0, "judge_llm_failed"
 
     proceed, confidence, reason = _parse_judge(judge_raw)
     summary = (
@@ -139,7 +148,9 @@ def _call_llm(client, system: str, user: str) -> Optional[str]:
 
 
 def _parse_judge(raw: str) -> tuple[bool, float, str]:
-    """Extract (proceed, confidence, reason) from judge JSON response."""
+    """Extract (proceed, confidence, reason) from judge JSON response.
+    On parse failure: fail CLOSED — a malformed judge is not a green light.
+    """
     import json, re
     try:
         # Strip markdown fences if present
@@ -151,5 +162,5 @@ def _parse_judge(raw: str) -> tuple[bool, float, str]:
         reason     = str(data.get("reason", ""))
         return proceed, confidence, reason
     except Exception:
-        log.warning(f"debate: could not parse judge response: {raw[:200]}")
-        return True, 1.0, "parse error — defaulting to proceed"
+        log.warning(f"debate: could not parse judge response: {raw[:200]} — failing CLOSED")
+        return False, 0.0, "judge_parse_failed"

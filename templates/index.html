@@ -9,29 +9,36 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
   :root {
-    /* Surfaces */
-    --bg:        #080c14;
-    --card:      #0e1420;
-    --card2:     #131925;
-    --border:    #1e2a3a;
-    --border-strong: #2c3a52;
+    /* ── Surfaces — deep space navy ── */
+    --bg:            #04070e;
+    --card:          #080e1a;
+    --card2:         #0c1422;
+    --border:        #152035;
+    --border-strong: #1e3050;
 
-    /* Brand & status */
-    --green:     #00d88a;
-    --green-dim: #00d88a33;
-    --red:       #ff4560;
-    --red-dim:   #ff456033;
-    --blue:      #3b82f6;
-    --blue-dim:  #3b82f622;
-    --yellow:    #f59e0b;
-    --yellow-dim:#f59e0b22;
+    /* ── Brand & status ── */
+    --green:      #00e5a0;   /* emerald — gains */
+    --green-dim:  #00e5a01a;
+    --green-glow: #00e5a040;
+    --red:        #ff3d68;   /* vivid rose — losses */
+    --red-dim:    #ff3d681a;
+    --red-glow:   #ff3d6840;
+    --blue:       #4d9eff;   /* electric blue */
+    --blue-dim:   #4d9eff18;
+    --blue-glow:  #4d9eff35;
+    --cyan:       #22d3ee;   /* cyan — session/info */
+    --cyan-dim:   #22d3ee18;
+    --yellow:     #f5a623;   /* amber — warning / pre-market */
+    --yellow-dim: #f5a62322;
+    --purple:     #a78bfa;   /* violet — after-hours */
+    --purple-dim: #a78bfa22;
 
-    /* Text */
-    --text:      #e2e8f0;
-    --muted:     #94a3b8;        /* WCAG AA-safe on --bg for 11px+ */
-    --muted-2:   #64748b;        /* secondary muted (decorative use) */
+    /* ── Text ── */
+    --text:    #dde8fa;
+    --muted:   #7a96b8;
+    --muted-2: #4a6280;
 
-    /* Type scale (6 steps, no 9–10px) */
+    /* ── Type scale ── */
     --fs-2xs: 11px;
     --fs-xs:  12px;
     --fs-sm:  13px;
@@ -39,7 +46,7 @@
     --fs-lg:  18px;
     --fs-xl:  24px;
 
-    /* Spacing scale (4px base) */
+    /* ── Spacing (4px base) ── */
     --s-1: 4px;
     --s-2: 8px;
     --s-3: 12px;
@@ -48,12 +55,12 @@
     --s-6: 24px;
     --s-8: 32px;
 
-    /* Radii + motion */
+    /* ── Radii + motion ── */
     --r:    6px;
     --r-lg: 10px;
     --tx:   .15s ease;
 
-    /* Type stacks */
+    /* ── Type stacks ── */
     --mono: 'JetBrains Mono', monospace;
     --sans: 'Inter', sans-serif;
   }
@@ -159,31 +166,44 @@
     text-align: center; line-height: 1.5;
   }
 
-  /* ── Header (3 zones: brand | stats | actions) ── */
+  /* ── Header ── */
   header {
-    background: var(--card); border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #0b1628 0%, var(--card) 100%);
+    border-bottom: 1px solid var(--border-strong);
     padding: 0 var(--s-4); display: flex; align-items: center;
     gap: var(--s-5); height: 56px;
+    box-shadow: 0 1px 0 rgba(77,158,255,0.08);
   }
   .logo {
-    font-weight: 700; font-size: var(--fs-md); letter-spacing: .3px;
-    background: linear-gradient(135deg, var(--green), #4ade80);
+    font-weight: 800; font-size: var(--fs-md); letter-spacing: .2px;
+    background: linear-gradient(135deg, var(--cyan) 0%, var(--blue) 60%, #818cf8 100%);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
     white-space: nowrap;
   }
   .logo span {
     -webkit-text-fill-color: var(--text); color: var(--text);
-    background: none; font-weight: 600;
+    background: none; font-weight: 500; opacity: .8;
   }
 
   .ticker-block {
-    display: flex; align-items: baseline; gap: var(--s-2);
-    padding-left: var(--s-4); border-left: 1px solid var(--border);
+    display: flex; align-items: center; gap: var(--s-2);
+    padding-left: var(--s-4); border-left: 1px solid var(--border-strong);
   }
-  .ticker-symbol { font-size: var(--fs-xs); font-weight: 700; color: var(--muted); letter-spacing: .5px; }
-  .ticker-price  { font-family: var(--mono); font-size: 22px; font-weight: 700; line-height: 1; }
+  .ticker-symbol { font-size: var(--fs-xs); font-weight: 700; color: var(--muted); letter-spacing: .8px; text-transform: uppercase; }
+  .ticker-price  { font-family: var(--mono); font-size: 22px; font-weight: 700; line-height: 1; transition: text-shadow .3s ease; }
+  .ticker-price.up   { text-shadow: 0 0 20px var(--green-glow); }
+  .ticker-price.down { text-shadow: 0 0 20px var(--red-glow); }
   .ticker-chg    { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 600; }
+  .session-badge {
+    font-size: 9px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 4px; align-self: center; margin-left: 2px;
+    transition: all var(--tx);
+  }
+  .session-badge.pre     { background: var(--yellow-dim);  color: var(--yellow);  border: 1px solid var(--yellow); }
+  .session-badge.regular { background: var(--green-dim);   color: var(--green);   border: 1px solid var(--green); }
+  .session-badge.after   { background: var(--purple-dim);  color: var(--purple);  border: 1px solid var(--purple); }
+  .session-badge.closed  { background: var(--border);      color: var(--muted-2); border: 1px solid var(--border-strong); }
 
   /* Stats group (middle zone) */
   .stats-group {
@@ -230,24 +250,26 @@
 
   /* ── Tab bar ── */
   .tab-bar {
-    background: var(--card2);
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 4px;
+    background: linear-gradient(180deg, #091422 0%, var(--card2) 100%);
+    border-bottom: 1px solid var(--border-strong);
+    display: flex; align-items: center; gap: 2px;
     padding: 0 16px;
     height: 36px; overflow-x: auto;
   }
   .symbol-tab {
     background: transparent; border: none; color: var(--muted);
     padding: 8px 14px; font-family: var(--mono); font-size: 12px;
-    font-weight: 600; cursor: pointer; transition: all .15s;
+    font-weight: 600; cursor: pointer; transition: all .2s;
     border-bottom: 2px solid transparent;
     white-space: nowrap;
     display: flex; align-items: center; gap: 5px;
+    letter-spacing: .3px;
   }
-  .symbol-tab:hover  { color: var(--text); background: var(--bg); }
+  .symbol-tab:hover  { color: var(--text); background: rgba(77,158,255,0.06); }
   .symbol-tab.active {
-    color: var(--green); border-bottom-color: var(--green);
-    background: var(--bg);
+    color: var(--cyan); border-bottom-color: var(--cyan);
+    background: rgba(34,211,238,0.06);
+    text-shadow: 0 0 16px rgba(34,211,238,0.5);
   }
   /* Per-symbol session-running dot in tab */
   .tab-dot {
@@ -256,7 +278,7 @@
   }
   .tab-dot.running {
     background: var(--green);
-    box-shadow: 0 0 4px var(--green);
+    box-shadow: 0 0 6px var(--green);
     animation: pulse 1.5s infinite;
   }
 
@@ -289,12 +311,14 @@
   .left-panel  { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 4px; min-width: 0; }
   .right-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; padding-left: 4px; }
   .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px 14px;
+    background: linear-gradient(160deg, var(--card2) 0%, var(--card) 100%);
+    border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
   }
   .card-title {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .8px; color: var(--muted); margin-bottom: 10px;
+    letter-spacing: 1px; color: var(--muted-2); margin-bottom: 10px;
   }
 
   /* Session cards (compact) */
@@ -313,19 +337,23 @@
 
   .btn-row { display: flex; gap: 6px; }
   .btn-run {
-    flex: 1; background: var(--green); color: #000; font-weight: 700;
-    border: none; border-radius: 6px; padding: 6px; font-size: 12px;
-    cursor: pointer; transition: opacity .2s; display: flex; align-items: center; justify-content: center; gap: 6px;
+    flex: 1; background: linear-gradient(135deg, var(--green) 0%, #00c882 100%);
+    color: #000; font-weight: 700;
+    border: none; border-radius: 7px; padding: 8px; font-size: 12px;
+    cursor: pointer; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 6px;
+    box-shadow: 0 2px 10px var(--green-dim);
+    letter-spacing: .3px;
   }
-  .btn-run:hover   { opacity: .85; }
-  .btn-run:disabled { opacity: .35; cursor: not-allowed; }
+  .btn-run:hover   { box-shadow: 0 4px 18px var(--green-glow); transform: translateY(-1px); }
+  .btn-run:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; transform: none; }
   .btn-stop {
     flex: 1; background: var(--red-dim); color: var(--red); font-weight: 700;
-    border: 1px solid var(--red); border-radius: 6px; padding: 6px; font-size: 12px;
+    border: 1px solid rgba(255,61,104,0.4); border-radius: 7px; padding: 8px; font-size: 12px;
     cursor: pointer; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 6px;
+    letter-spacing: .3px;
   }
-  .btn-stop:hover   { background: var(--red); color: #fff; }
-  .btn-stop:disabled { opacity: .35; cursor: not-allowed; }
+  .btn-stop:hover   { background: var(--red); color: #fff; box-shadow: 0 4px 18px var(--red-glow); transform: translateY(-1px); }
+  .btn-stop:disabled { opacity: .35; cursor: not-allowed; transform: none; }
 
   /* Automation toggles card */
   .auto-schedule-card { padding: 10px 14px; }
@@ -343,6 +371,40 @@
     background: var(--green); color: #000; white-space: nowrap;
   }
   .auto-schedule-btn.off { background: var(--border-strong); color: var(--muted); }
+
+  /* Data Freshness card */
+  .freshness-card  { padding: 10px 14px; }
+  .freshness-empty { font-size: 11px; color: var(--muted); padding: 4px 0; }
+  .freshness-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .freshness-table th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 600;
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .freshness-table td {
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .freshness-table tr:last-child td { border-bottom: none; }
+  .freshness-table .age-col { text-align: right; width: 60px; }
+  .freshness-source { font-size: 10px; color: var(--muted); }
+  .freshness-key    { font-weight: 600; color: var(--text); }
+  /* Freshness dot indicator (placed before the source key) */
+  .fresh-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .fresh-dot.green  { background: var(--green); }
+  .fresh-dot.yellow { background: var(--yellow); }
+  .fresh-dot.red    { background: var(--red); }
+  .freshness-row.stale td { color: var(--red); }
 
   /* Config (compact) */
   .config-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-2); }
@@ -654,12 +716,12 @@
   /* Chart card */
   .chart-card { display: flex; flex-direction: column; min-height: 0; padding: 8px 10px; }
   .chart-header {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 8px;
     margin-bottom: 6px; padding-bottom: 6px;
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
   }
-  .chart-title  { font-size: 13px; font-weight: 700; color: var(--text); font-family: var(--mono); }
+  .chart-title  { font-size: 13px; font-weight: 700; color: var(--text); font-family: var(--mono); min-width: 42px; }
   .chart-legend { font-size: 10px; color: var(--muted); display: flex; gap: 8px; font-family: var(--mono); }
   #chart-container { flex: 1; min-height: 240px; width: 100%; position: relative; }
   .chart-empty {
@@ -667,21 +729,42 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 4px; pointer-events: none;
     color: var(--muted); font-family: var(--mono); font-size: 11px;
-    background: rgba(5, 8, 16, 0.85); border-radius: var(--r);
+    background: rgba(4,7,14,0.88); border-radius: var(--r);
     text-align: center; padding: 16px;
   }
   .chart-empty .chart-empty-title { color: var(--text); font-size: 12px; font-weight: 700; }
   .chart-empty.hidden { display: none; }
 
-  /* Timeframe buttons */
-  .tf-buttons { display: flex; gap: 2px; background: var(--bg); border-radius: 6px; padding: 2px; }
-  .tf-btn {
-    background: transparent; border: none; color: var(--muted);
-    padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
-    cursor: pointer; transition: all .15s; font-family: var(--mono);
+  /* ── Chart timeframe selectors (two independent groups) ── */
+  .tf-group {
+    display: flex; align-items: center; gap: 0;
+    background: var(--bg); border-radius: 6px; padding: 2px;
+    border: 1px solid var(--border);
   }
-  .tf-btn:hover         { color: var(--text); background: var(--card2); }
-  .tf-btn.active        { background: var(--blue-dim); color: var(--blue); }
+  .tf-group-label {
+    font-size: 9px; font-weight: 700; color: var(--muted-2);
+    text-transform: uppercase; letter-spacing: .7px;
+    padding: 0 6px 0 4px; border-right: 1px solid var(--border);
+    margin-right: 2px; white-space: nowrap;
+  }
+  .tf-btn {
+    background: transparent; border: none; color: var(--muted-2);
+    font-size: 11px; font-family: var(--mono); font-weight: 600;
+    padding: 3px 7px; border-radius: 4px; cursor: pointer;
+    transition: all .15s; white-space: nowrap; line-height: 1.5;
+  }
+  .tf-btn:hover { color: var(--text); background: rgba(77,158,255,0.12); }
+  .tf-btn.iv-active  { color: var(--cyan);   background: rgba(34,211,238,0.15); }
+  .tf-btn.rng-active { color: var(--yellow); background: rgba(245,166,35,0.13); }
+
+  /* Zoom buttons */
+  .zoom-btns { display: flex; gap: 2px; background: var(--bg); border-radius: 6px; padding: 2px; border: 1px solid var(--border); }
+  .zoom-btn {
+    background: transparent; border: none; color: var(--muted);
+    padding: 2px 7px; border-radius: 4px; font-size: 13px; font-weight: 700; line-height: 1;
+    cursor: pointer; transition: all .15s;
+  }
+  .zoom-btn:hover { color: var(--cyan); background: var(--card2); }
 
   /* Toggle (compact) */
   .toggle { width: 36px !important; height: 20px !important; }
@@ -745,6 +828,7 @@
     <span class="ticker-symbol" id="ticker-symbol">SPY</span>
     <span class="ticker-price neutral" id="spy-price">—</span>
     <span class="ticker-chg neutral" id="spy-chg">—</span>
+    <span class="session-badge closed" id="session-badge">CLOSED</span>
   </div>
 
   <div class="stats-group">
@@ -813,7 +897,7 @@
           <div class="config-sub">% of account value</div>
         </div>
         <div style="display:flex;align-items:center;gap:var(--s-1)">
-          <input class="risk-input" type="number" id="risk-pct" value="0.5" min="0.1" max="5" step="0.1" onchange="setRisk()" aria-label="Risk per trade percent"/>
+          <input class="risk-input" type="number" id="risk-pct" value="3" min="0.1" max="10" step="0.1" onchange="setRisk()" aria-label="Risk per trade percent"/>
           <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
         </div>
       </div>
@@ -911,6 +995,19 @@
       </div>
     </div>
 
+    <!-- Data Freshness — per-source ages with green/yellow/red dots -->
+    <div class="card freshness-card" data-card-id="freshness">
+      <span class="drag-grip">⋮⋮</span>
+      <div class="card-title">Data Freshness</div>
+      <div class="freshness-empty" id="freshness-empty">No data fetched yet.</div>
+      <table class="freshness-table" id="freshness-table" style="display:none">
+        <thead>
+          <tr><th>Source</th><th>Provider</th><th class="age-col">Age</th></tr>
+        </thead>
+        <tbody id="freshness-body"></tbody>
+      </table>
+    </div>
+
     <!-- All-day trading session -->
     <div class="card session-card" data-card-id="session">
       <span class="drag-grip">⋮⋮</span>
@@ -929,13 +1026,9 @@
                min="09:30" max="16:00" onchange="setSessionEnd()"/>
         <span>ET</span>
       </div>
-      <div class="btn-row" style="margin-bottom:6px">
-        <button class="btn-run"  id="btn-start-session" onclick="startSession()">▶ Start (tab)</button>
-        <button class="btn-stop" id="btn-stop-session"  onclick="stopSession()" disabled>■ Stop (tab)</button>
-      </div>
       <div class="btn-row">
-        <button class="btn-run"  style="background:var(--blue);font-size:11px" onclick="startAllSessions()">▶▶ All</button>
-        <button class="btn-stop" style="font-size:11px" onclick="stopAllSessions()">■■ Stop All</button>
+        <button class="btn-run"  id="btn-start-all" onclick="startAllSessions()">▶▶ Start All</button>
+        <button class="btn-stop" id="btn-stop-all"  onclick="stopAllSessions()">■■ Stop All</button>
       </div>
     </div>
 
@@ -951,24 +1044,44 @@
       <span class="drag-grip">⋮⋮</span>
       <div class="chart-header">
         <span class="chart-title" id="chart-title">SPY</span>
-        <div class="tf-buttons">
-          <button class="tf-btn active" data-tf="1D" onclick="setTimeframe('1D')">1D</button>
-          <button class="tf-btn"        data-tf="5D" onclick="setTimeframe('5D')">5D</button>
-          <button class="tf-btn"        data-tf="1M" onclick="setTimeframe('1M')">1M</button>
-          <button class="tf-btn"        data-tf="3M" onclick="setTimeframe('3M')">3M</button>
-          <button class="tf-btn"        data-tf="1Y" onclick="setTimeframe('1Y')">1Y</button>
-          <button class="tf-btn"        data-tf="5Y" onclick="setTimeframe('5Y')">5Y</button>
+
+        <!-- Interval group: bar granularity -->
+        <div class="tf-group" id="iv-group" title="Bar interval — how much time per candle">
+          <span class="tf-group-label">Bar</span>
+          <button class="tf-btn" data-iv="1m"  onclick="setInterval_('1m')">1m</button>
+          <button class="tf-btn" data-iv="5m"  onclick="setInterval_('5m')">5m</button>
+          <button class="tf-btn iv-active" data-iv="15m" onclick="setInterval_('15m')">15m</button>
+          <button class="tf-btn" data-iv="30m" onclick="setInterval_('30m')">30m</button>
+          <button class="tf-btn" data-iv="1h"  onclick="setInterval_('1h')">1h</button>
+          <button class="tf-btn" data-iv="1d"  onclick="setInterval_('1d')">1D</button>
+        </div>
+
+        <!-- Range group: how far back to show -->
+        <div class="tf-group" id="rng-group" title="Time range — how far back to display">
+          <span class="tf-group-label">Range</span>
+          <button class="tf-btn rng-active" data-rng="1D"  onclick="setRange('1D')">1D</button>
+          <button class="tf-btn" data-rng="5D"  onclick="setRange('5D')">5D</button>
+          <button class="tf-btn" data-rng="1M"  onclick="setRange('1M')">1M</button>
+          <button class="tf-btn" data-rng="3M"  onclick="setRange('3M')">3M</button>
+          <button class="tf-btn" data-rng="1Y"  onclick="setRange('1Y')">1Y</button>
+          <button class="tf-btn" data-rng="5Y"  onclick="setRange('5Y')">5Y</button>
+        </div>
+
+        <div class="zoom-btns">
+          <button class="zoom-btn" onclick="zoomIn()"    title="Zoom in">+</button>
+          <button class="zoom-btn" onclick="resetZoom()" title="Fit all">⊡</button>
+          <button class="zoom-btn" onclick="zoomOut()"   title="Zoom out">−</button>
         </div>
         <span class="chart-legend">
           <span style="color:var(--green)">▲ Call</span>
           <span style="color:var(--red)">▼ Put</span>
         </span>
-        <button class="clear-btn" onclick="refreshChart()" style="margin-left:auto">↻</button>
+        <button class="clear-btn" onclick="refreshChart()" style="margin-left:auto" title="Force refresh">↻</button>
       </div>
       <div id="chart-container">
         <div id="chart-empty" class="chart-empty hidden">
           <div class="chart-empty-title">No data available</div>
-          <div id="chart-empty-detail">Markets may be closed or this symbol has no recent IEX activity.</div>
+          <div id="chart-empty-detail">Try pressing ↻ or switching timeframe.</div>
         </div>
       </div>
     </div>
@@ -1054,6 +1167,6 @@
 </div>
 
 <script src="/static/lightweight-charts.js"></script>
-<script src="/static/main.js"></script>
+<script src="/static/main.js?v=4"></script>
 </body>
 </html>

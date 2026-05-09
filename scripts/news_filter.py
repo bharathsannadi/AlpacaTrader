@@ -102,6 +102,26 @@ def _fetch_yfinance(symbol: str) -> list:
         return []
 
 
+# ── TTL cache for per-signal re-checks ──────────────────────────────────────
+# Without this, re-checking news on every signal would hammer the upstream API.
+# The cache keyed by symbol returns the same verdict for NEWS_CACHE_TTL_SEC.
+_news_cache: dict = {}             # symbol -> (vetoed, reason, ts)
+NEWS_CACHE_TTL_SEC = 600           # 10 min — fresh enough to catch new halt headlines
+
+def check_news_sentiment_cached(symbol: str, finnhub_key: str = None) -> tuple:
+    """Cached wrapper around check_news_sentiment for per-signal re-checks.
+    Re-uses the previous verdict for up to NEWS_CACHE_TTL_SEC seconds.
+    """
+    sym = symbol.upper()
+    now = time.time()
+    cached = _news_cache.get(sym)
+    if cached and (now - cached[2]) < NEWS_CACHE_TTL_SEC:
+        return cached[0], cached[1]
+    vetoed, reason = check_news_sentiment(sym, finnhub_key)
+    _news_cache[sym] = (vetoed, reason, now)
+    return vetoed, reason
+
+
 def check_news_sentiment(symbol: str, finnhub_key: str = None) -> tuple:
     """
     Scan recent headlines for symbol.

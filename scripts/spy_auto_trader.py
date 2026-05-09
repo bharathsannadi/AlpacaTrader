@@ -9,7 +9,7 @@ Sessions:
 Symbols   : SPY, AMZN, GOOG, MSFT, NVDA, META (active tab determines what trades)
 Indicators: VWAP, EMA9/21/200, RSI, MACD, Bollinger Bands, ATR
 Filters   : VIX level, lunch-hour block, gap size, volume, PDT counter
-Risk      : 0.5% account per trade, ATR-based stops, partial exits at +50%
+Risk      : 3% account per trade, ATR-based stops, partial exits at +50%
 
 Broker    : Alpaca (alpaca-py SDK)
 Modes     : Paper trading (default) or Live trading
@@ -18,6 +18,7 @@ Modes     : Paper trading (default) or Live trading
 """
 
 import os
+import re
 import time
 import threading
 import logging
@@ -51,6 +52,18 @@ from alpaca.trading.enums            import (
 STOP_MORNING = threading.Event()
 STOP_EVENING = threading.Event()
 TRADE_CONFIRM_CALLBACK = None    # set by UI; signature: (details: dict) -> bool
+ON_FILL_CALLBACK       = None    # set by app.py; called after every successful
+                                 # fill (entry) or close so the UI can refresh
+                                 # account_value / buying_power / max_risk.
+
+def _notify_fill() -> None:
+    """Trigger the UI account-state refresh. Safe to call from session/monitor threads."""
+    if ON_FILL_CALLBACK is None:
+        return
+    try:
+        ON_FILL_CALLBACK()
+    except Exception as e:
+        log.warning(f"ON_FILL_CALLBACK error: {e}")
 
 # ── Alpaca clients (initialized via init_clients) ─────────────────────────────
 TRADING_CLIENT = None
@@ -67,22 +80,31 @@ import debate as _debate_mod
 DEBATE_ENABLED     = False   # enabled on login if ANTHROPIC_API_KEY present
 DEBATE_MIN_CONFIDENCE = _debate_mod.DEBATE_MIN_CONFIDENCE
 
+# ── News filter ─────────────────────────────────────────────────────────────────
+import news_filter as _news_mod
+NEWS_FILTER_ENABLED = False   # toggled by app.py to mirror the UI checkbox
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DRY_RUN         = True
-MAX_RISK_PCT    = 0.005
-STOP_LOSS_PCT   = 0.50
-PROFIT_TARGET   = 0.75
-MIN_VOL_RATIO   = 1.5
+MAX_RISK_PCT    = 0.005   # 0.5% per trade — allows ~6 concurrent vs MAX_PORTFOLIO_RISK
+STOP_LOSS_PCT          = 0.40    # tighter stop — losers pay less per trade
+PROFIT_TARGET          = 1.00    # +100% final target — let runners run
+PARTIAL_QTY_FRAC       = 0.25    # close 25% (not 50%) at the partial trigger
+PARTIAL_TRIGGER_PCT    = 0.50    # take a sliver off at +50%
+BREAKEVEN_TRIGGER_PCT  = 0.30    # move stop to entry once up +30%
+MIN_VOL_RATIO       = 1.5         # ORB requires elevated volume in the opening phase
+VWAP_MIN_VOL_RATIO  = 1.0         # VWAP momentum: looser — mid-day vol is naturally lower
 RSI_OVERBOUGHT  = 70
 RSI_OVERSOLD    = 30
-MAX_SPREAD      = 0.30
+MAX_SPREAD          = 0.05   # absolute floor: never reject for less than $0.05 spread
+MAX_SPREAD_PCT      = 0.05   # 5% of mid — primary gate; the dollar floor catches cheap options
 DTE_MIN         = 7
 DTE_MAX         = 14
 VIX_MAX         = 30
 ATR_MULT_TREND  = 2.5
 ATR_MULT_RANGE  = 1.5
-MIN_ORB_WIDTH   = 0.002
+MIN_ORB_ATR_MULT     = 0.5        # ORB acceptable when width >= 0.5 * ATR (volatility-relative)
 PDT_REMAINING   = 3       # PDT does not apply to Alpaca margin accounts ≥$25K
 ET              = ZoneInfo("America/New_York")
 
@@ -93,26 +115,121 @@ LUNCH_END       = (13, 30)
 EVENING_START   = (15, 0)
 EVENING_END     = (15, 30)
 HARD_CLOSE           = (15, 0)
-TIME_STOP_MINS       = 60
+TIME_STOP_MINS         = 60       # exit stalled positions after N min if pnl in [-15%, +10%]
+TIME_STOP_RANGE_LO     = -0.15    # don't time-stop a near-stop trade
+TIME_STOP_RANGE_HI     = 0.10     # don't time-stop a clear winner — let runners run
 POSITION_CLOSE_TIME  = (15, 50)   # hard-close all open option positions at 3:50 ET
 FILL_POLL_INTERVAL   = 15         # seconds between fill-status checks
 FILL_TIMEOUT_MINS    = 3          # cancel unfilled order after this many minutes
+ENTRY_WALK_WAIT_SEC  = 10         # try mid for this long before walking up to ask
 MAX_PORTFOLIO_RISK    = 0.03       # 3% max total deployed risk across all symbols
 DAILY_LOSS_LIMIT_PCT  = 0.015     # halt new entries if down ≥ 1.5% from day-start equity
+DAILY_PROFIT_LOCK_PCT = 0.02      # halt new entries when up ≥ 2% — protect the day's gains
 MAX_SECTOR_POSITIONS  = 2         # max concurrent open positions in the same sector
+GLOBAL_COOLDOWN_SEC   = 60        # min seconds between ANY two entries (across all symbols)
+WHIPSAW_COOLDOWN_SEC  = 900       # 15min — block opposite-direction signals after a fired one
+MAX_DAILY_ENTRIES     = 8         # hard cap on new entries per day; after this, manage-only
+LAST_ENTRY_HOUR       = 14        # ET — no new entries after 14:00 ET (closing-imbalance flow)
+LAST_ENTRY_MINUTE     = 0
+CHOP_ATR_RATIO        = 0.5       # if today's 1H ATR < 0.5× of 5-day avg → CHOP → skip trend-cont
+CHOP_REGIME_TTL_SEC   = 1800      # 30min — re-evaluate regime; ATR doesn't move fast intraday
 
 SECTOR_MAP: dict[str, str] = {
     "SPY": "index",  "QQQ": "index",  "IWM": "index",  "DIA": "index",
     "AMZN": "tech",  "GOOG": "tech",  "META": "tech",
     "MSFT": "tech",  "NVDA": "tech",  "AAPL": "tech",
 }
-MIN_OPTION_OI        = 100        # minimum open interest at the selected strike
+ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA"}
+MIN_OPTION_OI_ETF    = 500        # ETFs have deep OI — require it to ensure tight spreads
+MIN_OPTION_OI_STOCK  = 200        # single stocks: lower floor, but still 2× the original
 MIN_OPTION_VOLUME    = 10         # minimum contracts traded today at the strike
-IV_RANK_MAX          = 50         # skip buying options when IVR > 50% (premium too expensive)
-IV_RANK_WARN         = 35         # log a caution when IVR is in the 35–50% zone
+IV_RANK_MAX          = 70         # skip buying options when IVR > 70% (extreme premium only)
+IV_RANK_WARN         = 50         # log a caution when IVR is in the 50–70% zone
 DELTA_TARGET_MIN     = 0.40       # prefer contracts with delta in [0.40, 0.65]
 DELTA_TARGET_MAX     = 0.65       # outside this range we still trade but log a warning
 IV_RANK_REFRESH_MIN  = 60         # re-fetch IV rank every N minutes during a session
+STOP_CONFIRM_TICKS   = 2          # require N consecutive monitor cycles below stop before exit
+
+# ── Data freshness tracker ────────────────────────────────────────────────────
+# Free retail data is delayed (yfinance: ~15 min for bars, VIX, news). Without
+# explicit tracking, we have no idea whether a "buy now" signal is reacting to
+# data that's 30 seconds old or 30 minutes old. This module-level dict stamps
+# every successful fetch so we can:
+#   1. Refuse trades when critical data exceeds a freshness threshold
+#   2. Surface per-source ages in the UI (red/yellow/green)
+#   3. Log a warning when a stale source is consulted for a decision
+# Sources are namespaced as "kind:symbol" e.g. "bars:SPY", "price:NVDA", "vix",
+# "option_quote:SPY", "news:META".
+# key -> (timestamp, source_tag). The key is canonical ("bars:SPY", "vix", "price:NVDA")
+# and the source_tag describes where the data came from ("alpaca", "yfinance",
+# "alpaca_chain") for UI display. The gate logic only cares about the canonical key.
+_data_freshness: dict[str, tuple[float, str]] = {}
+_freshness_lock = threading.Lock()
+
+# Per-source max-age (seconds) before stale_data_check refuses a new entry.
+# Tuned to the strategy: 5-min bars can be 5 min old; option quotes must be live.
+DATA_MAX_AGE_SEC: dict[str, int] = {
+    "bars":          360,    # 5-min bar + 1 min refresh tolerance
+    "price":         90,     # spot price for sizing/sanity
+    "option_quote":  30,     # entry/exit decisions ride on this — must be live
+    "vix":           600,    # vol regime changes slowly; 10 min OK
+    "news":          900,    # 15 min cache anyway; align with that
+}
+
+def stamp_freshness(key: str, source_tag: str = "") -> None:
+    """Record that `key` was fetched successfully right now from `source_tag`.
+
+    `key` is canonical ("bars:SPY", "vix", "price:NVDA") — what stale_data_check
+    looks up. `source_tag` is for UI display ("alpaca", "yfinance", "alpaca_chain").
+    """
+    with _freshness_lock:
+        _data_freshness[key] = (time.time(), source_tag)
+
+def get_freshness_snapshot() -> dict[str, dict]:
+    """Snapshot of all tracked sources for the UI.
+    Returns: {key: {"age_sec": float, "stale": bool, "max_age": int, "source": str}}.
+    """
+    now = time.time()
+    out = {}
+    with _freshness_lock:
+        for key, (ts, source_tag) in _data_freshness.items():
+            age = round(now - ts, 1)
+            kind = key.split(":", 1)[0]
+            max_age = DATA_MAX_AGE_SEC.get(kind, 600)
+            out[key] = {
+                "age_sec": age,
+                "stale":   age > max_age,
+                "max_age": max_age,
+                "source":  source_tag,
+            }
+    return out
+
+def stale_data_check(symbol: str, kinds: tuple = ("price", "option_quote")) -> bool:
+    """Return True if all `kinds` for `symbol` are fresh enough to trade on.
+
+    Called as an entry gate. Defaults to checking spot price and option quote —
+    the two pieces of data we actually trade against. Bars feed signal direction
+    but we tolerate a few minutes of lag there since the strategy is bar-based.
+    """
+    sym = symbol.upper()
+    now = time.time()
+    with _freshness_lock:
+        for kind in kinds:
+            key = f"{kind}:{sym}" if kind != "vix" else "vix"
+            entry = _data_freshness.get(key)
+            max_age = DATA_MAX_AGE_SEC.get(kind, 600)
+            if entry is None:
+                log.warning(f"  ⛔ Stale data: {key} never fetched — refusing entry")
+                return False
+            ts, _src = entry
+            age = now - ts
+            if age > max_age:
+                log.warning(
+                    f"  ⛔ Stale data: {key} is {age:.0f}s old "
+                    f"(max {max_age}s) — refusing entry"
+                )
+                return False
+    return True
 
 
 # ── Greeks helpers ───────────────────────────────────────────────────────────
@@ -163,6 +280,14 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# Silence yfinance's own logger — it shouts ERROR for "delisted" tickers like
+# ^PCALL/^PCRATIO that we already handle with try/except and graceful fallbacks.
+# The bulk-download path emits stderr too, so suppress that as well.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("yfinance.utils").setLevel(logging.CRITICAL)
+logging.getLogger("yfinance.data").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)   # yfinance cache backend
+
 
 # ── Client init ───────────────────────────────────────────────────────────────
 def init_clients(api_key: str, api_secret: str, paper: bool = True):
@@ -203,13 +328,55 @@ def init_debate(enabled: bool = True) -> None:
         log.warning("Debate: ANTHROPIC_API_KEY not set — debate will stay disabled")
 
 
+def init_news_filter(enabled: bool = True) -> None:
+    """Enable/disable per-signal news re-check. Called from app.py on toggle."""
+    global NEWS_FILTER_ENABLED
+    NEWS_FILTER_ENABLED = enabled
+
+
+def news_check_ok(symbol: str) -> bool:
+    """Returns True if news is clean (or filter disabled). Cached for 10 min.
+
+    Called immediately before placing each entry — fixes the bug where the
+    session-start news check missed mid-session halt headlines.
+    """
+    if not NEWS_FILTER_ENABLED:
+        return True
+    try:
+        vetoed, reason = _news_mod.check_news_sentiment_cached(symbol)
+        if vetoed:
+            log.warning(f"  ⛔ News veto at signal time ({symbol}): {reason}")
+            return False
+    except Exception as e:
+        log.warning(f"news_check_ok({symbol}) failed: {e} — letting trade proceed")
+    return True
+
+
 # ── Market data ───────────────────────────────────────────────────────────────
+# Sticky data source: once a symbol falls back to yfinance for the day, KEEP using
+# yfinance until the next trading day. Mixing Alpaca + yfinance bars within a
+# session causes silent VWAP/EMA/MACD drift — different timestamp conventions and
+# slightly different prices for the same minute. Map: symbol → trading-day date.
+_yf_sticky: dict[str, object] = {}     # symbol -> date when yfinance fallback was triggered
+
+def _is_sticky_yfinance(symbol: str) -> bool:
+    today = datetime.now(ET).date()
+    pinned = _yf_sticky.get(symbol)
+    return pinned == today
+
+def _pin_yfinance(symbol: str) -> None:
+    _yf_sticky[symbol] = datetime.now(ET).date()
+
+
 def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
     """Fetch intraday bars for `symbol` (today's session) with the indicator stack.
 
     Tries Alpaca feeds in order (iex → sip → default) then falls back to yfinance
     so sessions don't silently skip when IEX has no data for a symbol (e.g. SPY
     is NYSE Arca-listed, not IEX-listed).
+
+    Once yfinance is used for a symbol on a given trading day, all subsequent
+    fetch_bars() calls for that symbol stay on yfinance — see _yf_sticky above.
     """
     symbol = symbol.upper()
 
@@ -220,7 +387,8 @@ def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
         market_open -= timedelta(days=1)
 
     sym_bars = []
-    if DATA_CLIENT:
+    # Skip Alpaca entirely if we already pinned yfinance for this symbol today.
+    if DATA_CLIENT and not _is_sticky_yfinance(symbol):
         tf    = TimeFrame(interval_min, TimeFrameUnit.Minute)
         start = market_open.astimezone(timezone.utc)
         for feed_attempt in ("iex", "sip", None):
@@ -246,8 +414,9 @@ def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
                     f"raised {type(e).__name__}: {e}"
                 )
 
-    # yfinance fallback
+    # yfinance fallback — and pin for the rest of the day to avoid indicator drift.
     if not sym_bars:
+        _pin_yfinance(symbol)
         log.info(f"fetch_bars({symbol}): Alpaca returned 0 bars — falling back to yfinance")
         try:
             ticker = yf.Ticker(symbol)
@@ -279,6 +448,7 @@ def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
                 log.warning(f"fetch_bars({symbol}): no bars at or after 9:30 ET")
                 return None
             log.info(f"fetch_bars({symbol}): yfinance fallback — {len(yf_df)} bars (from 9:30 ET)")
+            stamp_freshness(f"bars:{symbol}", source_tag="yfinance")
             return _add_indicators(yf_df)
         except Exception as e:
             log.warning(f"fetch_bars({symbol}): yfinance fallback failed: {e}")
@@ -298,6 +468,7 @@ def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
     df = pd.DataFrame(rows)
     df["begins_at"] = pd.to_datetime(df["begins_at"], utc=True).dt.tz_convert(ET)
     df = df.sort_values("begins_at").reset_index(drop=True)
+    stamp_freshness(f"bars:{symbol}", source_tag="alpaca")
     return _add_indicators(df)
 
 
@@ -347,170 +518,92 @@ def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _fetch_chart_bars_yfinance(symbol: str, tf_str: str, one_day_mode: bool) -> list:
-    """Fallback chart data source using yfinance (free, no auth required)."""
-    try:
-        # Map timeframe to yfinance period + interval
-        yf_config = {
-            "1D": ("5d",  "5m"),    # 5-min bars for full extended-hours day
-            "5D": ("10d", "15m"),
-            "1M": ("1mo", "1h"),
-            "3M": ("3mo", "1h"),
-            "1Y": ("1y",  "1d"),
-            "5Y": ("5y",  "1d"),
-        }
-        period, interval = yf_config.get(tf_str, yf_config["5D"])
+# yfinance max lookback in calendar days per bar interval
+_YF_MAX_DAYS: dict[str, int] = {
+    "1m": 7, "5m": 60, "15m": 60, "30m": 60, "1h": 730, "1d": 9999, "1wk": 9999,
+}
 
-        # 1D: include pre-market (4 AM) + after-hours (8 PM) so the full session
-        # timeline is visible on the chart.
-        use_prepost = one_day_mode
+# Range token → calendar days to look back
+_RANGE_DAYS: dict[str, int] = {
+    "1D": 5,    # 5 cal-days guarantees we find the latest trading session
+    "5D": 10,   # ~7 trading days
+    "1M": 35,
+    "3M": 95,
+    "1Y": 370,
+    "5Y": 1830,
+}
+
+
+def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "SPY") -> list:
+    """Fetch OHLCV bars via yfinance.
+
+    interval  — bar size  : 1m | 5m | 15m | 30m | 1h | 1d
+    range_    — time span : 1D | 5D | 1M | 3M | 1Y | 5Y
+    symbol    — ticker
+
+    1D range always filters to the most-recent trading day and includes
+    pre/after-market bars so the full extended-hours session is visible.
+
+    If the (interval, range_) combo exceeds yfinance limits (e.g. 1m bars for
+    3 months), the lookback is capped to the maximum allowed — no error raised.
+    """
+    symbol = symbol.upper()
+
+    # Map our interval token to the yfinance interval string
+    yf_iv_map = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "1d": "1d"}
+    yf_iv = yf_iv_map.get(interval, "15m")
+
+    # Compute lookback, capping at yfinance's per-interval maximum
+    days    = _RANGE_DAYS.get(range_, 10)
+    max_d   = _YF_MAX_DAYS.get(yf_iv, 60)
+    if days > max_d:
+        log.info(f"fetch_chart_bars({symbol}): {interval}+{range_} capped at {max_d}d (yfinance limit)")
+        days = max_d
+
+    today_only = (range_ == "1D")
+    prepost    = today_only          # extended hours only for single-day view
+
+    try:
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period, interval=interval, prepost=use_prepost)
+        df = ticker.history(period=f"{days}d", interval=yf_iv, prepost=prepost)
 
         if df.empty:
-            log.warning(f"yfinance fallback({symbol}, {tf_str}): returned empty DataFrame")
+            log.warning(f"fetch_chart_bars({symbol}, {interval}+{range_}): empty response")
             return []
 
-        # 1D mode: keep only the most recent date (pre+regular+after for that date)
-        if one_day_mode:
-            df.index = pd.to_datetime(df.index)
-            if df.index.tz is None:
-                df.index = df.index.tz_localize("UTC")
-            df.index = df.index.tz_convert(ET)
+        # Normalise to ET timezone
+        df.index = pd.to_datetime(df.index)
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        df.index = df.index.tz_convert(ET)
+
+        if today_only:
+            # Keep only the most-recent trading date (handles weekends/holidays naturally)
             last_date = df.index.max().date()
             df = df[df.index.date == last_date]
 
         out = []
         for ts, row in df.iterrows():
+            o  = float(row["Open"])
+            h  = float(row["High"])
+            lo = float(row["Low"])
+            c  = float(row["Close"])
+            if any(x != x for x in (o, h, lo, c)):   # skip NaN rows (can appear at market open)
+                continue
             out.append({
                 "time":   int(pd.Timestamp(ts).timestamp()),
-                "open":   round(float(row["Open"]),   2),
-                "high":   round(float(row["High"]),   2),
-                "low":    round(float(row["Low"]),    2),
-                "close":  round(float(row["Close"]),  2),
+                "open":   round(o,  2),
+                "high":   round(h,  2),
+                "low":    round(lo, 2),
+                "close":  round(c,  2),
                 "volume": int(row["Volume"]),
             })
 
-        log.info(f"yfinance fallback({symbol}, {tf_str}): {len(out)} bars")
+        log.info(f"fetch_chart_bars({symbol}, {interval}+{range_}): {len(out)} bars")
         return out
+
     except Exception as e:
-        log.warning(f"yfinance fallback({symbol}, {tf_str}) failed: {e}")
-        return []
-
-
-def fetch_chart_bars(timeframe: str = "1D", symbol: str = "SPY"):
-    """Fetch bars for any symbol. Supports 1D / 5D / 1M / 3M / 1Y / 5Y.
-
-    1D returns 15-min bars for the **most recent trading session that has data**.
-    During regular hours that's today; on weekends/holidays/pre-open it rolls back
-    to the last day with bars (last Friday on a Sunday, the day before a holiday,
-    etc.). Implemented by requesting a 10-day window and keeping only the most
-    recent ET date present — one API call, no calendar lookup needed.
-
-    Other timeframes use a rolling lookback. 5D requests 10 calendar days so the
-    chart consistently shows ~5 trading days even after a weekend.
-    """
-    if not DATA_CLIENT:
-        log.info(f"fetch_chart_bars({symbol}, {timeframe}): no DATA_CLIENT — login required")
-        return []
-
-    symbol = symbol.upper()
-    tf_str = timeframe.upper()
-
-    # Determine timeframe + start
-    one_day_mode = (tf_str == "1D")
-    if one_day_mode:
-        tf = TimeFrame(15, TimeFrameUnit.Minute)
-        # 10 calendar days back covers the longest typical US-market gap
-        # (Christmas/New-Year combo can span 4–5 closed days).
-        start = datetime.now(timezone.utc) - timedelta(days=10)
-    else:
-        config = {
-            "5D": (TimeFrame(15, TimeFrameUnit.Minute), timedelta(days=10)),
-            "1M": (TimeFrame(1,  TimeFrameUnit.Hour),   timedelta(days=30)),
-            "3M": (TimeFrame(4,  TimeFrameUnit.Hour),   timedelta(days=90)),
-            "1Y": (TimeFrame.Day,                       timedelta(days=365)),
-            "5Y": (TimeFrame.Day,                       timedelta(days=365 * 5)),
-        }
-        tf, lookback = config.get(tf_str, config["5D"])
-        start = datetime.now(timezone.utc) - lookback
-
-    sym_bars = []
-    used_feed = None
-    last_error = None
-
-    # Try IEX first (free tier), then SIP as fallback (paid). Then try
-    # WITHOUT a feed parameter (lets the SDK pick a default the account has).
-    # Many free-tier "0 bars" issues are silent feed-mismatch problems.
-    for feed_attempt in ("iex", "sip", None):
-        try:
-            kwargs = dict(
-                symbol_or_symbols=[symbol],
-                timeframe=tf,
-                start=start,
-            )
-            if feed_attempt is not None:
-                kwargs["feed"] = feed_attempt
-            request = StockBarsRequest(**kwargs)
-            bars = DATA_CLIENT.get_stock_bars(request)
-            sym_bars = bars[symbol] if symbol in bars else []
-            if sym_bars:
-                used_feed = feed_attempt or "default"
-                break
-            else:
-                log.info(
-                    f"fetch_chart_bars({symbol}, {timeframe}): feed={feed_attempt!r} "
-                    f"returned 0 bars from start={start.isoformat()} — trying next feed"
-                )
-        except Exception as e:
-            last_error = e
-            log.info(
-                f"fetch_chart_bars({symbol}, {timeframe}): feed={feed_attempt!r} "
-                f"raised {type(e).__name__}: {e}"
-            )
-            continue
-
-    try:
-        if not sym_bars:
-            log.info(
-                f"fetch_chart_bars({symbol}, {timeframe}): Alpaca returned 0 bars — "
-                f"falling back to yfinance"
-            )
-            return _fetch_chart_bars_yfinance(symbol, tf_str, one_day_mode)
-
-        # 1D mode: keep only the most recent ET date that has bars.
-        # This naturally handles weekends, holidays, half-days, and pre-open
-        # without any calendar dependency.
-        if one_day_mode and sym_bars:
-            last_et_date = max(b.timestamp.astimezone(ET).date() for b in sym_bars)
-            sym_bars = [b for b in sym_bars
-                        if b.timestamp.astimezone(ET).date() == last_et_date]
-            log.info(
-                f"fetch_chart_bars({symbol}, 1D): feed={used_feed} → "
-                f"showing session for {last_et_date.isoformat()} ({len(sym_bars)} bars)"
-            )
-
-        out = []
-        for b in sym_bars:
-            out.append({
-                "time":   int(b.timestamp.timestamp()),
-                "open":   round(float(b.open),   2),
-                "high":   round(float(b.high),   2),
-                "low":    round(float(b.low),    2),
-                "close":  round(float(b.close),  2),
-                "volume": int(b.volume),
-            })
-        if not out:
-            log.info(
-                f"fetch_chart_bars({symbol}, {timeframe}): 0 bars in last "
-                f"{(datetime.now(timezone.utc) - start).days} days "
-                f"(symbol may have no IEX activity)"
-            )
-        else:
-            log.debug(f"fetch_chart_bars({symbol}, {timeframe}): {len(out)} bars")
-        return out
-    except Exception as e:
-        log.warning(f"Could not fetch chart bars {symbol} ({timeframe}): {e}")
+        log.warning(f"fetch_chart_bars({symbol}, {interval}+{range_}): {e}")
         return []
 
 
@@ -571,14 +664,28 @@ def check_earnings_risk(symbol: str) -> tuple[bool, str]:
     try:
         ticker   = yf.Ticker(sym)
         calendar = ticker.calendar
-        if calendar is None or calendar.empty:
+        if not calendar:
             return False, ""
-        # calendar index contains "Earnings Date" row
-        if "Earnings Date" not in calendar.index:
-            return False, ""
-        earnings_dates = calendar.loc["Earnings Date"]
+
+        # yfinance switched ticker.calendar from DataFrame → dict around mid-2025.
+        # Old DataFrame: calendar.loc["Earnings Date"]   → row of Timestamps
+        # New dict     : calendar["Earnings Date"]       → list of date objects
+        if isinstance(calendar, dict):
+            earnings_dates = calendar.get("Earnings Date")
+            if not earnings_dates:
+                return False, ""
+        else:
+            # DataFrame fallback for older yfinance versions
+            if calendar.empty or "Earnings Date" not in calendar.index:
+                return False, ""
+            earnings_dates = calendar.loc["Earnings Date"]
+
         today = datetime.now(ET).date()
-        for ed in (earnings_dates if hasattr(earnings_dates, "__iter__") else [earnings_dates]):
+        # Normalise to iterable (dict path may give a single date)
+        if not isinstance(earnings_dates, (list, tuple)) and not hasattr(earnings_dates, "__iter__"):
+            earnings_dates = [earnings_dates]
+
+        for ed in earnings_dates:
             try:
                 ed_date = pd.Timestamp(ed).date()
             except Exception:
@@ -599,16 +706,182 @@ def check_earnings_risk(symbol: str) -> tuple[bool, str]:
         return False, ""
 
 
+_vix_cache: dict = {"value": None, "ts": 0.0}  # cached VIX value + monotonic timestamp
+_VIX_CACHE_TTL = 300  # use cached value for up to 5 minutes on fetch failure
+
+
+def fetch_vix_live(underlying: str = "SPY") -> float | None:
+    """Compute a real-time VIX-equivalent from SPY option chain via Alpaca.
+
+    Implements a simplified CBOE VIX formula on a single ~30-DTE expiry:
+        σ² = (2/T) Σ [ΔK_i / K_i² · e^(rT) · Q(K_i)]  -  (1/T) · (F/K_0 - 1)²
+        VIX ≈ 100 · √σ²
+
+    Where:
+        Q(K_i) = mid quote of the OTM option at strike K_i (puts for K<K_0, calls
+                 for K>K_0, average at K_0)
+        F      = forward index level via put-call parity at the strike with min |C-P|
+        K_0    = highest strike below F
+        T      = time to expiry in years
+
+    SPY-derived vol typically tracks SPX VIX within ~1 vol point. Free, real-time
+    on Alpaca's options entitlement (no SIP needed). Returns None on insufficient
+    data so the caller's fail-safe path triggers.
+    """
+    if not TRADING_CLIENT or not OPTION_CLIENT:
+        return None
+    sym = underlying.upper()
+    try:
+        # 1. Pick the expiration closest to 30 calendar days
+        today = datetime.now(ET).date()
+        req = GetOptionContractsRequest(
+            underlying_symbols  = [sym],
+            status              = AssetStatus.ACTIVE,
+            expiration_date_gte = today + timedelta(days=23),
+            expiration_date_lte = today + timedelta(days=37),
+            limit               = 1000,
+        )
+        contracts = TRADING_CLIENT.get_option_contracts(req).option_contracts or []
+        if len(contracts) < 20:
+            log.info(f"fetch_vix_live: only {len(contracts)} contracts in 23–37 DTE — insufficient")
+            return None
+        # Pick expiry closest to 30 DTE
+        expiries = sorted({c.expiration_date for c in contracts},
+                          key=lambda d: abs((d - today).days - 30))
+        target_expiry = expiries[0]
+        chain = [c for c in contracts if c.expiration_date == target_expiry]
+
+        # 2. Get current spot — refuse if we can't price the underlying
+        spot, _, _ = get_symbol_price(sym)
+        if spot is None or spot <= 0:
+            return None
+
+        # 3. Filter to ±20% of spot — beyond that, options are too thin to price
+        chain = [c for c in chain if abs(float(c.strike_price) - spot) / spot < 0.20]
+        if len(chain) < 10:
+            return None
+
+        # 4. Batch-fetch quotes for all selected contracts
+        occ_symbols = [c.symbol for c in chain]
+        quotes: dict = {}
+        for i in range(0, len(occ_symbols), 100):
+            chunk = occ_symbols[i:i+100]
+            qres  = OPTION_CLIENT.get_option_latest_quote(
+                OptionLatestQuoteRequest(symbol_or_symbols=chunk)
+            )
+            quotes.update(qres)
+
+        # 5. Build {strike: mid} maps for calls and puts
+        call_mid: dict[float, float] = {}
+        put_mid:  dict[float, float] = {}
+        for c in chain:
+            q = quotes.get(c.symbol)
+            if not q:
+                continue
+            bid = float(q.bid_price or 0)
+            ask = float(q.ask_price or 0)
+            if bid <= 0 or ask <= 0:
+                continue
+            mid = (bid + ask) / 2
+            strike = float(c.strike_price)
+            kind = str(getattr(c, "type", "")).lower()
+            if "call" in kind:
+                call_mid[strike] = mid
+            elif "put" in kind:
+                put_mid[strike] = mid
+
+        # 6. Forward F via put-call parity at strike with min |C - P|
+        common_strikes = sorted(set(call_mid) & set(put_mid))
+        if len(common_strikes) < 5:
+            return None
+        T = max((target_expiry - today).days, 1) / 365.0
+        r = 0.05
+        parity = [(k, call_mid[k] - put_mid[k]) for k in common_strikes]
+        parity.sort(key=lambda x: abs(x[1]))
+        k_min, cp_min = parity[0]
+        F = k_min + math.exp(r * T) * cp_min
+
+        # 7. K_0 = highest strike at or below F
+        K0 = max((k for k in common_strikes if k <= F), default=common_strikes[0])
+
+        # 8. OTM mid prices: puts for K<K0, calls for K>K0, avg at K0
+        otm: dict[float, float] = {}
+        for k in common_strikes:
+            if k < K0 and k in put_mid:
+                otm[k] = put_mid[k]
+            elif k > K0 and k in call_mid:
+                otm[k] = call_mid[k]
+        if K0 in call_mid and K0 in put_mid:
+            otm[K0] = (call_mid[K0] + put_mid[K0]) / 2
+
+        # 9. Variance integration: ΔK_i / K_i² · e^(rT) · Q(K_i)
+        used = sorted(otm)
+        if len(used) < 5:
+            return None
+        accum = 0.0
+        for i, k in enumerate(used):
+            if i == 0:
+                dk = used[1] - used[0]
+            elif i == len(used) - 1:
+                dk = used[-1] - used[-2]
+            else:
+                dk = (used[i+1] - used[i-1]) / 2
+            accum += (dk / (k * k)) * math.exp(r * T) * otm[k]
+        sigma2 = (2.0 / T) * accum - (1.0 / T) * ((F / K0 - 1.0) ** 2)
+        if sigma2 <= 0:
+            return None
+
+        vix = round(100.0 * math.sqrt(sigma2), 2)
+        # Sanity bounds — anything outside [5, 100] is almost certainly bad data
+        if vix < 5 or vix > 100:
+            log.warning(f"fetch_vix_live: computed VIX={vix} outside sane range — discarding")
+            return None
+        log.info(
+            f"  Live VIX ({sym}): {vix:.2f}  "
+            f"(expiry={target_expiry}, F=${F:.2f}, K0=${K0:.2f}, strikes={len(used)})"
+        )
+        return vix
+    except Exception as e:
+        log.warning(f"fetch_vix_live failed: {e}")
+        return None
+
+
 def fetch_vix():
-    """Fetch VIX via yfinance (Alpaca's free IEX feed doesn't support index symbols)."""
+    """Fetch VIX in priority order:
+        1. fetch_vix_live  — real-time, computed from Alpaca SPY option chain
+        2. yfinance ^VIX   — 15-min delayed, but covers Alpaca outages
+        3. last cached     — within _VIX_CACHE_TTL
+    Returns None only if all three fail (gate then blocks the session — fail-safe).
+    """
+    # 1. Live VIX from Alpaca options chain (real-time, free)
+    val = fetch_vix_live("SPY")
+    if val is not None:
+        _vix_cache["value"] = val
+        _vix_cache["ts"]    = time.monotonic()
+        stamp_freshness("vix", source_tag="alpaca_chain")
+        return val
+
+    # 2. yfinance fallback (15-min delayed but better than blocking)
     try:
         ticker = yf.Ticker("^VIX")
-        hist = ticker.history(period="1d", interval="1m", prepost=False)
+        hist   = ticker.history(period="1d", interval="1m", prepost=False)
         if not hist.empty:
-            return round(float(hist["Close"].iloc[-1]), 2)
+            val = round(float(hist["Close"].iloc[-1]), 2)
+            _vix_cache["value"] = val
+            _vix_cache["ts"]    = time.monotonic()
+            stamp_freshness("vix", source_tag="yfinance_delayed")
+            log.info(f"fetch_vix: using delayed yfinance VIX={val} (live computation failed)")
+            return val
     except Exception as e:
-        log.warning(f"fetch_vix yfinance failed: {e}")
-    log.warning("Could not fetch VIX — proceeding without VIX filter")
+        log.warning(f"fetch_vix yfinance fallback failed: {e}")
+
+    # 3. Last cached
+    age = time.monotonic() - _vix_cache["ts"]
+    if _vix_cache["value"] is not None and age < _VIX_CACHE_TTL:
+        log.warning(f"fetch_vix: using cached VIX={_vix_cache['value']} (age={age:.0f}s)")
+        return _vix_cache["value"]
+
+    log.warning("fetch_vix: no source available — VIX gate will BLOCK session (fail-safe)")
     return None
 
 
@@ -892,12 +1165,17 @@ def fetch_iv_rank(symbol: str) -> tuple[float | None, float | None]:
         return None, None
 
 
-def fetch_30min_trend(symbol: str) -> str:
-    """Return 'bull', 'bear', or 'neutral' based on the 30-min EMA9 vs EMA21.
+_HTF_SLOPE_BPS_THRESHOLD = 15   # 0.15% slope over 6 bars (~3 hrs of 30-min) = real trend
 
-    Fetches the last 5 trading days of 30-min bars (covers ~65 bars, enough for
-    EMA21 to stabilise). Called once at all_day_session start; refreshed along
-    with IV rank every IV_RANK_REFRESH_MIN minutes.
+def fetch_30min_trend(symbol: str) -> str:
+    """Return 'bull', 'bear', or 'neutral' based on the SLOPE of the 30-min EMA21.
+
+    A binary EMA9>EMA21 cross is laggy and noisy — by the time it flips, the move
+    has typically run, and weak crosses inside chop count as "trend." Slope over
+    a 6-bar window measures whether the trend is actually progressing.
+
+    Fetches the last 5 trading days of 30-min bars (~65 bars). Called at session
+    start and refreshed every IV_RANK_REFRESH_MIN minutes.
     """
     try:
         ticker = yf.Ticker(symbol.upper())
@@ -905,14 +1183,91 @@ def fetch_30min_trend(symbol: str) -> str:
         if df.empty or len(df) < 22:
             return "neutral"
         closes = df["Close"]
-        ema9  = float(closes.ewm(span=9,  adjust=False).mean().iloc[-1])
-        ema21 = float(closes.ewm(span=21, adjust=False).mean().iloc[-1])
-        trend = "bull" if ema9 > ema21 else "bear" if ema9 < ema21 else "neutral"
-        log.info(f"  30-min trend ({symbol}): EMA9={ema9:.2f}  EMA21={ema21:.2f}  → {trend.upper()}")
+        ema21_series = closes.ewm(span=21, adjust=False).mean()
+        if len(ema21_series) < 6:
+            return "neutral"
+        last  = float(ema21_series.iloc[-1])
+        prior = float(ema21_series.iloc[-6])
+        slope_pct = (last - prior) / prior * 100  # % change over ~3 hours
+        slope_bps = slope_pct * 100               # basis points
+        if slope_bps >= _HTF_SLOPE_BPS_THRESHOLD:
+            trend = "bull"
+        elif slope_bps <= -_HTF_SLOPE_BPS_THRESHOLD:
+            trend = "bear"
+        else:
+            trend = "neutral"
+        log.info(
+            f"  30-min trend ({symbol}): EMA21 slope={slope_bps:+.0f}bps over 6 bars → {trend.upper()}"
+        )
         return trend
     except Exception as e:
         log.warning(f"fetch_30min_trend({symbol}): {e}")
         return "neutral"
+
+
+# ── Regime detector: chop vs trend ────────────────────────────────────────────
+# Trend-continuation strategies bleed money in chop. Computes today's 1H ATR
+# vs the 5-day average; if today is < CHOP_ATR_RATIO of average, market is
+# range-bound and trend-continuation should sit out.
+_chop_regime_cache: dict = {"is_chop": None, "ts": 0.0, "ratio": 0.0}
+
+def is_chop_regime() -> bool:
+    """True when SPY's 1H ATR today is significantly below its 5-day average.
+
+    Cached for CHOP_REGIME_TTL_SEC (30min) — ATR doesn't move fast intraday and
+    we don't want to thrash yfinance on every signal evaluation. Returns False
+    on any fetch error (fail-OPEN — better to miss a regime call than block all
+    trades because of a transient API failure).
+    """
+    now = time.monotonic()
+    if (_chop_regime_cache["is_chop"] is not None
+            and (now - _chop_regime_cache["ts"]) < CHOP_REGIME_TTL_SEC):
+        return _chop_regime_cache["is_chop"]
+
+    try:
+        # 6 trading days of 1H bars (today + 5 prior)
+        df = yf.Ticker("SPY").history(period="7d", interval="1h")
+        if df.empty or len(df) < 30:
+            return False  # insufficient data — fail open
+
+        # ATR(14) on 1H bars
+        h, l, c = df["High"], df["Low"], df["Close"]
+        prev_c = c.shift(1)
+        tr = pd.concat([h - l, (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
+        atr = tr.ewm(span=14, adjust=False).mean()
+
+        # Localise so we can split today vs prior days
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        df_et = df.copy()
+        df_et.index = df.index.tz_convert(ET)
+        atr_series = atr.copy()
+        atr_series.index = df.index.tz_convert(ET)
+
+        today = datetime.now(ET).date()
+        atr_today = atr_series[atr_series.index.date == today]
+        atr_prior = atr_series[atr_series.index.date <  today]
+
+        if atr_today.empty or atr_prior.empty:
+            return False  # market may not have opened yet — fail open
+
+        today_avg = float(atr_today.mean())
+        prior_avg = float(atr_prior.tail(40).mean())  # ~5 trading days × 7-8 bars
+        if prior_avg <= 0:
+            return False
+        ratio = today_avg / prior_avg
+        is_chop = ratio < CHOP_ATR_RATIO
+
+        _chop_regime_cache.update(is_chop=is_chop, ts=now, ratio=ratio)
+        regime_label = "CHOP (skip trend-cont)" if is_chop else "NORMAL/TREND"
+        log.info(
+            f"  Regime: SPY 1H ATR today={today_avg:.2f}  5d-avg={prior_avg:.2f}  "
+            f"ratio={ratio:.2f}  → {regime_label}"
+        )
+        return is_chop
+    except Exception as e:
+        log.warning(f"is_chop_regime() error: {e} — assuming NORMAL (fail open)")
+        return False
 
 
 def detect_gap(df, prior_close):
@@ -957,49 +1312,99 @@ def buying_power():
 _prev_close_cache: dict[str, tuple[float, object]] = {}   # symbol -> (prev_close, date)
 
 
+def _market_session() -> str:
+    """Current ET market session: 'pre', 'regular', 'after', or 'closed'."""
+    now = datetime.now(ET)
+    if now.weekday() >= 5:
+        return "closed"
+    mins = now.hour * 60 + now.minute
+    if 4 * 60 <= mins < 9 * 60 + 30:
+        return "pre"
+    if 9 * 60 + 30 <= mins < 16 * 60:
+        return "regular"
+    if 16 * 60 <= mins < 20 * 60:
+        return "after"
+    return "closed"
+
+
 def get_symbol_price(symbol: str = "SPY"):
-    """Latest trade price for any symbol + day change %.
+    """Latest price for any symbol + day change % + market session.
 
-    Latest trade: fetched live every call (fast single-item endpoint).
-    Prev close  : cached per trading day — refreshed once at market open.
+    yfinance is primary — it uses the consolidated tape and works in extended
+    hours.  Alpaca IEX is kept as a fallback only (IEX is a single exchange and
+    can return stale trades for ETFs that mostly route through NYSE Arca).
+
+    Returns: (price, chg_pct, session)  where session ∈ {'pre','regular','after','closed'}
     """
-    if not DATA_CLIENT:
-        return None, None
     symbol = symbol.upper()
+    price      = None
+    prev_close = None
+    today      = datetime.now(ET).date()
+
+    # ── yfinance primary (consolidated tape, extended hours) ─────────────────
     try:
-        trade_req  = StockLatestTradeRequest(symbol_or_symbols=[symbol], feed="iex")
-        trade_data = DATA_CLIENT.get_stock_latest_trade(trade_req)
-        if symbol not in trade_data:
-            return None, None
-        price = float(trade_data[symbol].price)
-
-        # Use cached prev_close if we already have today's value
-        today  = datetime.now(ET).date()
-        cached = _prev_close_cache.get(symbol)
-        if cached and cached[1] == today:
-            prev_close = cached[0]
-        else:
-            request = StockBarsRequest(
-                symbol_or_symbols = [symbol],
-                timeframe         = TimeFrame.Day,
-                start             = (datetime.now(timezone.utc) - timedelta(days=5)),
-                feed              = "iex",
-            )
-            bars     = DATA_CLIENT.get_stock_bars(request)
-            sym_bars = bars[symbol]
-            prev_close = float(sym_bars[-2].close) if len(sym_bars) >= 2 else price
+        fi = yf.Ticker(symbol).fast_info
+        raw_price = getattr(fi, "last_price", None)
+        if raw_price and float(raw_price) > 0:
+            price = round(float(raw_price), 2)
+            stamp_freshness(f"price:{symbol}", source_tag="yfinance")
+        raw_prev = getattr(fi, "previous_close", None)
+        if raw_prev and float(raw_prev) > 0:
+            prev_close = round(float(raw_prev), 2)
             _prev_close_cache[symbol] = (prev_close, today)
-
-        chg_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
-        return round(price, 2), chg_pct
+        else:
+            cached = _prev_close_cache.get(symbol)
+            if cached and cached[1] == today:
+                prev_close = cached[0]
     except Exception as e:
-        log.warning(f"Could not fetch {symbol} price: {e}")
-    return None, None
+        log.warning(f"get_symbol_price({symbol}) yfinance failed: {e}")
+
+    # ── Alpaca IEX fallback (only when yfinance failed) ───────────────────────
+    if price is None and DATA_CLIENT:
+        try:
+            trade_req  = StockLatestTradeRequest(symbol_or_symbols=[symbol], feed="iex")
+            trade_data = DATA_CLIENT.get_stock_latest_trade(trade_req)
+            if symbol in trade_data:
+                price = float(trade_data[symbol].price)
+                stamp_freshness(f"price:{symbol}", source_tag="alpaca_iex")
+                log.info(f"get_symbol_price({symbol}): using Alpaca IEX fallback ${price:.2f}")
+            cached = _prev_close_cache.get(symbol)
+            if cached and cached[1] == today:
+                prev_close = cached[0]
+            elif price is not None:
+                try:
+                    req  = StockBarsRequest(
+                        symbol_or_symbols = [symbol],
+                        timeframe         = TimeFrame.Day,
+                        start             = (datetime.now(timezone.utc) - timedelta(days=5)),
+                        feed              = "iex",
+                    )
+                    bars     = DATA_CLIENT.get_stock_bars(req)
+                    sym_bars = bars.get(symbol, [])
+                    if len(sym_bars) >= 2:
+                        prev_close = float(sym_bars[-2].close)
+                        _prev_close_cache[symbol] = (prev_close, today)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning(f"get_symbol_price({symbol}) Alpaca fallback error: {e}")
+
+    session = _market_session()
+
+    if price is None:
+        return None, None, session
+
+    if prev_close is None:
+        prev_close = price
+
+    chg_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
+    return round(price, 2), chg_pct, session
 
 
-# Backward-compatible alias
+# Backward-compatible alias (returns 2-tuple for old callers)
 def get_spy_price():
-    return get_symbol_price("SPY")
+    price, chg, _ = get_symbol_price("SPY")
+    return price, chg
 
 
 # ── Options helpers ───────────────────────────────────────────────────────────
@@ -1068,25 +1473,29 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY",
             log.warning(f"No {symbol} {contract_type.value} contracts in [{lo:.2f}, {hi:.2f}] for {expiry_str}")
             return None, None
 
-        # Filter by open interest and today's volume — low OI means illiquid exit.
+        # Filter by open interest — low OI means illiquid exit.
+        # NOTE: c.close_price on an option contract is the option's CLOSE PRICE
+        # (a decimal like '10.85'), NOT daily volume — the old comment was wrong
+        # and `int(c.close_price)` crashed on every signal with a ValueError,
+        # killing every potential trade. The volume field isn't reliably populated
+        # on the contract object anyway; OI is the trustworthy liquidity signal.
+        min_oi = MIN_OPTION_OI_ETF if symbol in ETF_SYMBOLS else MIN_OPTION_OI_STOCK
         liquid = []
         for c in contracts:
-            oi  = int(c.open_interest  or 0)
-            vol = int(c.close_price    or 0)  # Alpaca uses close_price for daily volume in contract object
-            # open_interest is the reliable field; volume_today may not be populated
-            if oi >= MIN_OPTION_OI:
+            oi = int(c.open_interest or 0)
+            if oi >= min_oi:
                 liquid.append(c)
             else:
                 log.info(
                     f"  Skipping {c.symbol} strike=${c.strike_price} "
-                    f"OI={oi} (min {MIN_OPTION_OI}) — too illiquid"
+                    f"OI={oi} (min {min_oi}) — too illiquid"
                 )
 
         if not liquid:
             # Fall back to full list with a warning so we don't block trading on
             # symbols that simply have low OI reported (data can lag by a day)
             log.warning(
-                f"find_atm_option({symbol}): no contracts pass OI≥{MIN_OPTION_OI} — "
+                f"find_atm_option({symbol}): no contracts pass OI≥{min_oi} — "
                 f"falling back to full list (OI data may be stale)"
             )
             liquid = contracts
@@ -1141,6 +1550,19 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY",
         return None, None
 
 
+def spread_acceptable(mid: float, spread: float) -> bool:
+    """Spread gate: percent-relative with an absolute floor for cheap options.
+
+    A $0.30 spread is fine on a $5 option (6%) but terrible on a $0.50 option (60%).
+    Reject when spread / mid exceeds MAX_SPREAD_PCT, but never reject for less than
+    the MAX_SPREAD dollar floor (avoids over-rejecting cheap weeklies with $0.05 ticks).
+    """
+    if mid <= 0:
+        return False
+    limit = max(MAX_SPREAD, mid * MAX_SPREAD_PCT)
+    return spread <= limit
+
+
 def option_mid_and_spread(option):
     """Return (mid, spread, bid, ask) for an option using its OCC symbol."""
     if not OPTION_CLIENT:
@@ -1154,6 +1576,11 @@ def option_mid_and_spread(option):
             ask    = float(quote.ask_price or 0)
             spread = round(ask - bid, 2)
             mid    = round((bid + ask) / 2, 2) if (bid > 0 and ask > 0) else 0
+            if bid > 0 or ask > 0:
+                # Stamp under the underlying so stale_data_check can find it.
+                underlying = option.get("underlying", "").upper()
+                if underlying:
+                    stamp_freshness(f"option_quote:{underlying}", source_tag="alpaca")
             return mid, spread, bid, ask
     except Exception as e:
         log.warning(f"Could not fetch option quote: {e}")
@@ -1182,7 +1609,15 @@ def size_contracts(acct_val, mid_price):
 
 
 # ── Filters ───────────────────────────────────────────────────────────────────
-def is_lunch_hour():
+def is_lunch_hour(symbol: str = "SPY") -> bool:
+    """Lunch-hour block (11:30–13:30 ET) — ETFs only.
+
+    Single stocks (NVDA/META/MSFT/etc) trade plenty during lunch with real volume,
+    and the post-lunch resumption (1:00–1:30) is often the day's best risk/reward.
+    The "lunch is dead" folklore is for index ETFs only.
+    """
+    if symbol.upper() not in ETF_SYMBOLS:
+        return False
     now = datetime.now(ET)
     s   = now.replace(hour=LUNCH_START[0], minute=LUNCH_START[1], second=0)
     e   = now.replace(hour=LUNCH_END[0],   minute=LUNCH_END[1],   second=0)
@@ -1216,7 +1651,8 @@ def pdt_check():
 
 def vix_check(vix):
     if vix is None:
-        return True
+        log.warning("VIX unavailable — blocking session (fail-safe). Retry in a few minutes.")
+        return False
     if vix > VIX_MAX:
         log.warning(f"VIX={vix:.1f} > {VIX_MAX} — too volatile. Skipping session.")
         return False
@@ -1228,29 +1664,155 @@ def vix_check(vix):
 # ── Daily loss circuit-breaker ────────────────────────────────────────────────
 _day_start_equity: float = 0.0
 _day_start_date:   object = None   # datetime.date
+_daily_loss_halt:  bool   = False  # True = ALL symbols blocked for the rest of the day
+_equity_lock = threading.Lock()
 
 def set_day_start_equity(acct_val: float) -> None:
-    """Record start-of-day equity once per calendar day."""
-    global _day_start_equity, _day_start_date
+    """Record start-of-day equity once per calendar day (first symbol to call wins).
+    Resets both halt flags on a new day.
+    """
+    global _day_start_equity, _day_start_date, _daily_loss_halt, _daily_profit_halt
     today = datetime.now(ET).date()
-    if _day_start_date != today:
-        _day_start_equity = acct_val
-        _day_start_date   = today
-        log.info(f"Day-start equity set: ${acct_val:,.2f}")
+    with _equity_lock:
+        if _day_start_date != today:
+            _day_start_equity   = acct_val
+            _day_start_date     = today
+            _daily_loss_halt    = False   # new day — lift the halt
+            _daily_profit_halt  = False
+            log.info(f"Day-start equity set: ${acct_val:,.2f}")
 
 def daily_loss_check(acct_val: float) -> bool:
-    """Return False (halt entries) if today's loss exceeds DAILY_LOSS_LIMIT_PCT."""
-    if _day_start_equity <= 0:
-        return True
-    loss_pct = (_day_start_equity - acct_val) / _day_start_equity
-    if loss_pct >= DAILY_LOSS_LIMIT_PCT:
-        log.warning(
-            f"  ⛔ Daily loss limit reached: down {loss_pct*100:.2f}% "
-            f"(limit {DAILY_LOSS_LIMIT_PCT*100:.1f}%). "
-            f"No new entries for the rest of the day."
-        )
-        return False
+    """Return False (halt ALL entries) if today's cumulative loss >= DAILY_LOSS_LIMIT_PCT.
+    Once tripped, ALL symbols are blocked for the rest of the day.
+    """
+    global _daily_loss_halt
+    with _equity_lock:
+        if _daily_loss_halt:
+            log.warning("  ⛔ Daily loss halt active — no new entries today.")
+            return False
+        if _day_start_equity <= 0:
+            return True
+        loss_pct = (_day_start_equity - acct_val) / _day_start_equity
+        if loss_pct >= DAILY_LOSS_LIMIT_PCT:
+            _daily_loss_halt = True
+            log.warning(
+                f"  ⛔ Daily loss limit reached: down {loss_pct*100:.2f}% "
+                f"(limit {DAILY_LOSS_LIMIT_PCT*100:.1f}%). "
+                f"ALL symbols halted for the rest of the day."
+            )
+            return False
     return True
+
+
+_daily_profit_halt: bool = False  # True after profit-lock fires (entries only; positions still managed)
+
+def daily_profit_check(acct_val: float) -> bool:
+    """Return False (halt new entries) once we're up >= DAILY_PROFIT_LOCK_PCT.
+
+    Open positions keep being managed by the monitor — we just stop opening new
+    risk. Pros take chips off when up; this is the bot equivalent.
+    """
+    global _daily_profit_halt
+    with _equity_lock:
+        if _daily_profit_halt:
+            log.info("  💰 Daily profit lock active — protecting today's gains.")
+            return False
+        if _day_start_equity <= 0:
+            return True
+        gain_pct = (acct_val - _day_start_equity) / _day_start_equity
+        if gain_pct >= DAILY_PROFIT_LOCK_PCT:
+            _daily_profit_halt = True
+            log.info(
+                f"  💰 Daily profit lock reached: up {gain_pct*100:.2f}% "
+                f"(target {DAILY_PROFIT_LOCK_PCT*100:.1f}%). "
+                f"No new entries — open positions still managed."
+            )
+            return False
+    return True
+
+
+# ── Global cross-symbol cooldown ──────────────────────────────────────────────
+# Without this, two symbols can fire within the same second and bypass the
+# portfolio risk gate (which is checked before, not after, both submissions).
+_last_global_trade_ts: float = 0.0  # time.monotonic() of the most recent entry
+_global_cooldown_lock = threading.Lock()
+
+def global_cooldown_ok() -> bool:
+    """Return True if at least GLOBAL_COOLDOWN_SEC have passed since any symbol traded."""
+    with _global_cooldown_lock:
+        elapsed = time.monotonic() - _last_global_trade_ts
+        return elapsed >= GLOBAL_COOLDOWN_SEC
+
+def _record_global_trade() -> None:
+    """Stamp the global last-trade timestamp. Called after any place_trade attempt."""
+    global _last_global_trade_ts
+    with _global_cooldown_lock:
+        _last_global_trade_ts = time.monotonic()
+
+
+# ── Anti-whipsaw: don't fire opposite direction within WHIPSAW_COOLDOWN_SEC ───
+# Today's log showed BULL → BEAR signals 6 SECONDS apart on correlated symbols.
+# Net result: flat exposure with double the spread cost. Track the most recent
+# fired-signal direction (across all symbols) and reject the opposite within 15min.
+_last_signal_direction: str | None = None
+_last_signal_ts: float = 0.0
+_whipsaw_lock = threading.Lock()
+
+def whipsaw_ok(direction: str) -> bool:
+    """True if `direction` is safe to fire — i.e. opposite-direction wasn't just signalled."""
+    with _whipsaw_lock:
+        if _last_signal_direction is None:
+            return True
+        if _last_signal_direction == direction:
+            return True   # same-direction continuation is fine
+        elapsed = time.monotonic() - _last_signal_ts
+        return elapsed >= WHIPSAW_COOLDOWN_SEC
+
+def record_signal_direction(direction: str) -> None:
+    """Stamp the most recent fired signal's direction + timestamp."""
+    global _last_signal_direction, _last_signal_ts
+    with _whipsaw_lock:
+        _last_signal_direction = direction
+        _last_signal_ts        = time.monotonic()
+
+
+# ── Daily entry cap: hard limit MAX_DAILY_ENTRIES per calendar day ────────────
+# 26 simulated entries in 4 hours today — half of those were re-entering the
+# same symbol while it didn't move. After N entries, the bot enters manage-only
+# mode for the rest of the day. Forces selectivity.
+_daily_entries_count: int = 0
+_daily_entries_date:  object = None  # datetime.date
+_daily_entries_lock = threading.Lock()
+
+def daily_entries_ok() -> bool:
+    """True if we haven't hit MAX_DAILY_ENTRIES yet today (resets at new date)."""
+    global _daily_entries_count, _daily_entries_date
+    today = datetime.now(ET).date()
+    with _daily_entries_lock:
+        if _daily_entries_date != today:
+            _daily_entries_count = 0
+            _daily_entries_date  = today
+        return _daily_entries_count < MAX_DAILY_ENTRIES
+
+def record_daily_entry() -> int:
+    """Increment the daily-entry counter. Returns the new count."""
+    global _daily_entries_count, _daily_entries_date
+    today = datetime.now(ET).date()
+    with _daily_entries_lock:
+        if _daily_entries_date != today:
+            _daily_entries_count = 0
+            _daily_entries_date  = today
+        _daily_entries_count += 1
+        return _daily_entries_count
+
+
+# ── Last-entry-time gate: no NEW entries after 14:00 ET ──────────────────────
+# After ~14:00 ET, price action is increasingly dominated by closing-imbalance
+# flow rather than directional moves. Stop opening new positions; manage existing.
+def last_entry_time_ok() -> bool:
+    now = datetime.now(ET)
+    cutoff = now.replace(hour=LAST_ENTRY_HOUR, minute=LAST_ENTRY_MINUTE, second=0, microsecond=0)
+    return now < cutoff
 
 
 # ── Trade execution ───────────────────────────────────────────────────────────
@@ -1262,12 +1824,15 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
     strike     = option.get("strike_price", "?")
     expiry     = option.get("expiration_date", "?")
     occ_symbol = option.get("symbol", "?")
-    # Use ask * 1.002 when available — guarantees fill without chasing too far.
-    # Fall back to mid + $0.05 if ask is unknown (e.g. DRY_RUN with no live quote).
+    # Two-stage entry: try mid first (capture half the spread), walk to ask if it
+    # doesn't fill within ENTRY_WALK_WAIT_SEC. The "walk_limit" below is the final
+    # stop — what we'd accept after walking. mid_limit is the initial try.
+    mid_limit = round(mid_price, 2)
     if ask_price > 0:
-        limit = round(ask_price * 1.002, 2)
+        walk_limit = round(ask_price * 1.002, 2)   # final fallback after walking
     else:
-        limit = round(mid_price + 0.05, 2)
+        walk_limit = round(mid_price + 0.05, 2)
+    limit      = mid_limit                         # logged as the initial limit
     stop_opt   = round(mid_price * (1 - STOP_LOSS_PCT), 2)
     target_50  = round(mid_price * 1.50, 2)
     target_75  = round(mid_price * (1 + PROFIT_TARGET), 2)
@@ -1329,6 +1894,7 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
         if approved:
             # Register simulated position so the monitor can test stop/target logic
             register_trade(occ_symbol, mid_price, contracts, direction, symbol, "DRY_RUN")
+            _notify_fill()  # refresh UI: deployed_risk_pct ticks even in dry-run
         return None
 
     if not approved:
@@ -1338,18 +1904,50 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
     if not pdt_check():
         return None
 
-    # Submit option order via Alpaca
+    # Submit option order via Alpaca — two-stage walk:
+    # 1. Submit at mid, wait ENTRY_WALK_WAIT_SEC.
+    # 2. If not filled, cancel and resubmit at walk_limit (ask × 1.002).
+    # Both submissions carry a unique client_order_id for broker-side dedupe.
     try:
-        order_req = LimitOrderRequest(
+        cid_base = f"buy_{occ_symbol}_{int(time.time())}"
+        order = TRADING_CLIENT.submit_order(LimitOrderRequest(
             symbol         = occ_symbol,
             qty            = contracts,
             side           = OrderSide.BUY,
             type           = OrderType.LIMIT,
             time_in_force  = TimeInForce.DAY,
-            limit_price    = limit,
-        )
-        order = TRADING_CLIENT.submit_order(order_req)
-        log.info(f"Order submitted — ID: {order.id}  Status: {order.status}")
+            limit_price    = mid_limit,
+            client_order_id= f"{cid_base}_mid",
+        ))
+        log.info(f"Order submitted (mid ${mid_limit:.2f}) — ID: {order.id}  Status: {order.status}")
+
+        # Brief poll — if mid filled, we saved half the spread.
+        if mid_limit < walk_limit:
+            time.sleep(ENTRY_WALK_WAIT_SEC)
+            try:
+                refreshed = TRADING_CLIENT.get_order_by_id(str(order.id))
+                status = str(refreshed.status).lower()
+            except Exception:
+                refreshed, status = order, "unknown"
+
+            if status not in ("filled", "partially_filled"):
+                # Walk up: cancel mid order, resubmit at walk_limit (ask).
+                try:
+                    TRADING_CLIENT.cancel_order_by_id(str(order.id))
+                except Exception:
+                    pass
+                log.info(f"  Mid order didn't fill in {ENTRY_WALK_WAIT_SEC}s — walking to ask ${walk_limit:.2f}")
+                order = TRADING_CLIENT.submit_order(LimitOrderRequest(
+                    symbol         = occ_symbol,
+                    qty            = contracts,
+                    side           = OrderSide.BUY,
+                    type           = OrderType.LIMIT,
+                    time_in_force  = TimeInForce.DAY,
+                    limit_price    = walk_limit,
+                    client_order_id= f"{cid_base}_walk",
+                ))
+                log.info(f"Order resubmitted (walk ${walk_limit:.2f}) — ID: {order.id}  Status: {order.status}")
+
         TRADE_MEMORY.record(
             symbol=symbol, direction=direction,
             indicators=details.get("_indicators", {}),
@@ -1362,7 +1960,38 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
         return None
 
 
-# ── Setup evaluation (unchanged from previous version) ────────────────────────
+# ── JSON-safe indicator snapshot ──────────────────────────────────────────────
+# bar.to_dict() returns pandas/numpy types (Timestamp, np.float64, NaN) that
+# blow up the SocketIO json serialiser when the trade-approval modal is emitted.
+# Every signal was crashing here ("Object of type Timestamp is not JSON
+# serializable") which silently killed every would-be trade.
+def _to_json_safe(v):
+    if v is None:
+        return None
+    if isinstance(v, pd.Timestamp):
+        return v.isoformat()
+    if hasattr(v, "item"):                         # numpy scalars
+        try:
+            v = v.item()
+        except Exception:
+            pass
+    if isinstance(v, float):
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    if isinstance(v, (int, bool, str)):
+        return v
+    try:
+        f = float(v)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return str(v)
+
+def _sanitize_indicators(d: dict) -> dict:
+    return {k: _to_json_safe(v) for k, v in d.items()}
+
+
+# ── Setup evaluation ──────────────────────────────────────────────────────────
 def evaluate_orb(bar, prev_bar, or_high, or_low, df):
     current   = float(bar["close_price"])
     rsi       = float(bar["rsi"])       if not np.isnan(bar["rsi"])       else 50
@@ -1373,16 +2002,35 @@ def evaluate_orb(bar, prev_bar, or_high, or_low, df):
     ema200    = float(bar["ema200"])    if not np.isnan(bar["ema200"])    else current
     macd_hist = float(bar["macd_hist"]) if not np.isnan(bar["macd_hist"]) else 0
 
-    if (current > or_high and vol_ratio >= MIN_VOL_RATIO and current > vwap
-            and ema9 > ema21 and current > ema200 and 50 < rsi < RSI_OVERBOUGHT and macd_hist > 0):
+    # Filter stack: break + volume + above VWAP + short-term EMA cross + above EMA200 + MACD
+    bull_fail = []
+    if not (current > or_high):           bull_fail.append(f"close ${current:.2f}<=ORhigh ${or_high:.2f}")
+    if not (vol_ratio >= MIN_VOL_RATIO):  bull_fail.append(f"vol {vol_ratio:.2f}<{MIN_VOL_RATIO}")
+    if not (current > vwap):              bull_fail.append("close<=VWAP")
+    if not (ema9 > ema21):                bull_fail.append("EMA9<=EMA21")
+    if not (current > ema200):            bull_fail.append("close<=EMA200d")
+    if not (macd_hist > 0):               bull_fail.append(f"MACD={macd_hist:.3f}<=0")
+
+    if not bull_fail:
         return "bull", (f"ORB bull: ${current:.2f} > OR high ${or_high:.2f} | "
                         f"vol {vol_ratio:.1f}x | above VWAP & EMA200 | RSI={rsi:.0f}")
 
-    if (current < or_low and vol_ratio >= MIN_VOL_RATIO and current < vwap
-            and ema9 < ema21 and current < ema200 and RSI_OVERSOLD < rsi < 50 and macd_hist < 0):
+    bear_fail = []
+    if not (current < or_low):            bear_fail.append(f"close ${current:.2f}>=ORlow ${or_low:.2f}")
+    if not (vol_ratio >= MIN_VOL_RATIO):  bear_fail.append(f"vol {vol_ratio:.2f}<{MIN_VOL_RATIO}")
+    if not (current < vwap):              bear_fail.append("close>=VWAP")
+    if not (ema9 < ema21):                bear_fail.append("EMA9>=EMA21")
+    if not (current < ema200):            bear_fail.append("close>=EMA200d")
+    if not (macd_hist < 0):               bear_fail.append(f"MACD={macd_hist:.3f}>=0")
+
+    if not bear_fail:
         return "bear", (f"ORB bear: ${current:.2f} < OR low ${or_low:.2f} | "
                         f"vol {vol_ratio:.1f}x | below VWAP & EMA200 | RSI={rsi:.0f}")
 
+    log.info(
+        f"  ORB no-fire: bull[{', '.join(bull_fail)}] | "
+        f"bear[{', '.join(bear_fail)}]"
+    )
     return None, None
 
 
@@ -1393,16 +2041,29 @@ def evaluate_gap_fade(bar, gap_pct, gap_direction, df):
     macd_hist = float(bar["macd_hist"]) if not np.isnan(bar["macd_hist"]) else 0
     abs_gap   = abs(gap_pct)
 
-    if not (0.20 <= abs_gap <= 2.50):
+    # 0.50% lower bound: anything smaller is intraday noise, not a real gap.
+    if not (0.50 <= abs_gap <= 2.50):
         return None, None
 
-    if gap_direction == "up" and current < vwap and rsi < 55 and macd_hist < 0:
-        return "bear", (f"Gap fade: gapped up {gap_pct:+.2f}% but rolling over | "
-                        f"below VWAP | RSI={rsi:.0f}")
+    if gap_direction == "up":
+        bear_fail = []
+        if not (current < vwap):    bear_fail.append("close>=VWAP (gap not rolling over)")
+        if not (rsi < 55):          bear_fail.append(f"RSI={rsi:.0f}>=55")
+        if not (macd_hist < 0):     bear_fail.append(f"MACD={macd_hist:.3f}>=0")
+        if not bear_fail:
+            return "bear", (f"Gap fade: gapped up {gap_pct:+.2f}% but rolling over | "
+                            f"below VWAP | RSI={rsi:.0f}")
+        log.info(f"  Gap-fade(up) no-fire: {', '.join(bear_fail)}")
 
-    if gap_direction == "down" and current > vwap and rsi > 45 and macd_hist > 0:
-        return "bull", (f"Gap fade: gapped down {gap_pct:+.2f}% but recovering | "
-                        f"above VWAP | RSI={rsi:.0f}")
+    elif gap_direction == "down":
+        bull_fail = []
+        if not (current > vwap):    bull_fail.append("close<=VWAP (gap not recovering)")
+        if not (rsi > 45):          bull_fail.append(f"RSI={rsi:.0f}<=45")
+        if not (macd_hist > 0):     bull_fail.append(f"MACD={macd_hist:.3f}<=0")
+        if not bull_fail:
+            return "bull", (f"Gap fade: gapped down {gap_pct:+.2f}% but recovering | "
+                            f"above VWAP | RSI={rsi:.0f}")
+        log.info(f"  Gap-fade(down) no-fire: {', '.join(bull_fail)}")
 
     return None, None
 
@@ -1416,20 +2077,156 @@ def evaluate_vwap_momentum(bar, prev_bar, df):
     ema21          = float(bar["ema21"])
     macd_hist      = float(bar["macd_hist"]) if not np.isnan(bar["macd_hist"]) else 0
     closing_up     = float(bar["close_price"]) > float(prev_bar["close_price"])
-    above_vwap_pct = float((df["close_price"] > df["vwap"]).mean())
+    # Use the LAST 30 BARS (~2.5 hrs at 5-min) instead of whole-session average.
+    # Whole-day above_vwap_pct goes stale by 3pm: a stock that ran above VWAP all
+    # morning then dipped reads 0.85 — false bull. Recent window tracks current regime.
+    recent_window  = df.tail(30) if len(df) >= 30 else df
+    above_vwap_pct = float((recent_window["close_price"] > recent_window["vwap"]).mean())
 
-    if (current > vwap and above_vwap_pct > 0.50 and ema9 > ema21
-            and 50 < rsi < RSI_OVERBOUGHT and vol_ratio >= 1.2
-            and macd_hist > 0 and closing_up):
-        return "bull", (f"VWAP momentum: above VWAP {above_vwap_pct:.0%} of day | "
+    # Filter stack: dropped the RSI band — it was rejecting strong-trend setups
+    # (RSI 70+ on a clean breakout is the *signal*, not a problem). EMA9>EMA21 +
+    # MACD>0 + closing_up + above-VWAP-recent already enforce direction.
+    # Vol threshold also lowered to VWAP_MIN_VOL_RATIO (1.0×) — most mid-day bars
+    # run below 1.2× even on real moves.
+    bull_fail = []
+    if not (current > vwap):                       bull_fail.append("close<=VWAP")
+    if not (above_vwap_pct > 0.50):                bull_fail.append(f"above_vwap_pct={above_vwap_pct:.0%}<=50%")
+    if not (ema9 > ema21):                         bull_fail.append("EMA9<=EMA21")
+    if not (vol_ratio >= VWAP_MIN_VOL_RATIO):      bull_fail.append(f"vol {vol_ratio:.2f}<{VWAP_MIN_VOL_RATIO}")
+    if not (macd_hist > 0):                        bull_fail.append(f"MACD={macd_hist:.3f}<=0")
+    if not closing_up:                             bull_fail.append("not closing up")
+
+    if not bull_fail:
+        return "bull", (f"VWAP momentum: above VWAP {above_vwap_pct:.0%} of recent | "
                         f"RSI={rsi:.0f} | MACD green | {vol_ratio:.1f}x vol")
 
-    if (current < vwap and above_vwap_pct < 0.50 and ema9 < ema21
-            and RSI_OVERSOLD < rsi < 50 and vol_ratio >= 1.2
-            and macd_hist < 0 and not closing_up):
-        return "bear", (f"VWAP momentum: below VWAP {above_vwap_pct:.0%} of day above | "
+    bear_fail = []
+    if not (current < vwap):                       bear_fail.append("close>=VWAP")
+    if not (above_vwap_pct < 0.50):                bear_fail.append(f"above_vwap_pct={above_vwap_pct:.0%}>=50%")
+    if not (ema9 < ema21):                         bear_fail.append("EMA9>=EMA21")
+    if not (vol_ratio >= VWAP_MIN_VOL_RATIO):      bear_fail.append(f"vol {vol_ratio:.2f}<{VWAP_MIN_VOL_RATIO}")
+    if not (macd_hist < 0):                        bear_fail.append(f"MACD={macd_hist:.3f}>=0")
+    if not (not closing_up):                       bear_fail.append("not closing down")
+
+    if not bear_fail:
+        return "bear", (f"VWAP momentum: below VWAP {(1-above_vwap_pct):.0%} of recent | "
                         f"RSI={rsi:.0f} | MACD red | {vol_ratio:.1f}x vol")
 
+    log.info(
+        f"  VWAP-momentum no-fire: bull[{', '.join(bull_fail)}] | "
+        f"bear[{', '.join(bear_fail)}]"
+    )
+    return None, None
+
+
+# ── Trend-continuation + mean-reversion (added when strict gates produced 0 trades) ──
+TREND_CONT_SCORE_THRESHOLD = 5   # 5 of 6 conditions agree on direction
+TREND_CONT_VOL_MIN         = 0.5 # mid-day volume gate (looser than VWAP momentum)
+MEAN_REV_RSI_OVERSOLD      = 28  # RSI ≤ this + MACD turning green = bounce setup
+MEAN_REV_RSI_OVERBOUGHT    = 72  # RSI ≥ this + MACD turning red = fade setup
+
+def evaluate_trend_continuation(bar, prev_bar, df):
+    """Score-based continuation + mean-reversion at extremes.
+
+    Two sub-strategies in priority order:
+
+    1. SCORE-BASED CONTINUATION
+       Tally bull/bear conditions across {VWAP, EMA cross, MACD, RSI half, regime,
+       volume}. Fire when 4+ agree on the same direction AND RSI hasn't yet hit
+       an extreme (bull only when RSI<72, bear only when RSI>28). The RSI bound
+       prevents firing late into mature moves where the next probable action is
+       a reversal, not a continuation.
+
+    2. MEAN-REVERSION AT EXTREMES
+       RSI ≤ 28 + MACD just turned positive  → bull (oversold bounce starting)
+       RSI ≥ 72 + MACD just turned negative → bear (overbought fade starting)
+       The "MACD turning" check waits for the reversal to actually begin so we
+       don't catch a falling knife.
+
+    Both lanes share the standard cooldown / gate stack downstream.
+    """
+    current        = float(bar["close_price"])
+    rsi            = float(bar["rsi"])       if not np.isnan(bar["rsi"])       else 50
+    vol_ratio      = float(bar["vol_ratio"]) if not np.isnan(bar["vol_ratio"]) else 1
+    vwap           = float(bar["vwap"])
+    ema9           = float(bar["ema9"])
+    ema21          = float(bar["ema21"])
+    macd_hist      = float(bar["macd_hist"]) if not np.isnan(bar["macd_hist"]) else 0
+    prev_macd      = float(prev_bar["macd_hist"]) if "macd_hist" in prev_bar and not np.isnan(prev_bar["macd_hist"]) else macd_hist
+    recent_window  = df.tail(20) if len(df) >= 20 else df
+    above_vwap_pct = float((recent_window["close_price"] > recent_window["vwap"]).mean())
+
+    # ── 1. Score-based continuation ──────────────────────────────────────────
+    bull_score = 0
+    if current > vwap:                       bull_score += 1
+    if ema9 > ema21:                         bull_score += 1
+    if macd_hist > 0:                        bull_score += 1
+    if rsi >= 50:                            bull_score += 1
+    if above_vwap_pct >= 0.65:               bull_score += 1
+    if vol_ratio >= TREND_CONT_VOL_MIN:      bull_score += 1
+
+    bear_score = 0
+    if current < vwap:                       bear_score += 1
+    if ema9 < ema21:                         bear_score += 1
+    if macd_hist < 0:                        bear_score += 1
+    if rsi <= 50:                            bear_score += 1
+    if above_vwap_pct <= 0.35:               bear_score += 1
+    if vol_ratio >= TREND_CONT_VOL_MIN:      bear_score += 1
+
+    # Score threshold of 5 means MACD's score-point IS the agreement check —
+    # if MACD disagrees you can hit at most 5/6, which means 5 OTHER conditions
+    # all agree (a genuine high-conviction setup with lagging MACD). Below 5
+    # was firing on weak setups; an additional hard MACD gate was too strict
+    # in chop. RSI bounds still prevent firing into mature mean-reversion zones.
+    if (bull_score >= TREND_CONT_SCORE_THRESHOLD
+            and bull_score > bear_score
+            and rsi < MEAN_REV_RSI_OVERBOUGHT):
+        return "bull", (
+            f"Trend-cont bull score={bull_score}/6 | RSI={rsi:.0f} | "
+            f"MACD={macd_hist:+.2f} | vol={vol_ratio:.1f}x"
+        )
+
+    if (bear_score >= TREND_CONT_SCORE_THRESHOLD
+            and bear_score > bull_score
+            and rsi > MEAN_REV_RSI_OVERSOLD):
+        return "bear", (
+            f"Trend-cont bear score={bear_score}/6 | RSI={rsi:.0f} | "
+            f"MACD={macd_hist:+.2f} | vol={vol_ratio:.1f}x"
+        )
+
+    # ── 2. Mean-reversion at extremes ────────────────────────────────────────
+    # MACD reversal detector: requires the histogram to have moved a meaningful
+    # distance back toward zero — at least 50% of its prior magnitude. Avoids
+    # firing on a tiny tick-up while MACD is still deep in the trend (e.g.
+    # -0.452 → -0.448 is noise, not a reversal).
+    macd_turning_up = (
+        prev_macd <= -0.05
+        and macd_hist > prev_macd
+        and abs(macd_hist) < abs(prev_macd) * 0.5
+    )
+    macd_turning_down = (
+        prev_macd >= 0.05
+        and macd_hist < prev_macd
+        and abs(macd_hist) < abs(prev_macd) * 0.5
+    )
+
+    if rsi <= MEAN_REV_RSI_OVERSOLD and macd_turning_up:
+        return "bull", (
+            f"Mean-rev bounce: RSI={rsi:.0f} oversold + MACD turning green "
+            f"({prev_macd:+.2f}→{macd_hist:+.2f})"
+        )
+
+    if rsi >= MEAN_REV_RSI_OVERBOUGHT and macd_turning_down:
+        return "bear", (
+            f"Mean-rev fade: RSI={rsi:.0f} overbought + MACD turning red "
+            f"({prev_macd:+.2f}→{macd_hist:+.2f})"
+        )
+
+    log.info(
+        f"  Trend-cont/mean-rev no-fire: "
+        f"bull_score={bull_score} bear_score={bear_score} "
+        f"RSI={rsi:.0f} MACD={macd_hist:+.3f}({prev_macd:+.3f})"
+    )
     return None, None
 
 
@@ -1456,8 +2253,8 @@ def run_session(session_name, session_end_hour, session_end_min,
         if stop_event and stop_event.is_set():
             log.info(f"{session_name}: stopped by user.")
             break
-        if is_lunch_hour():
-            log.info("Lunch-hour block (11:30–13:30 ET). Waiting...")
+        if is_lunch_hour(symbol):
+            log.info(f"Lunch-hour block (11:30–13:30 ET) for ETF {symbol}. Waiting...")
             # Interruptible 5-minute wait
             if stop_event:
                 if stop_event.wait(timeout=300):
@@ -1514,7 +2311,7 @@ def run_session(session_name, session_end_hour, session_end_min,
                     )
 
             # Surface similar past setups from memory before proceeding
-            indicators_snapshot = bar.to_dict()
+            indicators_snapshot = _sanitize_indicators(bar.to_dict())
             memory_context = TRADE_MEMORY.retrieve_similar(symbol, direction, indicators_snapshot)
             if memory_context:
                 log.info(memory_context)
@@ -1534,8 +2331,9 @@ def run_session(session_name, session_end_hour, session_end_min,
                         time.sleep(60)
                     continue
 
-            # Daily loss circuit-breaker
-            if not daily_loss_check(acct_val):
+            # Daily loss circuit-breaker + profit lock + global cooldown + per-signal news
+            if (not daily_loss_check(acct_val) or not daily_profit_check(acct_val)
+                    or not global_cooldown_ok() or not news_check_ok(symbol)):
                 if stop_event:
                     stop_event.wait(timeout=60)
                 else:
@@ -1562,15 +2360,17 @@ def run_session(session_name, session_end_hour, session_end_min,
                     if option:
                         mid, spread, _bid, ask = option_mid_and_spread(option)
                         log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  ask=${ask:.2f}  spread=${spread:.2f}")
-                        if mid > 0 and spread <= MAX_SPREAD:
+                        if spread_acceptable(mid, spread):
                             contracts = size_contracts(acct_val, mid)
                             if contracts > 0:
                                 place_trade(option, contracts, mid, direction, reason, atr, symbol,
                                             indicators=indicators_snapshot, ask_price=ask,
                                             underlying_price=current)
+                                _record_global_trade()
                                 traded = True
                         else:
-                            log.warning(f"Spread ${spread:.2f} > max ${MAX_SPREAD:.2f}. Skipping.")
+                            spread_pct = spread / mid * 100 if mid > 0 else 999
+                            log.warning(f"Spread ${spread:.2f} ({spread_pct:.0f}% of mid) too wide. Skipping.")
                     else:
                         log.warning(f"Could not find ATM {symbol} option. Skipping.")
 
@@ -1621,11 +2421,22 @@ def morning_session(prior_levels, vix, stop_event=None, end_hour=None, end_minut
         log.warning("Not enough bars for opening range.")
         return
 
-    or_width_pct = (or_high - or_low) / or_low
+    or_width = or_high - or_low
+    or_width_pct = or_width / or_low
+    last_atr = float(df["atr"].iloc[-1]) if "atr" in df.columns and not np.isnan(df["atr"].iloc[-1]) else None
     log.info(f"Opening range: ${or_low:.2f}–${or_high:.2f} (width {or_width_pct:.2%})")
 
-    if or_width_pct < MIN_ORB_WIDTH:
-        log.info(f"OR width too tight — ORB skipped, trying gap fade.")
+    # ATR-relative tight check: range must be at least MIN_ORB_ATR_MULT * ATR.
+    # Falls back to a tiny absolute floor (0.05%) when ATR is unavailable.
+    width_too_tight = (
+        (last_atr and or_width < MIN_ORB_ATR_MULT * last_atr)
+        or (not last_atr and or_width_pct < 0.0005)
+    )
+    if width_too_tight:
+        if last_atr:
+            log.info(f"OR width ${or_width:.2f} < {MIN_ORB_ATR_MULT}×ATR ${last_atr:.2f} — ORB skipped, trying gap fade.")
+        else:
+            log.info("OR width too tight (no ATR) — ORB skipped, trying gap fade.")
         def gap_only(bar, prev_bar, df):
             return evaluate_gap_fade(bar, gap_pct, gap_dir, df)
         run_session("Morning (gap fade)", eh, em, gap_only, prior_levels,
@@ -1704,6 +2515,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 
     acct_val = account_value()
     set_day_start_equity(acct_val)
+    reconcile_positions()   # recover any orphaned positions from a previous session/restart
     log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * MAX_RISK_PCT:,.2f}  |  {symbol}")
     if prior_levels:
         log.info(
@@ -1767,6 +2579,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
     )
     last_trade_ts      = None  # 5-minute cool-down guard
     iv_rank_fetched_at = datetime.now(ET)  # track when IV rank was last refreshed
+    last_bar_ts        = None  # same-bar guard: skip re-evaluation if bar hasn't advanced
 
     while datetime.now(ET) < session_end:
         if stop_event and stop_event.is_set():
@@ -1784,14 +2597,17 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 tag = "EXPENSIVE" if iv_rank > IV_RANK_MAX else "elevated" if iv_rank > IV_RANK_WARN else "normal"
                 log.info(f"  IV Rank refresh ({symbol}): IVR={iv_rank:.0f}% [{tag}]")
 
-        if is_lunch_hour():
-            log.info("Lunch-hour block (11:30–13:30 ET). Waiting 5 min…")
+        if is_lunch_hour(symbol):
+            log.info(f"Lunch-hour block (11:30–13:30 ET) for ETF {symbol}. Waiting 5 min…")
             if stop_event:
                 if stop_event.wait(timeout=300):
                     break
             else:
                 time.sleep(300)
             continue
+
+        # Refresh account value each iteration for accurate loss checks and sizing
+        acct_val = account_value()
 
         df = fetch_bars(symbol)
         if df is None or len(df) < 5:
@@ -1804,8 +2620,27 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 
         df       = _apply_vol_baseline(df)
         df       = inject_daily_ema200(df, daily_ema200)
-        bar      = df.iloc[-1]
-        prev_bar = df.iloc[-2] if len(df) > 1 else bar
+        # Bar selection: prefer the LIVE bar (-1) once its volume has matured to
+        # ~60% of the historical average for that minute-of-day. Otherwise fall back
+        # to the last completed bar (-2). This cuts reaction time from up-to-5-min
+        # down to ~30s on most signals while still rejecting half-formed candles.
+        live_bar = df.iloc[-1]
+        last_completed = df.iloc[-2] if len(df) >= 2 else live_bar
+        bar = last_completed
+        if len(df) >= 2 and hist_vol_baseline:
+            try:
+                slot = live_bar["begins_at"].strftime("%H:%M")
+                hist_avg = hist_vol_baseline.get(slot, 0)
+                bar_age_min = max(0.0, (datetime.now(ET) - live_bar["begins_at"]).total_seconds() / 60)
+                expected = hist_avg * (bar_age_min / 5.0) if hist_avg > 0 else 0
+                if expected > 0 and float(live_bar["volume"]) >= 0.6 * expected:
+                    bar = live_bar
+            except Exception:
+                pass  # any timestamp/lookup error → keep the safe last-completed bar
+        prev_bar = (
+            df.iloc[-2] if (bar is live_bar and len(df) >= 2)
+            else (df.iloc[-3] if len(df) >= 3 else (df.iloc[-2] if len(df) >= 2 else df.iloc[-1]))
+        )
         current  = float(bar["close_price"])
         atr      = float(bar["atr"]) if not np.isnan(bar["atr"]) else None
         ema200_str = f"{daily_ema200:.2f}" if daily_ema200 else "—"
@@ -1819,13 +2654,27 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             f"BB[{bar['bb_lower']:.2f}–{bar['bb_upper']:.2f}]"
         )
 
+        # Same-bar guard — if the feed hasn't advanced, wait and retry
+        bar_ts = bar["begins_at"]
+        if bar_ts == last_bar_ts:
+            if stop_event:
+                stop_event.wait(timeout=60)
+            else:
+                time.sleep(60)
+            continue
+        last_bar_ts = bar_ts
+
         # Phase-based evaluator selection
         is_opening_phase = (now.hour == 9) or (now.hour == 10 and now.minute < 30)
         direction = reason = None
 
         if is_opening_phase and or_high and or_low:
-            or_width = (or_high - or_low) / or_low
-            if or_width >= MIN_ORB_WIDTH:
+            or_width = or_high - or_low
+            # ATR-relative width gate: range must be >= MIN_ORB_ATR_MULT * ATR
+            if atr and or_width >= MIN_ORB_ATR_MULT * atr:
+                direction, reason = evaluate_orb(bar, prev_bar, or_high, or_low, df)
+            elif not atr and (or_width / or_low) >= 0.0005:
+                # Fallback when ATR unavailable: tiny absolute floor
                 direction, reason = evaluate_orb(bar, prev_bar, or_high, or_low, df)
 
         if not direction and gap_pct and gap_dir:
@@ -1833,6 +2682,13 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 
         if not direction:
             direction, reason = evaluate_vwap_momentum(bar, prev_bar, df)
+
+        # Last lane: trend-continuation by score + mean-reversion at extremes.
+        # Catches the setups the strict gates above filter out (mid-day flow,
+        # established trends, oversold bounces). Looser by design — relies on
+        # the downstream gate stack (cooldown, IV rank, sector cap, etc).
+        if not direction:
+            direction, reason = evaluate_trend_continuation(bar, prev_bar, df)
 
         if direction:
             # Cool-down: 5 min normally; 20 min after a stop hit
@@ -1890,7 +2746,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
             if iv_rank is not None and iv_rank > IV_RANK_WARN:
                 log.warning(f"  IV Rank={iv_rank:.0f}% — elevated. Proceeding with caution.")
 
-            indicators_snapshot = bar.to_dict()
+            indicators_snapshot = _sanitize_indicators(bar.to_dict())
             if futures_ctx:
                 indicators_snapshot["futures_bias"]           = futures_ctx.get("futures_bias", "neutral")
                 indicators_snapshot["es_direction"]           = futures_ctx.get("es_direction", "flat")
@@ -1943,6 +2799,44 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                     time.sleep(60)
                 continue
 
+            if not daily_profit_check(acct_val):
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
+            # Global cross-symbol cooldown — prevent two symbols firing in the same second
+            if not global_cooldown_ok():
+                log.info(f"  Global cooldown ({GLOBAL_COOLDOWN_SEC}s) active across symbols — waiting.")
+                if stop_event:
+                    stop_event.wait(timeout=30)
+                else:
+                    time.sleep(30)
+                continue
+
+            # Per-signal news re-check — catches mid-session halt headlines
+            # that the session-start filter missed.
+            if not news_check_ok(symbol):
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
+            # Data-staleness gate: refuse to trade if bars are older than
+            # DATA_MAX_AGE_SEC. The signal direction comes from bars — if those
+            # are stale we're trading old data. Option-quote staleness is checked
+            # implicitly below: a stale quote returns $0 mid which short-circuits
+            # via `if mid <= 0`. Spot price (used by chart) is intentionally not
+            # gated here — it's not on the trade's critical path.
+            if not stale_data_check(symbol, kinds=("bars",)):
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
             deployed = deployed_risk_pct(acct_val)
             if deployed >= MAX_PORTFOLIO_RISK:
                 log.warning(
@@ -1961,22 +2855,29 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                     if option:
                         mid, spread, _bid, ask = option_mid_and_spread(option)
                         log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  ask=${ask:.2f}  spread=${spread:.2f}")
-                        if mid > 0 and spread <= MAX_SPREAD:
+                        if spread_acceptable(mid, spread):
                             contracts = size_contracts(acct_val, mid)
+                            order = None
                             if contracts > 0:
-                                order = place_trade(
-                                    option, contracts, mid, direction, reason, atr, symbol,
-                                    indicators=indicators_snapshot, ask_price=ask,
-                                    underlying_price=current,
-                                )
-                            last_trade_ts = now  # always update — prevents flood in DRY_RUN
+                                try:
+                                    order = place_trade(
+                                        option, contracts, mid, direction, reason, atr, symbol,
+                                        indicators=indicators_snapshot, ask_price=ask,
+                                        underlying_price=current,
+                                    )
+                                except Exception as _place_exc:
+                                    log.error(f"place_trade raised unexpectedly: {_place_exc}", exc_info=True)
+                                    order = None
+                            last_trade_ts = now  # always stamp — prevents signal flood even on error
+                            _record_global_trade()  # global cooldown across symbols
                             if order and not DRY_RUN:
-                                filled = wait_for_fill(str(order.id), stop_event=stop_event)
-                                if filled:
+                                filled_qty = wait_for_fill(str(order.id), stop_event=stop_event)
+                                if filled_qty > 0:
                                     acct_val = account_value()
+                                    _notify_fill()  # refresh UI account stats post-entry
                                 else:
                                     log.warning(
-                                        f"Entry order {order.id} not filled — position NOT registered."
+                                        f"Entry order {order.id} not filled — removing position."
                                     )
                                     with _positions_lock:
                                         _open_positions[:] = [
@@ -1989,9 +2890,9 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                                 f"Market may be closed or option data unavailable for {symbol}."
                             )
                         else:
+                            spread_pct = spread / mid * 100 if mid > 0 else 999
                             log.warning(
-                                f"  Spread ${spread:.2f} > max ${MAX_SPREAD:.2f} — skipping. "
-                                f"Consider raising MAX_SPREAD for {symbol}."
+                                f"  Spread ${spread:.2f} ({spread_pct:.0f}% of mid) too wide — skipping {symbol}."
                             )
 
         if stop_event:
@@ -2012,6 +2913,11 @@ _positions_lock = threading.Lock()
 # and block same-direction re-entry.
 _last_stop: dict[str, dict] = {}
 _stop_lock = threading.Lock()
+
+# Negative cache: remember (symbol, tf) pairs where Alpaca returned 0 bars so
+# subsequent calls skip the 3-feed retry loop and go straight to yfinance.
+_alpaca_zero_cache: dict[tuple, float] = {}
+_ALPACA_ZERO_TTL = 300  # seconds — re-try Alpaca after 5 min (catches market-open transitions)
 STOP_COOLDOWN_SEC  = 1200   # 20-min cooldown after a stop hit (vs 5 min normally)
 
 def record_stop_hit(symbol: str, direction: str) -> None:
@@ -2028,10 +2934,17 @@ def get_last_stop(symbol: str) -> dict | None:
 
 def register_trade(occ_symbol: str, entry_price: float, contracts: int,
                    direction: str, symbol: str, order_id: str | None = None) -> None:
-    """Register a new position for the monitor after an order is submitted."""
+    """Register a new position for the monitor after an order is submitted.
+
+    Stop/target levels follow the swing-style risk profile:
+      stop      = entry × (1 - STOP_LOSS_PCT)            — initial protective stop
+      partial   = entry × (1 + PARTIAL_TRIGGER_PCT)      — close PARTIAL_QTY_FRAC here
+      target    = entry × (1 + PROFIT_TARGET)            — close remainder
+      breakeven = stop is moved to entry once pnl_frac >= BREAKEVEN_TRIGGER_PCT
+    """
     stop_price = round(entry_price * (1 - STOP_LOSS_PCT), 2)
-    tgt_50     = round(entry_price * 1.50, 2)
-    tgt_75     = round(entry_price * (1 + PROFIT_TARGET), 2)
+    tgt_50     = round(entry_price * (1 + PARTIAL_TRIGGER_PCT), 2)
+    tgt_75     = round(entry_price * (1 + PROFIT_TARGET),       2)
     pos = {
         "occ_symbol":   occ_symbol,
         "symbol":       symbol.upper(),
@@ -2043,15 +2956,20 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
         "contracts":    contracts,
         "remaining":    contracts,
         "order_id":     order_id,
-        "partial_done": False,
-        "opened_at":    datetime.now(ET).isoformat(),
+        "partial_done":    False,
+        "close_attempted": False,  # prevents duplicate close orders on full exits
+        "opened_at":       datetime.now(ET).isoformat(),
+        "stop_breach_count": 0,    # consecutive monitor cycles below stop_price (bid)
+        "close_client_id": None,   # idempotency for close orders — reused on retry
+        "breakeven_armed": False,  # set True once stop_price moved to entry on +30%
     }
     with _positions_lock:
         _open_positions.append(pos)
     log.info(
         f"Position registered: {occ_symbol} {contracts}x  "
         f"entry=${entry_price:.2f}  stop=${stop_price:.2f}  "
-        f"T1=${tgt_50:.2f}  T2=${tgt_75:.2f}"
+        f"T1=${tgt_50:.2f} (+{int(PARTIAL_TRIGGER_PCT*100)}% close {int(PARTIAL_QTY_FRAC*100)}%)  "
+        f"T2=${tgt_75:.2f} (+{int(PROFIT_TARGET*100)}%)"
     )
 
 
@@ -2059,6 +2977,107 @@ def open_positions_snapshot() -> list[dict]:
     """Thread-safe copy of the open positions list for the UI."""
     with _positions_lock:
         return [dict(p) for p in _open_positions]
+
+
+def position_exists_for_symbol_direction(symbol: str, direction: str) -> bool:
+    """True if any open position matches symbol+direction.
+
+    Stops the "open AMZN calls 9 separate times" averaging-into-non-mover
+    pattern observed today. Cool-down only protects against time-too-close;
+    this protects against duplicate exposure regardless of cool-down state.
+    """
+    sym = symbol.upper()
+    with _positions_lock:
+        for p in _open_positions:
+            if p.get("remaining", 0) > 0 and p.get("symbol") == sym and p.get("direction") == direction:
+                return True
+    return False
+
+
+def _fetch_real_entry(occ_symbol: str, fallback: float) -> float:
+    """Look up the most recent filled BUY order for `occ_symbol` and return its
+    filled_avg_price — the actual premium we paid.
+
+    Critical for reconciliation: register_trade() derives stop/target from the
+    entry price we pass in. avg_entry_price from get_all_positions() is fine for
+    P&L but it includes any partial closes, so a position that filled at $5.00
+    and partially closed at $7.50 reports avg_entry_price as something else.
+    """
+    if not TRADING_CLIENT:
+        return fallback
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums    import QueryOrderStatus
+        orders = TRADING_CLIENT.get_orders(filter=GetOrdersRequest(
+            status  = QueryOrderStatus.CLOSED,
+            symbols = [occ_symbol],
+            side    = OrderSide.BUY,
+            limit   = 20,
+        ))
+        for o in orders:
+            if str(o.status).lower() == "filled" and o.filled_avg_price:
+                price = float(o.filled_avg_price)
+                if price > 0:
+                    return price
+    except Exception as e:
+        log.warning(f"_fetch_real_entry({occ_symbol}): {e}")
+    return fallback
+
+
+def reconcile_positions() -> int:
+    """Sync _open_positions with actual Alpaca option positions.
+
+    Adds any option position held at Alpaca that our local list lost track of
+    (e.g. after a server restart mid-trade). Returns count of positions added.
+    Call at session start and after any unexpected restart.
+
+    Entry price is fetched from order history (via _fetch_real_entry) so that
+    stop/target levels are computed from the *actual* fill, not the current
+    avg_entry_price (which can be skewed by partial closes).
+    """
+    if not TRADING_CLIENT:
+        return 0
+    added = 0
+    try:
+        all_positions = TRADING_CLIENT.get_all_positions()
+        option_positions = [p for p in all_positions if str(getattr(p, "asset_class", "")).lower() == "us_option"]
+
+        with _positions_lock:
+            known_occs = {p["occ_symbol"] for p in _open_positions}
+
+        for ap in option_positions:
+            occ = str(ap.symbol)
+            if occ in known_occs:
+                continue
+            qty   = int(float(ap.qty or 0))
+            fallback_price = float(ap.avg_entry_price or ap.cost_basis or 0)
+            if qty <= 0 or fallback_price <= 0:
+                continue
+            # Real entry from order history — falls back to avg_entry_price on lookup failure.
+            real_entry = _fetch_real_entry(occ, fallback_price)
+            # Best-guess direction from OCC symbol: find C or P before the 8-digit strike
+            _m = re.search(r'([CP])\d{8}$', occ)
+            direction = "bull" if (_m and _m.group(1) == "C") else "bear"
+            underlying = occ[:6].rstrip()
+            register_trade(occ, real_entry, qty, direction, underlying, order_id=None)
+            entry_note = (
+                f"@ ${real_entry:.2f}" if real_entry == fallback_price
+                else f"@ ${real_entry:.2f} (avg shown ${fallback_price:.2f})"
+            )
+            log.warning(
+                f"reconcile_positions: added orphaned position {occ} "
+                f"{qty}x {entry_note} (direction={direction}) — "
+                f"likely from a previous session."
+            )
+            added += 1
+
+        if added:
+            log.warning(f"reconcile_positions: {added} orphaned position(s) recovered.")
+        else:
+            log.info("reconcile_positions: local positions match Alpaca.")
+    except Exception as e:
+        log.warning(f"reconcile_positions failed: {e}")
+    return added
 
 
 def deployed_risk_pct(acct_val: float) -> float:
@@ -2075,9 +3094,17 @@ def deployed_risk_pct(acct_val: float) -> float:
     return total_at_risk / acct_val
 
 
-def _close_option_position(occ_symbol: str, qty: int, reason: str) -> bool:
+def _close_option_position(occ_symbol: str, qty: int, reason: str,
+                           client_order_id: str | None = None) -> bool:
     """Limit-sell at the current bid to close an option position quickly.
-    Returns True if the order was submitted without error."""
+
+    Uses IOC time-in-force so unfilled remainders don't sit on the book — the
+    next monitor cycle will re-quote and try again at the new bid.
+
+    client_order_id makes the submission idempotent: if Alpaca already saw this
+    ID it returns the existing order instead of creating a duplicate sell.
+    Caller should pass the same ID on retries (stored on the position dict).
+    """
     if not OPTION_CLIENT or not TRADING_CLIENT:
         return False
     try:
@@ -2086,17 +3113,22 @@ def _close_option_position(occ_symbol: str, qty: int, reason: str) -> bool:
         quote = res.get(occ_symbol)
         bid   = float((quote.bid_price or 0)) if quote else 0.0
         ask   = float((quote.ask_price or 0)) if quote else 0.0
-        # Sell at bid to prioritise execution; floor at $0.01 so Alpaca doesn't reject
+        if bid <= 0 and ask <= 0:
+            log.warning(f"_close_option_position({occ_symbol}): bid=0 ask=0 — no market, skipping order")
+            return False
+        # Sell at bid to prioritise execution; fall back to mid if bid=0
         limit = round(max(bid, 0.01), 2) if bid > 0 else round(max((bid + ask) / 2, 0.01), 2)
-        order_req = LimitOrderRequest(
+        order_kwargs = dict(
             symbol        = occ_symbol,
             qty           = qty,
             side          = OrderSide.SELL,
             type          = OrderType.LIMIT,
-            time_in_force = TimeInForce.DAY,
+            time_in_force = TimeInForce.IOC,   # don't leave a resting close order
             limit_price   = limit,
         )
-        order = TRADING_CLIENT.submit_order(order_req)
+        if client_order_id:
+            order_kwargs["client_order_id"] = client_order_id
+        order = TRADING_CLIENT.submit_order(LimitOrderRequest(**order_kwargs))
         log.info(f"CLOSE [{reason}]: {qty}x {occ_symbol} @ ${limit:.2f}  id={order.id}")
         return True
     except Exception as e:
@@ -2149,50 +3181,150 @@ def check_positions() -> list[dict]:
             log.warning(f"Monitor: quote error for {occ}: {e}")
             continue
 
-        pnl_pct    = (mid - pos["entry_price"]) / pos["entry_price"] * 100
-        remaining  = pos["remaining"]
+        # Stop trigger uses BID (what we'd actually fill at), not mid (overly optimistic
+        # when spread is wide). Targets stay on mid — we're selling into strength so the
+        # mid is a fair representation of where the market is.
+        stop_trigger = bid if bid > 0 else mid
+        pnl_pct      = (mid - pos["entry_price"]) / pos["entry_price"] * 100
+        pnl_frac     = mid / pos["entry_price"] - 1
+        remaining    = pos["remaining"]
         log.info(
-            f"  Monitor {occ}: mid=${mid:.2f}  entry=${pos['entry_price']:.2f}  "
+            f"  Monitor {occ}: bid=${bid:.2f} mid=${mid:.2f}  entry=${pos['entry_price']:.2f}  "
             f"P&L={pnl_pct:+.1f}%  remaining={remaining}"
         )
+
+        # Reset stop-breach counter once bid recovers above stop_price — a brief
+        # spread-induced dip below stop should not permanently arm the trigger.
+        if stop_trigger > pos["stop_price"] and pos.get("stop_breach_count", 0) > 0:
+            with _positions_lock:
+                pos["stop_breach_count"] = 0
+
+        # Breakeven move: once pnl_frac >= BREAKEVEN_TRIGGER_PCT, ratchet the stop
+        # up to the entry price. Turns +30% winners into "free trades" — worst case
+        # becomes a scratch instead of a -50% stop-out if the move reverses.
+        if (not pos.get("breakeven_armed", False)
+                and pnl_frac >= BREAKEVEN_TRIGGER_PCT
+                and pos["stop_price"] < pos["entry_price"]):
+            with _positions_lock:
+                old_stop = pos["stop_price"]
+                pos["stop_price"]      = pos["entry_price"]
+                pos["breakeven_armed"] = True
+                pos["stop_breach_count"] = 0  # reset — new stop level
+            log.info(
+                f"  ⚡ Breakeven armed for {occ}: pnl=+{pnl_frac*100:.0f}% — "
+                f"stop moved ${old_stop:.2f} → ${pos['stop_price']:.2f} (entry)"
+            )
+
+        # Time-stop: exit stalled positions (pnl flat-ish) after TIME_STOP_MINS.
+        # Range tightened to [-15%, +10%] — don't kill clear winners early; let
+        # runners run to target. Range floor still -15% so near-stops resolve naturally.
+        time_stop_triggered = False
+        try:
+            opened = datetime.fromisoformat(pos["opened_at"])
+            age_min = (now - opened).total_seconds() / 60
+            if age_min >= TIME_STOP_MINS and TIME_STOP_RANGE_LO <= pnl_frac <= TIME_STOP_RANGE_HI:
+                time_stop_triggered = True
+        except Exception:
+            age_min = 0
 
         close_qty  = 0
         is_partial = False
         reason     = None
 
         if is_hc:
+            with _positions_lock:
+                if pos["close_attempted"]:
+                    continue
+                pos["close_attempted"] = True
             close_qty = remaining
             reason    = f"HARD CLOSE {POSITION_CLOSE_TIME[0]}:{POSITION_CLOSE_TIME[1]:02d} ET"
-        elif mid <= pos["stop_price"]:
+        elif stop_trigger <= pos["stop_price"]:
+            # 2-cycle confirmation: a single wide-spread tick won't trigger.
+            with _positions_lock:
+                pos["stop_breach_count"] = pos.get("stop_breach_count", 0) + 1
+                breach_count = pos["stop_breach_count"]
+            if breach_count < STOP_CONFIRM_TICKS:
+                log.info(
+                    f"  Stop pending: bid=${stop_trigger:.2f} <= ${pos['stop_price']:.2f} "
+                    f"(breach {breach_count}/{STOP_CONFIRM_TICKS}) — waiting for confirmation"
+                )
+                continue
+            with _positions_lock:
+                if pos["close_attempted"]:
+                    continue
+                pos["close_attempted"] = True
             close_qty = remaining
-            reason    = f"STOP HIT ${mid:.2f} <= ${pos['stop_price']:.2f} ({pnl_pct:+.1f}%)"
+            reason    = f"STOP HIT bid=${stop_trigger:.2f} <= ${pos['stop_price']:.2f} ({pnl_pct:+.1f}%)"
             record_stop_hit(pos["symbol"], pos["direction"])
+        elif time_stop_triggered:
+            with _positions_lock:
+                if pos["close_attempted"]:
+                    continue
+                pos["close_attempted"] = True
+            close_qty = remaining
+            reason    = f"TIME STOP {age_min:.0f}min @ {pnl_pct:+.1f}% (stalled)"
         elif mid >= pos["target_75"]:
+            with _positions_lock:
+                if pos["close_attempted"]:
+                    continue
+                pos["close_attempted"] = True
             close_qty = remaining
             reason    = f"TARGET 2 ${mid:.2f} >= ${pos['target_75']:.2f} ({pnl_pct:+.1f}%)"
-        elif mid >= pos["target_50"] and not pos["partial_done"]:
-            close_qty  = max(1, remaining // 2)
-            is_partial = True
-            reason     = f"TARGET 1 partial ${mid:.2f} >= ${pos['target_50']:.2f} ({pnl_pct:+.1f}%)"
+        elif mid >= pos["target_50"]:
+            # Atomic check-and-set inside the lock to prevent duplicate partial closes.
+            # Close PARTIAL_QTY_FRAC of the original size (default 25%) — taking a
+            # sliver off the table without amputating the right-tail upside.
+            with _positions_lock:
+                if pos["partial_done"]:
+                    close_qty = 0  # another thread already triggered the partial
+                else:
+                    close_qty  = max(1, int(round(pos["contracts"] * PARTIAL_QTY_FRAC)))
+                    close_qty  = min(close_qty, remaining)
+                    is_partial = True
+                    reason     = (f"TARGET 1 partial {int(PARTIAL_QTY_FRAC*100)}% "
+                                  f"${mid:.2f} >= ${pos['target_50']:.2f} ({pnl_pct:+.1f}%)")
+                    pos["partial_done"] = True  # claim it now — prevents race
 
         if close_qty <= 0:
             continue
 
+        close_succeeded = False
         if DRY_RUN:
             log.info(f"[DRY RUN] Would close {close_qty}x {occ}: {reason}")
             pos["remaining"] -= close_qty
-            if is_partial:
-                pos["partial_done"] = True
             if pos["remaining"] <= 0:
                 _remove_position(pos)
+            close_succeeded = True
         else:
-            ok = _close_option_position(occ, close_qty, reason)
+            # Reuse the same client_order_id across retries so Alpaca dedupes any
+            # close that already landed (network timeout etc).
+            with _positions_lock:
+                if not pos.get("close_client_id"):
+                    pos["close_client_id"] = f"close_{occ}_{int(time.time())}"
+                cid = pos["close_client_id"]
+            ok = _close_option_position(occ, close_qty, reason, client_order_id=cid)
             if ok:
                 pos["remaining"] -= close_qty
-                if is_partial:
-                    pos["partial_done"] = True
                 if pos["remaining"] <= 0:
                     _remove_position(pos)
+                else:
+                    # Partial close succeeded — clear ID so a *new* client_order_id
+                    # is minted for the next close attempt on the remainder.
+                    with _positions_lock:
+                        pos["close_client_id"] = None
+                close_succeeded = True
+            else:
+                # Order failed — roll back flags so the next monitor cycle can retry
+                # using the SAME client_order_id (idempotent retry).
+                with _positions_lock:
+                    if is_partial:
+                        pos["partial_done"] = False
+                    else:
+                        pos["close_attempted"] = False
+
+        if close_succeeded:
+            # Refresh UI account stats post-close (entry was already refreshed at fill).
+            _notify_fill()
 
         events.append({
             "occ_symbol":  occ,
@@ -2212,27 +3344,48 @@ def check_positions() -> list[dict]:
 
 
 # ── Fill confirmation ─────────────────────────────────────────────────────────
-def wait_for_fill(order_id: str, stop_event=None) -> bool:
+def wait_for_fill(order_id: str, stop_event=None) -> int:
     """Poll order status until filled or FILL_TIMEOUT_MINS elapses.
 
-    Returns True if filled, False if cancelled/expired/timed-out.
-    Cancels the order automatically on timeout.
+    Returns the number of contracts actually filled (≥1 = success, 0 = failed).
+    Handles partial fills: updates the registered position to the real fill qty.
+    Cancels unfilled remainder automatically on timeout.
     """
     if not TRADING_CLIENT:
-        return False
+        return 0
     deadline = datetime.now(ET) + timedelta(minutes=FILL_TIMEOUT_MINS)
     while datetime.now(ET) < deadline:
         if stop_event and stop_event.is_set():
             break
         try:
-            order = TRADING_CLIENT.get_order_by_id(order_id)
+            order  = TRADING_CLIENT.get_order_by_id(order_id)
             status = str(order.status).lower()
-            if status in ("filled", "partially_filled"):
-                log.info(f"Fill confirmed: order {order_id} status={status}")
-                return True
+            if status == "filled":
+                filled_qty = int(float(order.filled_qty or 0))
+                log.info(f"Fill confirmed: order {order_id} filled_qty={filled_qty}")
+                return filled_qty
+            if status == "partially_filled":
+                filled_qty = int(float(order.filled_qty or 0))
+                log.warning(
+                    f"Order {order_id} partially filled ({filled_qty} contracts) — "
+                    f"cancelling remainder and adjusting position."
+                )
+                try:
+                    TRADING_CLIENT.cancel_order_by_id(order_id)
+                except Exception:
+                    pass
+                # Shrink the registered position to the actual filled qty
+                if filled_qty > 0:
+                    with _positions_lock:
+                        for pos in _open_positions:
+                            if pos.get("order_id") == order_id:
+                                pos["contracts"] = filled_qty
+                                pos["remaining"] = filled_qty
+                                break
+                return filled_qty
             if status in ("canceled", "expired", "replaced", "done_for_day"):
                 log.warning(f"Order {order_id} ended without fill: status={status}")
-                return False
+                return 0
             log.info(f"  Waiting for fill: order {order_id} status={status}")
         except Exception as e:
             log.warning(f"wait_for_fill poll error: {e}")
@@ -2250,7 +3403,7 @@ def wait_for_fill(order_id: str, stop_event=None) -> bool:
         log.info(f"Order {order_id} cancelled.")
     except Exception as e:
         log.warning(f"Could not cancel order {order_id}: {e}")
-    return False
+    return 0
 
 
 # ── CLI entry (only used if run standalone, not via dashboard) ────────────────

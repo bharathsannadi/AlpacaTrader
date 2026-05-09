@@ -43,6 +43,17 @@ let tradeTimer       = null;
 let tradeTimeoutId   = null;
 
 socket.on("trade_signal", (d) => {
+  // When Auto-Trade is ON, the backend (TradeApproval.request) auto-approves
+  // and submits the order without waiting for a user click. The signal is still
+  // emitted so the chart marker / trade log update — we just shouldn't pop the
+  // modal that asks for an approval the bot has already given itself.
+  if (d.auto_trade) {
+    appendLog(
+      `✓ Auto-trade ${d.direction.toUpperCase()} ${d.symbol} ${d.contracts}× $${d.strike} ${(d.type || '').toUpperCase()} @ $${d.mid_price.toFixed(2)}`,
+      "INFO"
+    );
+    return;
+  }
   showTradeModal(d);
   playAlertSound();
 });
@@ -135,7 +146,7 @@ function updateUI(s) {
     document.getElementById("login-overlay").classList.remove("hidden");
   }
 
-  // SPY price (or active symbol price)
+  // Price ticker (active symbol)
   if (s.spy_price) {
     const chg  = s.spy_change_pct ?? 0;
     const cls  = chg > 0 ? "up" : chg < 0 ? "down" : "neutral";
@@ -143,12 +154,24 @@ function updateUI(s) {
     setEl("spy-price", `$${s.spy_price.toFixed(2)}`, `ticker-price ${cls}`);
     setEl("spy-chg",   `${sign}${chg.toFixed(2)}%`,  `ticker-chg ${cls}`);
   }
+  // Market session badge
+  if (s.market_session) {
+    const badge = document.getElementById("session-badge");
+    if (badge) {
+      const labels = { pre: "PRE", regular: "OPEN", after: "AFTER", closed: "CLOSED" };
+      badge.textContent = labels[s.market_session] ?? s.market_session.toUpperCase();
+      badge.className   = `session-badge ${s.market_session}`;
+    }
+  }
 
   // VIX
   if (s.vix != null) {
     const cls = s.vix > 28 ? "down" : s.vix > 20 ? "neutral" : "up";
     setEl("hdr-vix", s.vix.toFixed(1), `value ${cls}`);
   }
+
+  // Data freshness panel — per-source age with green/yellow/red dots
+  if (s.data_freshness) renderFreshness(s.data_freshness);
 
   // Account
   if (s.account_value) {
@@ -160,29 +183,43 @@ function updateUI(s) {
   }
 
   // Active symbol — sync tab highlight + header ticker + chart title
-  if (s.active_symbol) {
+  if (s.active_symbol && s.active_symbol !== currentSymbol) {
     currentSymbol = s.active_symbol;
     setEl("ticker-symbol", s.active_symbol);
     setEl("chart-title",   s.active_symbol);
-    document.querySelectorAll(".symbol-tab").forEach(tab => {
-      tab.classList.toggle("active", tab.dataset.symbol === s.active_symbol);
-    });
+    document.querySelectorAll(".symbol-tab").forEach(tab =>
+      tab.classList.toggle("active", tab.dataset.symbol === s.active_symbol));
+    _fetchChart(false);  // chart must match the new symbol
+  } else if (s.active_symbol) {
+    setEl("ticker-symbol", s.active_symbol);
+    setEl("chart-title",   s.active_symbol);
+    document.querySelectorAll(".symbol-tab").forEach(tab =>
+      tab.classList.toggle("active", tab.dataset.symbol === s.active_symbol));
   }
 
-  // Per-symbol session dots in tab bar + Start/Stop button state
+  // Per-symbol session dots in tab bar + Start/Stop All button enable-state
   if (s.sessions) {
+    const entries = Object.entries(s.sessions);
     let anyRunning = false;
-    Object.entries(s.sessions).forEach(([sym, running]) => {
+    let allRunning = entries.length > 0;
+    entries.forEach(([sym, running]) => {
       const dot = document.getElementById(`tab-dot-${sym}`);
       if (dot) dot.className = `tab-dot${running ? " running" : ""}`;
       if (running) anyRunning = true;
+      else         allRunning = false;
     });
-    // Active-symbol session drives the tab-level Start/Stop buttons
-    const activeRunning = !!(s.sessions[s.active_symbol || "SPY"]);
-    const startBtn = document.getElementById("btn-start-session");
-    const stopBtn  = document.getElementById("btn-stop-session");
-    if (startBtn) startBtn.disabled = activeRunning;
-    if (stopBtn)  stopBtn.disabled  = !activeRunning;
+    // Start All disabled when every symbol is already running.
+    // Stop All disabled when nothing is running.
+    const startAll = document.getElementById("btn-start-all");
+    const stopAll  = document.getElementById("btn-stop-all");
+    if (startAll) {
+      startAll.disabled = allRunning;
+      startAll.title    = allRunning ? "All sessions already running" : "";
+    }
+    if (stopAll) {
+      stopAll.disabled = !anyRunning;
+      stopAll.title    = anyRunning ? "" : "No sessions running";
+    }
   }
 
   // Mode pill
@@ -228,6 +265,63 @@ function syncToggleBtn(id, on) {
   if (!btn) return;
   btn.textContent = on ? "ON" : "OFF";
   btn.classList.toggle("off", !on);
+}
+
+// ── Data Freshness panel ───────────────────────────────────────────────────
+// Server sends s.data_freshness = { "bars:SPY": {age_sec, max_age, stale, source}, ... }
+// We render rows sorted by source, with a green/yellow/red dot per row:
+//   green  = age < 50% of max
+//   yellow = age < max
+//   red    = age > max (stale)
+function renderFreshness(snap) {
+  const empty = document.getElementById("freshness-empty");
+  const table = document.getElementById("freshness-table");
+  const body  = document.getElementById("freshness-body");
+  if (!empty || !table || !body) return;
+
+  const keys = Object.keys(snap);
+  if (keys.length === 0) {
+    empty.style.display = "";
+    table.style.display = "none";
+    return;
+  }
+  empty.style.display = "none";
+  table.style.display = "";
+
+  // Sort: critical (option_quote, bars, vix) first, then alphabetical
+  const priority = { option_quote: 0, bars: 1, vix: 2, price: 3, news: 4 };
+  keys.sort((a, b) => {
+    const pa = priority[a.split(":")[0]] ?? 9;
+    const pb = priority[b.split(":")[0]] ?? 9;
+    return pa - pb || a.localeCompare(b);
+  });
+
+  const rows = keys.map(key => {
+    const f       = snap[key];
+    const age     = f.age_sec;
+    const maxAge  = f.max_age;
+    const stale   = f.stale;
+    const ratio   = maxAge > 0 ? age / maxAge : 0;
+    const dotCls  = stale ? "red" : ratio > 0.5 ? "yellow" : "green";
+    const ageStr  = age < 60 ? `${age.toFixed(0)}s` : `${(age / 60).toFixed(1)}m`;
+    const rowCls  = stale ? "freshness-row stale" : "freshness-row";
+    // Escape user-visible text fields to be safe (key/source come from trader).
+    const keyEsc  = escapeHtml(key);
+    const srcEsc  = escapeHtml(f.source || "");
+    return `
+      <tr class="${rowCls}">
+        <td><span class="fresh-dot ${dotCls}"></span><span class="freshness-key">${keyEsc}</span></td>
+        <td><span class="freshness-source">${srcEsc}</span></td>
+        <td class="age-col">${ageStr}</td>
+      </tr>`;
+  });
+  body.innerHTML = rows.join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
 }
 
 function setEl(id, text, className) {
@@ -577,31 +671,80 @@ function updateGridLayout() {
 }
 
 // ── Chart (lightweight-charts) ────────────────────────────────────────────────
-let chart            = null;
-let candleSeries     = null;
-let currentTimeframe = "1D";
-let currentSymbol    = "SPY";
-let chartInitialized = false;
+let chart             = null;
+let candleSeries      = null;
+let chartInitialized  = false;
 let chartRefreshTimer = null;
+let _chartSeq         = 0;
+let currentSymbol     = "SPY";
 
-const CHART_AUTO_REFRESH_MS = 10_000;   // refresh 1D bars every 10s while live
+// ── Persistent interval + range (survive page reload via localStorage) ────────
+const _IV_DEFAULT  = "15m";
+const _RNG_DEFAULT = "1D";
+// Live ranges: auto-refresh every N ms. Historical ranges don't change intraday.
+const LIVE_RANGES        = new Set(["1D", "5D"]);
+const CHART_AUTO_REFRESH = 15_000;
+
+let currentInterval = localStorage.getItem("chart_iv")  || _IV_DEFAULT;
+let currentRange    = localStorage.getItem("chart_rng") || _RNG_DEFAULT;
+
+// ── Single fetch entry-point ──────────────────────────────────────────────────
+function _fetchChart(force) {
+  if (!chartInitialized) return;
+  const seq = ++_chartSeq;
+  socket.emit("get_chart_data", {
+    interval:      currentInterval,
+    range:         currentRange,
+    symbol:        currentSymbol,
+    force_refresh: !!force,
+    _seq:          seq,
+  });
+}
 
 function startChartAutoRefresh() {
   stopChartAutoRefresh();
   chartRefreshTimer = setInterval(() => {
-    if (currentTimeframe === "1D" && chartInitialized) {
-      socket.emit("get_chart_data", { timeframe: "1D", symbol: currentSymbol });
-    }
-  }, CHART_AUTO_REFRESH_MS);
+    if (LIVE_RANGES.has(currentRange)) _fetchChart(false);
+  }, CHART_AUTO_REFRESH);
 }
-
 function stopChartAutoRefresh() {
   if (chartRefreshTimer) { clearInterval(chartRefreshTimer); chartRefreshTimer = null; }
 }
 
+// ── Sync button highlights ────────────────────────────────────────────────────
+function _syncIvBtns(iv) {
+  document.querySelectorAll("[data-iv]").forEach(b =>
+    b.classList.toggle("iv-active", b.dataset.iv === iv));
+}
+function _syncRngBtns(rng) {
+  document.querySelectorAll("[data-rng]").forEach(b =>
+    b.classList.toggle("rng-active", b.dataset.rng === rng));
+}
+
+// ── Public setters (called by button onclick) ─────────────────────────────────
+function setInterval_(iv) {
+  if (!iv) return;
+  currentInterval = iv;
+  localStorage.setItem("chart_iv", iv);
+  _syncIvBtns(iv);
+  _fetchChart(true);
+  if (LIVE_RANGES.has(currentRange)) startChartAutoRefresh(); else stopChartAutoRefresh();
+}
+function setRange(rng) {
+  if (!rng) return;
+  currentRange = rng;
+  localStorage.setItem("chart_rng", rng);
+  _syncRngBtns(rng);
+  _fetchChart(true);
+  if (LIVE_RANGES.has(rng)) startChartAutoRefresh(); else stopChartAutoRefresh();
+}
+
+// ── Chart init ────────────────────────────────────────────────────────────────
 function initChart() {
   if (chartInitialized) {
-    socket.emit("get_chart_data", { timeframe: currentTimeframe, symbol: currentSymbol });
+    _syncIvBtns(currentInterval);
+    _syncRngBtns(currentRange);
+    _fetchChart(false);
     startChartAutoRefresh();
     return;
   }
@@ -610,109 +753,128 @@ function initChart() {
 
   chart = LightweightCharts.createChart(container, {
     width:  container.clientWidth,
-    height: container.clientHeight || 240,
+    height: container.clientHeight || 280,
     layout: {
-      background: { type: "solid", color: "#050810" },
-      textColor:  "#94a3b8",
+      background: { type: "solid", color: "#04070e" },
+      textColor:  "#7a96b8",
       fontSize:   10,
       fontFamily: "JetBrains Mono, monospace",
     },
     grid: {
-      vertLines: { color: "rgba(30,42,58,0.5)" },
-      horzLines: { color: "rgba(30,42,58,0.5)" },
+      vertLines: { color: "rgba(21,32,53,0.6)" },
+      horzLines: { color: "rgba(21,32,53,0.6)" },
     },
-    rightPriceScale: { borderColor: "#1e2a3a", textColor: "#64748b" },
-    timeScale:       { borderColor: "#1e2a3a", textColor: "#64748b", timeVisible: true, secondsVisible: false },
+    rightPriceScale: {
+      borderColor:  "#152035",
+      textColor:    "#4a6280",
+      scaleMargins: { top: 0.08, bottom: 0.04 },
+    },
+    timeScale: {
+      borderColor:     "#152035",
+      textColor:       "#4a6280",
+      timeVisible:     true,
+      secondsVisible:  false,
+      rightOffset:     5,
+      barSpacing:      8,
+      minBarSpacing:   3,
+      fixLeftEdge:     true,    // lock left edge so timeline never drifts left
+      fixRightEdge:    false,
+      lockVisibleTimeRangeOnResize: false,
+    },
     crosshair: {
       mode: 1,
-      vertLine: { color: "#3b82f6", width: 1, style: 3, labelBackgroundColor: "#3b82f6" },
-      horzLine: { color: "#3b82f6", width: 1, style: 3, labelBackgroundColor: "#3b82f6" },
+      vertLine: { color: "#22d3ee", width: 1, style: 3, labelBackgroundColor: "#0f3040" },
+      horzLine: { color: "#22d3ee", width: 1, style: 3, labelBackgroundColor: "#0f3040" },
     },
     handleScroll: true,
     handleScale:  true,
   });
 
   candleSeries = chart.addCandlestickSeries({
-    upColor:        "#00d88a",
-    downColor:      "#ff4560",
-    borderUpColor:  "#00d88a",
-    borderDownColor:"#ff4560",
-    wickUpColor:    "#00d88a",
-    wickDownColor:  "#ff4560",
+    upColor:          "#00e5a0",
+    downColor:        "#ff3d68",
+    borderUpColor:    "#00e5a0",
+    borderDownColor:  "#ff3d68",
+    wickUpColor:      "#00e5a055",
+    wickDownColor:    "#ff3d6855",
+    priceLineVisible: true,
+    priceLineColor:   "#4a6280",
+    priceLineWidth:   1,
+    priceLineStyle:   3,
   });
 
-  // Auto-resize on window resize
   new ResizeObserver(() => {
-    if (chart && container.clientWidth && container.clientHeight) {
+    if (chart && container.clientWidth && container.clientHeight)
       chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
-    }
   }).observe(container);
 
   chartInitialized = true;
-  socket.emit("get_chart_data", { timeframe: currentTimeframe, symbol: currentSymbol });
+  _syncIvBtns(currentInterval);
+  _syncRngBtns(currentRange);
+  _fetchChart(false);
   startChartAutoRefresh();
 }
 
-function setTimeframe(tf) {
-  currentTimeframe = tf;
-  document.querySelectorAll(".tf-btn").forEach(b => {
-    b.classList.toggle("active", b.dataset.tf === tf);
-  });
-  if (chartInitialized) {
-    socket.emit("get_chart_data", { timeframe: tf, symbol: currentSymbol });
-    if (tf === "1D") startChartAutoRefresh(); else stopChartAutoRefresh();
-  }
+function zoomIn() {
+  if (!chart) return;
+  const lr = chart.timeScale().getVisibleLogicalRange();
+  if (!lr) return;
+  const delta = (lr.to - lr.from) * 0.2;
+  chart.timeScale().setVisibleLogicalRange({ from: lr.from + delta, to: lr.to - delta });
 }
 
-function refreshChart() {
-  if (chartInitialized) {
-    socket.emit("get_chart_data", {
-      timeframe:     currentTimeframe,
-      symbol:        currentSymbol,
-      force_refresh: true,
-    });
-  }
+function zoomOut() {
+  if (!chart) return;
+  const lr = chart.timeScale().getVisibleLogicalRange();
+  if (!lr) return;
+  const delta = (lr.to - lr.from) * 0.3;
+  chart.timeScale().setVisibleLogicalRange({ from: lr.from - delta, to: lr.to + delta });
 }
+
+function resetZoom() {
+  if (!chart) return;
+  chart.timeScale().fitContent();
+}
+
+function refreshChart() { _fetchChart(true); }
 
 function setActiveSymbol(symbol) {
   currentSymbol = symbol;
-  document.querySelectorAll(".symbol-tab").forEach(tab => {
-    tab.classList.toggle("active", tab.dataset.symbol === symbol);
-  });
+  document.querySelectorAll(".symbol-tab").forEach(tab =>
+    tab.classList.toggle("active", tab.dataset.symbol === symbol));
   setEl("ticker-symbol", symbol);
   setEl("chart-title",   symbol);
   socket.emit("set_active_symbol", { symbol });
-  if (chartInitialized) socket.emit("get_chart_data", { timeframe: currentTimeframe, symbol });
+  _fetchChart(false);
 }
 
 socket.on("chart_data", (d) => {
   if (!candleSeries || !d.bars) return;
+  // Drop stale out-of-order responses
+  if (d._seq && d._seq < _chartSeq) return;
+  // Drop if symbol, interval, or range no longer matches what the user has selected
+  if (d.symbol   && d.symbol   !== currentSymbol)   return;
+  if (d.interval && d.interval !== currentInterval) return;
+  if (d.range    && d.range    !== currentRange)    return;
+
   candleSeries.setData(d.bars);
 
-  // Apply markers from signal history
   const markers = (d.signals || []).map(s => ({
-    time: s.time,
-    position: s.direction === "bull" ? "belowBar" : "aboveBar",
-    color:    s.direction === "bull" ? "#00d88a" : "#ff4560",
-    shape:    s.direction === "bull" ? "arrowUp" : "arrowDown",
-    text:     s.direction === "bull" ? "CALL"    : "PUT",
+    time:     s.time,
+    position: s.direction === "bull" ? "belowBar"  : "aboveBar",
+    color:    s.direction === "bull" ? "#00e5a0"   : "#ff3d68",
+    shape:    s.direction === "bull" ? "arrowUp"   : "arrowDown",
+    text:     s.direction === "bull" ? "▲ CALL"    : "▼ PUT",
   }));
   candleSeries.setMarkers(markers);
 
-  // Empty-state toggle: surface "no data" instead of a silently blank chart.
-  // 1D mode auto-rolls back to the last trading day, so an empty result here
-  // means there's truly no IEX activity for this symbol in the last ~10 days.
-  const empty   = document.getElementById("chart-empty");
-  const detail  = document.getElementById("chart-empty-detail");
+  const empty  = document.getElementById("chart-empty");
+  const detail = document.getElementById("chart-empty-detail");
   if (empty) {
     if (d.bars.length === 0) {
-      const sym = d.symbol || currentSymbol;
-      const tf  = d.timeframe || currentTimeframe;
-      if (detail) {
-        detail.textContent =
-          `No bars returned for ${sym} (${tf}) — Alpaca's free IEX feed ` +
-          `has no recent data. Try a longer timeframe or a different symbol.`;
-      }
+      if (detail) detail.textContent =
+        `No data · ${d.symbol || currentSymbol} ${d.interval || currentInterval} / ${d.range || currentRange}. ` +
+        `Try ↻ or a different interval.`;
       empty.classList.remove("hidden");
     } else {
       empty.classList.add("hidden");

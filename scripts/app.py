@@ -45,7 +45,7 @@ VIX_CACHE_TTL_SEC        = 120       # VIX rarely changes
 PRIOR_LEVELS_CACHE_SEC   = 3600      # prior-day OHLC: refresh hourly
 CHART_CACHE_TTL_SEC      = 8         # short-window bar cache (matches 10s JS refresh)
 APPROVAL_TIMEOUT_SEC     = 60
-POSITION_MONITOR_SEC     = 30        # position monitor poll interval
+POSITION_MONITOR_SEC     = 10        # position monitor poll interval (10s for tighter stop execution)
 LOGIN_RATE_LIMIT         = "10 per minute"
 API_STATUS_RATE_LIMIT    = "30 per minute"
 MAX_SIGNAL_HISTORY       = 50
@@ -236,6 +236,7 @@ state = {
     "trades_today":    [],
     "spy_price":       None,
     "spy_change_pct":  None,
+    "market_session":  "closed",
     "vix":             None,
     # Trade-rule parameters (mirror trader module constants)
     "vix_max":         30,
@@ -325,6 +326,7 @@ def _state_snapshot() -> dict:
             "buying_power":    state["buying_power"],
             "spy_price":       state["spy_price"],
             "spy_change_pct":  state["spy_change_pct"],
+            "market_session":  state["market_session"],
             "vix":             state["vix"],
             "trades_today":    list(state["trades_today"]),
             "vix_max":         state["vix_max"],
@@ -339,6 +341,7 @@ def _state_snapshot() -> dict:
             "auto_trade":           state["auto_trade"],
             "open_positions":       trader.open_positions_snapshot(),
             "deployed_risk_pct":    round(trader.deployed_risk_pct(state["account_value"]) * 100, 2),
+            "data_freshness":       trader.get_freshness_snapshot(),
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
 
@@ -359,6 +362,22 @@ def refresh_account() -> None:
             state["buying_power"]  = round(trader.buying_power(),  2)
     except Exception as e:
         log.warning(f"refresh_account failed: {e}")
+
+
+def _on_trader_fill() -> None:
+    """Trader-side hook: refresh account stats and broadcast updated state.
+
+    Wired into trader.ON_FILL_CALLBACK below — the trader calls this from session
+    threads after a successful entry fill or a successful position close, so the
+    header (Account / Buying Power / Max Risk) ticks in real time instead of only
+    on session start/end.
+    """
+    refresh_account()
+    emit_state()
+
+
+# Register the callback once (at import time — session threads pick it up).
+trader.ON_FILL_CALLBACK = _on_trader_fill
 
 
 # ── Cached lookups ────────────────────────────────────────────────────────────
@@ -405,9 +424,10 @@ def _cached_prior_levels(symbol: str = "SPY") -> dict:
 
 def refresh_prices() -> None:
     try:
-        price, chg_pct = trader.get_symbol_price(state["active_symbol"])
-        if price is not None:
-            with _state_lock:
+        price, chg_pct, session = trader.get_symbol_price(state["active_symbol"])
+        with _state_lock:
+            state["market_session"] = session
+            if price is not None:
                 state["spy_price"]      = price
                 state["spy_change_pct"] = chg_pct
     except Exception as e:
@@ -439,7 +459,7 @@ def price_ticker() -> None:
 
 
 def position_monitor() -> None:
-    """Background thread: evaluate open positions every 30s.
+    """Background thread: evaluate open positions every 10s.
     Closes at stop-loss, profit target 1 (partial), profit target 2, or hard-close time."""
     while True:
         socketio.sleep(POSITION_MONITOR_SEC)
@@ -594,6 +614,7 @@ def on_login(data):
     security_log.info(f"Successful Alpaca login from {ip} (paper={paper})")
     trader.init_memory(enabled=state.get("trade_memory_enabled", True))
     trader.init_debate(enabled=state.get("debate_enabled", False))
+    trader.init_news_filter(enabled=state.get("news_filter_enabled", True))
     refresh_account()
     refresh_prices()
     socketio.emit("login_result", {"success": True})
@@ -869,7 +890,9 @@ def on_toggle_auto_schedule():
 def on_toggle_news_filter():
     with _state_lock:
         state["news_filter_enabled"] = not state["news_filter_enabled"]
-    log.info(f"News filter {'enabled' if state['news_filter_enabled'] else 'disabled'}")
+        new_val = state["news_filter_enabled"]
+    trader.init_news_filter(enabled=new_val)   # mirror to per-signal re-check gate
+    log.info(f"News filter {'enabled' if new_val else 'disabled'}")
     emit_state()
 
 
@@ -915,24 +938,24 @@ def on_refresh():
     emit_state()
 
 
-_VALID_TIMEFRAMES = frozenset({"1D", "5D", "1M", "3M", "1Y", "5Y"})
+_VALID_INTERVALS  = frozenset({"1m", "5m", "15m", "30m", "1h", "1d"})
+_VALID_RANGES     = frozenset({"1D", "5D", "1M", "3M", "1Y", "5Y"})
 
 # Chart-bar cache: (symbol, timeframe) -> (bars_list, monotonic_ts)
 _chart_cache: dict[tuple[str, str], tuple[list, float]] = {}
 _chart_cache_lock = threading.Lock()
 
 
-def _cached_chart_bars(timeframe: str, symbol: str, force_refresh: bool = False) -> list:
-    """Cache chart bars per (symbol, timeframe) for CHART_CACHE_TTL_SEC.
-    Pass force_refresh=True to bypass the cache (e.g. on explicit user refresh)."""
-    key = (symbol, timeframe)
+def _cached_chart_bars(interval: str, range_: str, symbol: str, force_refresh: bool = False) -> list:
+    """Cache chart bars per (symbol, interval, range) for CHART_CACHE_TTL_SEC."""
+    key = (symbol, interval, range_)
     now = time.monotonic()
     if not force_refresh:
         with _chart_cache_lock:
             cached = _chart_cache.get(key)
             if cached and now - cached[1] < CHART_CACHE_TTL_SEC:
                 return cached[0]
-    bars = trader.fetch_chart_bars(timeframe, symbol)
+    bars = trader.fetch_chart_bars(interval, range_, symbol)
     with _chart_cache_lock:
         _chart_cache[key] = (bars, now)
     return bars
@@ -954,34 +977,40 @@ def on_set_active_symbol(data):
 @socketio.on("get_chart_data")
 @require_auth
 def on_get_chart_data(data=None):
-    """Return bars + signal markers for the active symbol & requested timeframe."""
-    timeframe     = (data or {}).get("timeframe", "1D")
-    force_refresh = bool((data or {}).get("force_refresh", False))
-    if timeframe not in _VALID_TIMEFRAMES:
-        timeframe = "1D"
+    """Return OHLCV bars + signal markers for the requested symbol, interval, and range."""
+    data     = data or {}
+    interval = data.get("interval", "15m")
+    range_   = data.get("range",    "1D")
+    force    = bool(data.get("force_refresh", False))
+    seq      = data.get("_seq")
+
+    if interval not in _VALID_INTERVALS: interval = "15m"
+    if range_   not in _VALID_RANGES:    range_   = "1D"
+
     with _state_lock:
         active = state["active_symbol"]
-    symbol = (data or {}).get("symbol") or active
+    symbol = (data.get("symbol") or active).upper()
     if symbol not in VALID_SYMBOLS:
         symbol = "SPY"
+
     try:
-        bars = _cached_chart_bars(timeframe, symbol, force_refresh=force_refresh)
+        bars = _cached_chart_bars(interval, range_, symbol, force_refresh=force)
         with _state_lock:
-            # Show only the markers tagged for this symbol.
-            # Older markers without a `symbol` key default to SPY for back-compat.
-            signals = [
-                m for m in signal_history
-                if m.get("symbol", "SPY") == symbol
-            ]
+            signals = [m for m in signal_history if m.get("symbol", "SPY") == symbol]
         socketio.emit("chart_data", {
-            "bars":      bars,
-            "signals":   signals,
-            "timeframe": timeframe,
-            "symbol":    symbol,
+            "bars":     bars,
+            "signals":  signals,
+            "interval": interval,
+            "range":    range_,
+            "symbol":   symbol,
+            "_seq":     seq,
         })
     except Exception as e:
         log.warning(f"Chart data error: {e}", exc_info=True)
-        socketio.emit("chart_data", {"bars": [], "signals": [], "timeframe": timeframe, "symbol": symbol})
+        socketio.emit("chart_data", {
+            "bars": [], "signals": [], "interval": interval, "range": range_,
+            "symbol": symbol, "_seq": seq,
+        })
 
 
 @socketio.on("trade_response")
