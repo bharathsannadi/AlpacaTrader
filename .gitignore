@@ -10,3 +10,6 @@ venv/
 .claude/session_summary.md
 # Local Claude Code permission overrides (machine-specific)
 .claude/settings.local.json
+
+.DS_Store
+.claude/
