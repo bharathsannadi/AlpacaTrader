@@ -1186,6 +1186,105 @@ def on_stop_stream():
     log.info("Live stream paused — UI feed stopped (sessions still run)")
 
 
+# ── Exec Brief ────────────────────────────────────────────────────────────────
+@socketio.on("get_exec_brief")
+@require_auth
+def on_get_exec_brief():
+    """Generate and emit a one-paragraph narrative of today's activity."""
+    socketio.start_background_task(_build_exec_brief)
+
+
+def _build_exec_brief() -> None:
+    """Build a narrative summary and emit it as 'exec_brief'."""
+    try:
+        with _state_lock:
+            trades   = list(state["trades_today"])
+            sessions = dict(state["sessions"])
+            acct     = state["account_value"]
+            spy_px   = state["spy_price"]
+            vix      = state["vix"]
+            dry_run  = state["dry_run"]
+
+        positions = trader.open_positions_snapshot()
+        n_open    = len([p for p in positions if p.get("remaining", 0) > 0])
+        closed    = [t for t in trades if not t.get("is_partial")]
+        wins      = [t for t in closed if t.get("pnl_pct", 0) > 0]
+        losses    = [t for t in closed if t.get("pnl_pct", 0) < 0]
+        active    = [s for s, on in sessions.items() if on]
+        watching  = ", ".join(active) if active else "none"
+        mode      = "paper dry-run" if dry_run else "paper live"
+
+        # Build plain stats for the LLM
+        plain = (
+            f"Mode: {mode}\n"
+            f"Account: ${acct:,.0f}  |  SPY: ${spy_px:.2f}  |  VIX: {vix:.1f}\n"
+            f"Sessions running: {watching or 'none'}\n"
+            f"Closed trades today: {len(closed)} total — {len(wins)} wins, {len(losses)} losses\n"
+        )
+        if closed:
+            for t in closed:
+                plain += f"  {t.get('symbol','?')} {t.get('direction','?').upper()} {t.get('pnl_pct',0):+.1f}% ({t.get('reason','')})\n"
+        plain += f"Open positions: {n_open}\n"
+        if positions:
+            for p in positions[:4]:
+                pnl = p.get("unrealized_pct", 0) or 0
+                plain += f"  {p.get('occ_symbol','?')} {p.get('direction','?').upper()} entry=${p.get('entry_price',0):.2f} unrealized={pnl:+.1f}%\n"
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if api_key:
+            try:
+                import anthropic
+                client = anthropic.Anthropic(api_key=api_key)
+                prompt = (
+                    "You are the co-pilot AI for an automated SPY options trading system. "
+                    "Write ONE short paragraph (3-4 sentences max) summarising today's trading activity "
+                    "for the dashboard. Include: what the bot did, current state, what it's watching. "
+                    "Be direct and specific. No preamble, no bullet points — just a flowing sentence or two.\n\n"
+                    f"Today's data:\n{plain}"
+                )
+                resp = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=150,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                narrative = resp.content[0].text.strip()
+            except Exception as e:
+                log.warning(f"exec_brief LLM failed: {e}")
+                narrative = _plain_narrative(closed, wins, losses, n_open, watching, mode, spy_px, vix)
+        else:
+            narrative = _plain_narrative(closed, wins, losses, n_open, watching, mode, spy_px, vix)
+
+        socketio.emit("exec_brief", {
+            "narrative": narrative,
+            "stats": {
+                "closed": len(closed),
+                "wins":   len(wins),
+                "losses": len(losses),
+                "open":   n_open,
+                "watching": watching,
+            }
+        })
+    except Exception as e:
+        log.warning(f"_build_exec_brief failed: {e}")
+        socketio.emit("exec_brief", {"narrative": "Initialising…", "stats": {}})
+
+
+def _plain_narrative(closed, wins, losses, n_open, watching, mode, spy_px, vix) -> str:
+    if not closed and n_open == 0:
+        return (f"Running in {mode} mode — no trades taken yet today. "
+                f"SPY at ${spy_px:.2f}, VIX {vix:.1f}. "
+                f"Watching: {watching or 'sessions not started'}.")
+    parts = []
+    if closed:
+        parts.append(f"Closed {len(closed)} trade(s) today — {len(wins)} win(s), {len(losses)} loss(es).")
+    if n_open:
+        parts.append(f"{n_open} position(s) currently open.")
+    if watching:
+        parts.append(f"Monitoring: {watching}.")
+    parts.append(f"SPY ${spy_px:.2f} | VIX {vix:.1f} | {mode}.")
+    return " ".join(parts)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     socketio.start_background_task(price_ticker)

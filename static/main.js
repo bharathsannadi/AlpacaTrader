@@ -24,8 +24,35 @@ socket.on("login_result", (r) => {
     appendLog("Connected successfully.", "INFO");
     socket.emit("refresh");
     initChart();                  // Build chart and load default 1D bars
+    requestExecBrief();           // Load exec narrative on login
   } else {
     document.getElementById("login-error").textContent = r.error || "Login failed.";
+  }
+});
+
+// ── Exec Brief ────────────────────────────────────────────────────────────────
+function requestExecBrief() {
+  const el = document.getElementById("exec-narrative");
+  if (el) el.textContent = "Thinking…";
+  socket.emit("get_exec_brief");
+}
+
+socket.on("exec_brief", (d) => {
+  const el    = document.getElementById("exec-narrative");
+  const chips = document.getElementById("exec-chips");
+  if (el) el.textContent = d.narrative || "—";
+  if (chips && d.stats) {
+    const s = d.stats;
+    chips.innerHTML = "";
+    if (s.closed > 0) {
+      chips.innerHTML += `<span class="exec-chip ${s.wins > s.losses ? 'green' : s.losses > s.wins ? 'red' : ''}">${s.wins}W ${s.losses}L</span>`;
+    }
+    if (s.open > 0) {
+      chips.innerHTML += `<span class="exec-chip cyan">${s.open} open</span>`;
+    }
+    if (s.watching && s.watching !== "none") {
+      chips.innerHTML += `<span class="exec-chip">${s.watching}</span>`;
+    }
   }
 });
 
@@ -258,6 +285,13 @@ function updateUI(s) {
   if (s.dte_max != null)       setEl("val-dte-max",       s.dte_max);
 
   if (s.timestamp) setEl("hdr-time", s.timestamp);
+
+  // Refresh exec brief when trade count changes
+  const newCount = (s.trades_today || []).length;
+  if (newCount !== (updateUI._lastTradeCount ?? -1)) {
+    updateUI._lastTradeCount = newCount;
+    if (s.logged_in && newCount > 0) requestExecBrief();
+  }
 }
 
 function syncToggleBtn(id, on) {
