@@ -30,7 +30,7 @@ from typing import Optional
 from functools import wraps
 from zoneinfo import ZoneInfo
 
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify, session, make_response
 from flask_socketio import SocketIO, disconnect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -82,6 +82,7 @@ app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), '..', 'templates'),
             static_folder=os.path.join(os.path.dirname(__file__), '..', 'static'))
 app.config.update(
+    SEND_FILE_MAX_AGE_DEFAULT = 0,        # disable static file caching in dev
     SECRET_KEY              = get_or_create_secret_key(),
     SESSION_COOKIE_SECURE   = False,      # HTTP localhost
     SESSION_COOKIE_HTTPONLY = True,       # No JS access
@@ -562,7 +563,11 @@ def _run_eod_review(trades_snapshot: list) -> None:
 @app.route("/")
 def index():
     session.permanent = True
-    return render_template("index.html")
+    resp = make_response(render_template("index.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    resp.headers["Pragma"]        = "no-cache"
+    resp.headers["Expires"]       = "0"
+    return resp
 
 
 @app.route("/api/status")
