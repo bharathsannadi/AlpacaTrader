@@ -952,6 +952,7 @@ function resetZoom() {
 function refreshChart() { _fetchChart(true); }
 
 function setActiveSymbol(symbol) {
+  hideBacktest();   // switch back to chart view if backtest was open
   currentSymbol = symbol;
   document.querySelectorAll(".symbol-tab").forEach(tab =>
     tab.classList.toggle("active", tab.dataset.symbol === symbol));
@@ -960,6 +961,113 @@ function setActiveSymbol(symbol) {
   socket.emit("set_active_symbol", { symbol });
   _fetchChart(false);
 }
+
+// ── Backtest UI ───────────────────────────────────────────────────────────────
+let _btDays = 7;
+
+function showBacktest() {
+  document.getElementById("backtest-panel").style.display = "";
+  document.querySelector(".chart-card").style.display = "none";
+  document.querySelectorAll(".symbol-tab").forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-backtest").classList.add("active");
+}
+
+function hideBacktest() {
+  const bp = document.getElementById("backtest-panel");
+  const cc = document.querySelector(".chart-card");
+  if (bp) bp.style.display = "none";
+  if (cc) cc.style.display = "";
+  document.getElementById("tab-backtest").classList.remove("active");
+  // restore active symbol tab
+  document.querySelectorAll(".symbol-tab[data-symbol]").forEach(t =>
+    t.classList.toggle("active", t.dataset.symbol === currentSymbol));
+}
+
+function setBtDays(d) {
+  _btDays = d;
+  document.querySelectorAll(".bt-day-btn").forEach(b =>
+    b.classList.toggle("active", parseInt(b.dataset.days) === d));
+}
+
+function runBacktest() {
+  const symbols = [...document.querySelectorAll("#bt-symbol-grid input:checked")]
+    .map(el => el.value);
+  if (!symbols.length) { alert("Select at least one symbol."); return; }
+
+  const logEl  = document.getElementById("bt-log");
+  const resEl  = document.getElementById("bt-results");
+  const logTtl = document.getElementById("bt-log-title");
+  const runBtn = document.getElementById("bt-run-btn");
+
+  logEl.innerHTML  = "";
+  resEl.style.display = "none";
+  logTtl.style.display = "";
+  runBtn.disabled  = true;
+  runBtn.textContent = "⏳ Running…";
+
+  socket.emit("run_backtest", { symbols, days: _btDays });
+}
+
+socket.on("backtest_log", (d) => {
+  const logEl = document.getElementById("bt-log");
+  if (!logEl) return;
+  const div = document.createElement("div");
+  div.className = "bt-log-line " +
+    (d.level === "ERROR" ? "err" : d.message.startsWith("✓") ? "ok" : "inf");
+  div.textContent = d.message;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (d.message.includes("complete")) {
+    const runBtn = document.getElementById("bt-run-btn");
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = "▶ Run Backtest"; }
+  }
+});
+
+socket.on("backtest_results", (d) => {
+  const tbody = document.getElementById("bt-tbody");
+  const resEl = document.getElementById("bt-results");
+  if (!tbody || !d.results || !d.results.length) return;
+
+  tbody.innerHTML = d.results.map(r => {
+    const m   = r.metrics || {};
+    const pf  = m.profit_factor ?? "n/a";
+    const pfl = parseFloat(pf);
+    const wr  = m.win_rate ?? 0;
+    const sig = m.total_pnl ?? 0;
+    const bh  = r.baseline ?? 0;
+    const sh  = m.sharpe ?? 0;
+    const dd  = m.max_dd ?? 0;
+    const exp = m.expectancy ?? 0;
+
+    // Edge verdict
+    let edge = "—", edgeCls = "bt-muted";
+    if (r.trades > 0) {
+      if (pfl >= 1.5 && sh >= 0.5)     { edge = "✅ Yes";   edgeCls = "bt-edge-yes"; }
+      else if (pfl >= 1.0 && pfl < 1.5){ edge = "⚠️ Marginal"; edgeCls = "bt-edge-marg"; }
+      else                              { edge = "❌ No";    edgeCls = "bt-edge-no";  }
+    }
+
+    const pnlCls  = sig >= 0  ? "bt-green" : "bt-red";
+    const bhDiff  = sig - bh;
+    const bhCls   = bhDiff >= 0 ? "bt-green" : "bt-red";
+    const pfCls   = pfl >= 1.5 ? "bt-green" : pfl >= 1.0 ? "bt-cyan" : "bt-red";
+
+    return `<tr>
+      <td class="bt-cyan">${r.symbol}</td>
+      <td>${r.trades}</td>
+      <td class="${wr >= 50 ? 'bt-green' : 'bt-red'}">${wr.toFixed(1)}%</td>
+      <td class="${pfCls}">${typeof pf === 'number' ? pf.toFixed(2) : pf}</td>
+      <td class="${exp >= 0 ? 'bt-green' : 'bt-red'}">${exp >= 0 ? '+' : ''}${exp.toFixed(2)}%</td>
+      <td class="${sh >= 0.5 ? 'bt-green' : sh >= 0 ? '' : 'bt-red'}">${sh.toFixed(2)}</td>
+      <td class="${dd <= -10 ? 'bt-red' : 'bt-muted'}">${dd.toFixed(2)}%</td>
+      <td class="${pnlCls}">${sig >= 0 ? '+' : ''}${sig.toFixed(2)}%</td>
+      <td class="${bhCls}">${bhDiff >= 0 ? '+' : ''}${bhDiff.toFixed(2)}% vs B&H</td>
+      <td class="${edgeCls}">${edge}</td>
+    </tr>`;
+  }).join("");
+
+  resEl.style.display = "";
+});
 
 socket.on("chart_data", (d) => {
   if (!candleSeries || !d.bars) return;

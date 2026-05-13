@@ -282,6 +282,77 @@
     animation: pulse 1.5s infinite;
   }
 
+  /* ── Tab divider ── */
+  .tab-divider { width: 1px; background: var(--border); margin: 6px 4px; align-self: stretch; }
+  .bt-tab { color: var(--cyan) !important; border-bottom-color: transparent !important; }
+  .bt-tab.active { background: rgba(34,211,238,0.08) !important; border-bottom-color: var(--cyan) !important; }
+
+  /* ── Backtest panel ── */
+  .bt-panel { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .bt-header { display: flex; align-items: center; justify-content: space-between; }
+  .bt-close-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 4px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+    transition: all .2s;
+  }
+  .bt-close-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+  .bt-controls { display: flex; flex-direction: column; gap: 10px; }
+  .bt-ctrl-group { display: flex; flex-direction: column; gap: 5px; }
+  .bt-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .bt-symbol-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .bt-sym-check {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; font-family: var(--mono); font-weight: 600;
+    color: var(--text); cursor: pointer; padding: 3px 8px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: rgba(255,255,255,0.03); transition: all .15s;
+  }
+  .bt-sym-check:hover { border-color: var(--cyan); color: var(--cyan); }
+  .bt-sym-check input { accent-color: var(--cyan); }
+  .bt-days-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+  .bt-day-btn {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    color: var(--muted); border-radius: 4px; padding: 3px 10px;
+    font-size: 11px; font-family: var(--mono); cursor: pointer; transition: all .15s;
+  }
+  .bt-day-btn:hover  { color: var(--text); border-color: var(--text); }
+  .bt-day-btn.active { color: var(--cyan); border-color: var(--cyan); background: rgba(34,211,238,0.08); }
+  .bt-run-btn { align-self: flex-start; padding: 6px 20px; font-size: 12px; margin-top: 4px; }
+  .bt-run-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .bt-section-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+  .bt-table-wrap { overflow-x: auto; }
+  .bt-table {
+    width: 100%; border-collapse: collapse;
+    font-size: 11px; font-family: var(--mono);
+  }
+  .bt-table th {
+    text-align: left; padding: 5px 8px;
+    color: var(--muted); font-weight: 600; font-size: 10px;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  .bt-table td {
+    padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    white-space: nowrap;
+  }
+  .bt-table tr:hover td { background: rgba(255,255,255,0.03); }
+  .bt-green { color: var(--green); font-weight: 700; }
+  .bt-red   { color: var(--red);   font-weight: 700; }
+  .bt-cyan  { color: var(--cyan);  font-weight: 700; }
+  .bt-muted { color: var(--muted); }
+  .bt-edge-yes { color: var(--green); font-weight: 700; }
+  .bt-edge-no  { color: var(--red);   font-weight: 700; }
+  .bt-edge-marg{ color: #f59e0b;      font-weight: 700; }
+  .bt-note { font-size: 10px; color: var(--muted); font-style: italic; margin-top: 6px; line-height: 1.5; }
+  .bt-log {
+    background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid var(--border);
+    padding: 8px 10px; font-family: var(--mono); font-size: 11px;
+    max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  }
+  .bt-log-line { line-height: 1.5; }
+  .bt-log-line.ok  { color: var(--green); }
+  .bt-log-line.err { color: var(--red);   }
+  .bt-log-line.inf { color: var(--muted); }
+
   /* ── Open Positions card ── */
   .pos-empty { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0; }
   .pos-row {
@@ -922,6 +993,8 @@
   <button class="symbol-tab"        data-symbol="MSFT" onclick="setActiveSymbol('MSFT')"><span class="tab-dot" id="tab-dot-MSFT"></span>MSFT</button>
   <button class="symbol-tab"        data-symbol="NVDA" onclick="setActiveSymbol('NVDA')"><span class="tab-dot" id="tab-dot-NVDA"></span>NVDA</button>
   <button class="symbol-tab"        data-symbol="META" onclick="setActiveSymbol('META')"><span class="tab-dot" id="tab-dot-META"></span>META</button>
+  <div class="tab-divider"></div>
+  <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
 </div>
 
 <!-- ── Exec Brief ─────────────────────────────────────────────────────────── -->
@@ -1181,6 +1254,71 @@
     </div>
 
     <!-- Last signal -->
+    <!-- ── Backtest Panel ────────────────────────────────────────────── -->
+    <div id="backtest-panel" class="card bt-panel" style="display:none">
+      <div class="bt-header">
+        <span class="card-title" style="margin:0">📊 Backtest</span>
+        <button class="bt-close-btn" onclick="hideBacktest()" title="Back to chart">✕ Chart</button>
+      </div>
+
+      <!-- Controls -->
+      <div class="bt-controls">
+        <div class="bt-ctrl-group">
+          <label class="bt-label">Symbols</label>
+          <div class="bt-symbol-grid" id="bt-symbol-grid">
+            <label class="bt-sym-check"><input type="checkbox" value="SPY"  checked> SPY</label>
+            <label class="bt-sym-check"><input type="checkbox" value="AMZN"> AMZN</label>
+            <label class="bt-sym-check"><input type="checkbox" value="GOOG"> GOOG</label>
+            <label class="bt-sym-check"><input type="checkbox" value="MSFT"> MSFT</label>
+            <label class="bt-sym-check"><input type="checkbox" value="NVDA"> NVDA</label>
+            <label class="bt-sym-check"><input type="checkbox" value="META"> META</label>
+          </div>
+        </div>
+
+        <div class="bt-ctrl-group">
+          <label class="bt-label">Lookback</label>
+          <div class="bt-days-btns">
+            <button class="bt-day-btn active" data-days="7"  onclick="setBtDays(7)">7d</button>
+            <button class="bt-day-btn"        data-days="14" onclick="setBtDays(14)">14d</button>
+            <button class="bt-day-btn"        data-days="30" onclick="setBtDays(30)">30d</button>
+            <button class="bt-day-btn"        data-days="59" onclick="setBtDays(59)">59d</button>
+            <button class="bt-day-btn"        data-days="90" onclick="setBtDays(90)">90d</button>
+            <button class="bt-day-btn"        data-days="180" onclick="setBtDays(180)">180d</button>
+          </div>
+          <div style="margin-top:4px;font-size:10px;color:var(--muted)">
+            ⚡ 5-min bars available for ≤59 days · daily bars for longer periods
+          </div>
+        </div>
+
+        <button class="btn-run bt-run-btn" id="bt-run-btn" onclick="runBacktest()">▶ Run Backtest</button>
+      </div>
+
+      <!-- Results table -->
+      <div id="bt-results" style="display:none">
+        <div class="bt-section-title">Results</div>
+        <div class="bt-table-wrap">
+          <table class="bt-table" id="bt-table">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Trades</th><th>Win%</th><th>PF</th>
+                <th>Expect%</th><th>Sharpe</th><th>MaxDD%</th>
+                <th>Signal P&L%</th><th>vs Buy&Hold</th><th>Edge?</th>
+              </tr>
+            </thead>
+            <tbody id="bt-tbody"></tbody>
+          </table>
+        </div>
+        <div class="bt-note">
+          ⚠️ Option P&L uses a delta-proxy model (2× underlying leverage). Treat as signal
+          direction quality, not exact dollar returns. PF &gt; 1.5 = edge present.
+        </div>
+      </div>
+
+      <!-- Log stream -->
+      <div class="bt-section-title" id="bt-log-title" style="display:none">Log</div>
+      <div id="bt-log" class="bt-log"></div>
+    </div>
+
     <div id="signal-banner" class="card" data-card-id="signal"
          style="background: var(--green-dim); border-color: var(--green); padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--green); display: none;">
       <div class="sig-label" style="font-size:9px">Last Signal</div>
