@@ -144,8 +144,15 @@ class TradeMemory:
         indicators: dict,
         entry_price: float,
         trade_id: str = None,
+        is_dry_run: bool = False,
     ) -> str:
-        """Store a trade entry. Returns trade_id for later outcome update."""
+        """Store a trade entry. Returns trade_id for later outcome update.
+
+        is_dry_run=True flags the record so retrieve_similar filters it out
+        by default — dry-run P&L is theoretical (mid-based, no slippage) and
+        shouldn't pollute the learning loop for real trades. The data is kept
+        so dry-run outcomes can still be reviewed separately.
+        """
         if not self._enabled or self._collection is None:
             return ""
         try:
@@ -161,11 +168,13 @@ class TradeMemory:
                     "outcome_pct":   0.0,
                     "hold_minutes":  0.0,
                     "outcome_known": False,
+                    "is_dry_run":    bool(is_dry_run),
                     "timestamp":     ts,
                 }],
                 ids=[tid],
             )
-            log.info(f"TradeMemory: recorded entry — {tid}")
+            tag = " [dry-run]" if is_dry_run else ""
+            log.info(f"TradeMemory: recorded entry{tag} — {tid}")
             return tid
         except Exception as e:
             log.warning(f"TradeMemory.record failed: {e}")
@@ -199,10 +208,14 @@ class TradeMemory:
         direction: str,
         indicators: dict,
         n: int = RETRIEVE_N,
+        include_dry_run: bool = False,
     ) -> str:
         """
         Find the N most similar past setups and return a log-ready summary.
         Returns "" if memory is empty or disabled.
+
+        Dry-run records are excluded by default — theoretical fills don't
+        inform real-trade decisions. Set include_dry_run=True to inspect them.
         """
         if not self._enabled or self._collection is None:
             return ""
@@ -214,8 +227,20 @@ class TradeMemory:
             query     = _indicators_to_text(symbol, direction, indicators)
             n_results = min(n, total)
 
-            # Filter by symbol once we have enough data to avoid false matches
-            where = {"symbol": symbol} if total >= 20 else None
+            # Build where clause: filter by symbol once enough data + exclude
+            # dry-run records unless explicitly requested.
+            conds = []
+            if total >= 20:
+                conds.append({"symbol": symbol})
+            if not include_dry_run:
+                # $ne True covers both False and records predating the flag
+                conds.append({"is_dry_run": {"$ne": True}})
+            if len(conds) > 1:
+                where = {"$and": conds}
+            elif conds:
+                where = conds[0]
+            else:
+                where = None
             results = self._collection.query(
                 query_texts=[query],
                 n_results=n_results,

@@ -740,6 +740,29 @@ function setRange(rng) {
 }
 
 // ── Chart init ────────────────────────────────────────────────────────────────
+// Overlay handles (so we can update without re-creating)
+let vwapSeries     = null;
+let ema9Series     = null;
+let ema21Series    = null;
+let ema200Series   = null;
+let volumeSeries   = null;
+// Price lines created on candleSeries — store the priceLine handles for cleanup
+let _priceLines    = [];
+// Position lines (stop/T1/T2) — same idea but tracked separately so position
+// updates don't clobber prior-day / ORB lines
+let _positionLines = [];
+
+function _clearPriceLines() {
+  if (!candleSeries) return;
+  _priceLines.forEach(pl => { try { candleSeries.removePriceLine(pl); } catch (e) {} });
+  _priceLines = [];
+}
+function _clearPositionLines() {
+  if (!candleSeries) return;
+  _positionLines.forEach(pl => { try { candleSeries.removePriceLine(pl); } catch (e) {} });
+  _positionLines = [];
+}
+
 function initChart() {
   if (chartInitialized) {
     _syncIvBtns(currentInterval);
@@ -767,7 +790,7 @@ function initChart() {
     rightPriceScale: {
       borderColor:  "#152035",
       textColor:    "#4a6280",
-      scaleMargins: { top: 0.08, bottom: 0.04 },
+      scaleMargins: { top: 0.05, bottom: 0.14 },  // tighter top + volume room (~14%)
     },
     timeScale: {
       borderColor:     "#152035",
@@ -777,7 +800,9 @@ function initChart() {
       rightOffset:     5,
       barSpacing:      8,
       minBarSpacing:   3,
-      fixLeftEdge:     true,    // lock left edge so timeline never drifts left
+      // Don't lock the left edge — lets the time scale collapse the gaps where
+      // there are no bars (lunch lull, after-hours, weekends).
+      fixLeftEdge:     false,
       fixRightEdge:    false,
       lockVisibleTimeRangeOnResize: false,
     },
@@ -797,10 +822,38 @@ function initChart() {
     borderDownColor:  "#ff3d68",
     wickUpColor:      "#00e5a055",
     wickDownColor:    "#ff3d6855",
-    priceLineVisible: true,
-    priceLineColor:   "#4a6280",
-    priceLineWidth:   1,
-    priceLineStyle:   3,
+    priceLineVisible: false,   // we'll show our own — engine's last is noisy here
+  });
+
+  // VWAP — orange, the most-watched intraday line
+  vwapSeries = chart.addLineSeries({
+    color: "#f59e0b", lineWidth: 2, priceLineVisible: false,
+    lastValueVisible: true, title: "VWAP",
+  });
+
+  // EMAs
+  ema9Series  = chart.addLineSeries({
+    color: "#22d3ee", lineWidth: 1, priceLineVisible: false,
+    lastValueVisible: false, title: "EMA9",
+  });
+  ema21Series = chart.addLineSeries({
+    color: "#a78bfa", lineWidth: 1, priceLineVisible: false,
+    lastValueVisible: false, title: "EMA21",
+  });
+  ema200Series = chart.addLineSeries({
+    color: "#f43f5e", lineWidth: 1, lineStyle: 2, priceLineVisible: false,
+    lastValueVisible: false, title: "EMA200d",
+  });
+
+  // Volume histogram — separate price scale anchored at the bottom
+  volumeSeries = chart.addHistogramSeries({
+    priceFormat: { type: "volume" },
+    priceScaleId: "vol",
+    color: "#3b82f660",
+  });
+  chart.priceScale("vol").applyOptions({
+    scaleMargins: { top: 0.88, bottom: 0 },   // volume occupies bottom ~12%
+    borderVisible: false,
   });
 
   new ResizeObserver(() => {
@@ -808,11 +861,34 @@ function initChart() {
       chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
   }).observe(container);
 
+  // Crosshair hover → tooltip with all indicator values
+  chart.subscribeCrosshairMove((param) => _onCrosshairMove(param));
+
   chartInitialized = true;
   _syncIvBtns(currentInterval);
   _syncRngBtns(currentRange);
   _fetchChart(false);
   startChartAutoRefresh();
+}
+
+function _onCrosshairMove(param) {
+  const tip = document.getElementById("chart-tooltip");
+  if (!tip) return;
+  if (!param.time || !param.seriesPrices) { tip.style.display = "none"; return; }
+  const candle = param.seriesPrices.get(candleSeries);
+  if (!candle) { tip.style.display = "none"; return; }
+  const vwap  = param.seriesPrices.get(vwapSeries);
+  const ema9  = param.seriesPrices.get(ema9Series);
+  const ema21 = param.seriesPrices.get(ema21Series);
+  const fmt = v => (v == null ? "–" : v.toFixed(2));
+  tip.innerHTML =
+    `O ${fmt(candle.open)} · H ${fmt(candle.high)} · L ${fmt(candle.low)} · C ${fmt(candle.close)}` +
+    `<br>VWAP ${fmt(vwap)} · EMA9 ${fmt(ema9)} · EMA21 ${fmt(ema21)}`;
+  tip.style.display = "block";
+  const x = Math.min(param.point.x + 12, document.getElementById("chart-container").clientWidth - 240);
+  const y = Math.max(12, param.point.y - 60);
+  tip.style.left = x + "px";
+  tip.style.top  = y + "px";
 }
 
 function zoomIn() {
@@ -859,14 +935,137 @@ socket.on("chart_data", (d) => {
 
   candleSeries.setData(d.bars);
 
-  const markers = (d.signals || []).map(s => ({
+  // ── Volume histogram (color-coded by candle direction) ─────────────────────
+  const volData = d.bars.map(b => ({
+    time:  b.time,
+    value: b.volume,
+    color: (b.close >= b.open) ? "#00e5a055" : "#ff3d6855",
+  }));
+  if (volumeSeries) volumeSeries.setData(volData);
+
+  // ── Indicator overlays (VWAP / EMAs) ───────────────────────────────────────
+  const overlays = d.overlays || {};
+  const cleanLine = arr => (arr || []).filter(p => p && p.value != null);
+  if (vwapSeries)  vwapSeries.setData(cleanLine(overlays.vwap));
+  if (ema9Series)  ema9Series.setData(cleanLine(overlays.ema9));
+  if (ema21Series) ema21Series.setData(cleanLine(overlays.ema21));
+  if (ema200Series) {
+    // EMA200d is a single daily value — render as a flat line across the chart
+    // BUT only if it's within range of current price. Otherwise it crushes the
+    // y-axis (e.g. SPY $737 with EMA200d $667 = -9.5% → candles become invisible).
+    // When too far, hide the line but surface the value+distance in a badge so
+    // the trader still knows the macro level.
+    const FAR_PCT = 0.03;   // 3% — beyond this, hide
+    const lastClose = (d.bars && d.bars.length) ? d.bars[d.bars.length - 1].close : null;
+    const ema200 = overlays.ema200d;
+    if (ema200 && lastClose) {
+      const distFrac = (ema200 - lastClose) / lastClose;
+      if (Math.abs(distFrac) <= FAR_PCT) {
+        const flat = d.bars.map(b => ({ time: b.time, value: ema200 }));
+        ema200Series.setData(flat);
+      } else {
+        ema200Series.setData([]);
+      }
+      _renderEma200Badge(ema200, distFrac);
+    } else {
+      ema200Series.setData([]);
+      _renderEma200Badge(null, null);
+    }
+  }
+
+  // ── ORB high/low + prior day H/L/C + position lines ────────────────────────
+  _clearPriceLines();
+  _clearPositionLines();
+
+  const orb = overlays.orb || {};
+  if (orb.high) _priceLines.push(candleSeries.createPriceLine({
+    price: orb.high, color: "#22d3ee", lineWidth: 1, lineStyle: 0,
+    axisLabelVisible: true, title: "ORB H",
+  }));
+  if (orb.low) _priceLines.push(candleSeries.createPriceLine({
+    price: orb.low, color: "#22d3ee", lineWidth: 1, lineStyle: 0,
+    axisLabelVisible: true, title: "ORB L",
+  }));
+  const pl = overlays.prior_levels || {};
+  // Clip prior-day levels that are too far from current price — same reason
+  // as EMA200d: they compress the y-axis and bury the candles.
+  const _lastClose = (d.bars && d.bars.length) ? d.bars[d.bars.length - 1].close : null;
+  const _within = (lvl) => {
+    if (!_lastClose || !lvl) return false;
+    return Math.abs((lvl - _lastClose) / _lastClose) <= 0.05;  // 5% band
+  };
+  if (_within(pl.prev_high))  _priceLines.push(candleSeries.createPriceLine({
+    price: pl.prev_high, color: "#7a96b8", lineWidth: 1, lineStyle: 2,
+    axisLabelVisible: true, title: "PDH",
+  }));
+  if (_within(pl.prev_low))   _priceLines.push(candleSeries.createPriceLine({
+    price: pl.prev_low, color: "#7a96b8", lineWidth: 1, lineStyle: 2,
+    axisLabelVisible: true, title: "PDL",
+  }));
+  if (_within(pl.prev_close)) _priceLines.push(candleSeries.createPriceLine({
+    price: pl.prev_close, color: "#4a6280", lineWidth: 1, lineStyle: 2,
+    axisLabelVisible: true, title: "PDC",
+  }));
+
+  // ── Open positions: entry / stop / T1 / T2 ────────────────────────────────
+  // CRITICAL: entry/stop/T1/T2 are OPTION premium prices (e.g. $5.75 stop on a
+  // SPY 737P), NOT underlying prices. Drawing them as priceLines on the
+  // underlying-symbol chart crushes the y-axis (e.g. SPY $737 + option $3 →
+  // scale spans $3-$740, candles become invisible).
+  //
+  // Solution: only render position lines if they fall within ±10% of the
+  // current underlying price (which would be the unusual case of plotting an
+  // option chart directly). Otherwise summarize positions in a side badge.
+  const positions = d.position_overlay || [];
+  const _within10 = (price) => {
+    if (!_lastClose || !price) return false;
+    return Math.abs((price - _lastClose) / _lastClose) <= 0.10;
+  };
+  positions.forEach(p => {
+    if (!_within10(p.entry_price)) return;  // it's an option-priced position
+    const dryTag = p.is_dry_run ? " [DRY]" : "";
+    _positionLines.push(candleSeries.createPriceLine({
+      price: p.entry_price, color: "#fbbf24", lineWidth: 2, lineStyle: 0,
+      axisLabelVisible: true, title: `Entry ${p.remaining}x${dryTag}`,
+    }));
+    _positionLines.push(candleSeries.createPriceLine({
+      price: p.stop_price, color: "#ff3d68", lineWidth: 1, lineStyle: 1,
+      axisLabelVisible: true, title: `Stop${p.partial_done ? " (trail)" : ""}`,
+    }));
+    if (!p.partial_done) {
+      _positionLines.push(candleSeries.createPriceLine({
+        price: p.target_50, color: "#fbbf24", lineWidth: 1, lineStyle: 1,
+        axisLabelVisible: true, title: "T1",
+      }));
+    }
+    _positionLines.push(candleSeries.createPriceLine({
+      price: p.target_75, color: "#00e5a0", lineWidth: 1, lineStyle: 1,
+      axisLabelVisible: true, title: "T2",
+    }));
+  });
+
+  // ── Live P&L badge for the active symbol's position ────────────────────────
+  _renderPnlBadge(positions, d.bars);
+
+  // ── Signal markers + close markers (with reason in tooltip text) ───────────
+  const sigMarks = (d.signals || []).map(s => ({
     time:     s.time,
     position: s.direction === "bull" ? "belowBar"  : "aboveBar",
     color:    s.direction === "bull" ? "#00e5a0"   : "#ff3d68",
     shape:    s.direction === "bull" ? "arrowUp"   : "arrowDown",
     text:     s.direction === "bull" ? "▲ CALL"    : "▼ PUT",
   }));
-  candleSeries.setMarkers(markers);
+  const closeMarks = (d.closes || []).map(c => ({
+    time:     c.time,
+    position: "inBar",
+    color:    (c.pnl_pct || 0) >= 0 ? "#00e5a0" : "#ff3d68",
+    shape:    "circle",
+    text:     `${(c.pnl_pct || 0).toFixed(0)}% ${c.reason || ""}`.slice(0, 40),
+  }));
+  candleSeries.setMarkers([...sigMarks, ...closeMarks].sort((a,b) => a.time - b.time));
+
+  // ── Blocked windows: render via background line series with shaded regions ─
+  _renderBlockedWindows(d.blocked_windows || [], d.bars);
 
   const empty  = document.getElementById("chart-empty");
   const detail = document.getElementById("chart-empty-detail");
@@ -884,6 +1083,85 @@ socket.on("chart_data", (d) => {
     chart.timeScale().fitContent();
   }
 });
+
+function _renderEma200Badge(value, distFrac) {
+  const badge = document.getElementById("chart-ema200-badge");
+  if (!badge) return;
+  if (value == null) { badge.style.display = "none"; return; }
+  const pctStr = ((distFrac >= 0) ? "+" : "") + (distFrac * 100).toFixed(1) + "%";
+  const near = Math.abs(distFrac) <= 0.03;
+  badge.style.display = "inline-block";
+  badge.style.color = near ? "#f43f5e" : "#7a96b8";
+  badge.style.borderColor = (near ? "#f43f5e" : "#7a96b8") + "66";
+  badge.textContent = `EMA200d $${value.toFixed(2)} (${pctStr})` + (near ? "" : " · off-chart");
+}
+
+function _renderPnlBadge(positions, bars) {
+  const badge = document.getElementById("chart-pnl-badge");
+  if (!badge) return;
+  if (!positions.length || !bars.length) { badge.style.display = "none"; return; }
+
+  // Summary across all open positions on this symbol. We can't compute true
+  // option-premium P&L from underlying bars alone — the engine knows that and
+  // updates the positions table separately. Here we show direction + an
+  // "underlying is moving X% in/against your favor since open" hint.
+  let bulls = 0, bears = 0, totalContracts = 0, anyDry = false;
+  positions.forEach(p => {
+    if (p.direction === "bull") bulls += p.remaining; else bears += p.remaining;
+    totalContracts += p.remaining;
+    if (p.is_dry_run) anyDry = true;
+  });
+  // Use the active session's opening bar as the reference for "favor" gauge
+  const opened = bars[0].close;
+  const lastClose = bars[bars.length - 1].close;
+  const undMovePct = ((lastClose - opened) / opened) * 100;
+  // Net directional exposure: positive = bullish bias, negative = bearish bias
+  const net = bulls - bears;
+  const movedWith = (net > 0 && undMovePct > 0) || (net < 0 && undMovePct < 0);
+  const movedSize = Math.abs(undMovePct);
+  const color = (net === 0) ? "#7a96b8" : (movedWith ? "#00e5a0" : "#ff3d68");
+  const dirLabel = net > 0 ? "▲" : (net < 0 ? "▼" : "•");
+  badge.style.color = color;
+  badge.style.borderColor = color + "66";
+  badge.style.display = "inline-block";
+  badge.title = "Underlying move since open (option P&L is in the positions table)";
+  badge.textContent =
+    `${totalContracts}x ${dirLabel}` +
+    `  und ${undMovePct >= 0 ? "+" : ""}${undMovePct.toFixed(2)}%` +
+    (anyDry ? "  [DRY]" : "");
+}
+
+// Track shading overlay divs so we can remove them on each update
+let _shadeEls = [];
+
+function _renderBlockedWindows(windows, bars) {
+  const container = document.getElementById("chart-container");
+  if (!container || !chart) return;
+  _shadeEls.forEach(el => el.remove());
+  _shadeEls = [];
+  if (!windows.length || !bars.length) return;
+
+  const timeScale = chart.timeScale();
+  windows.forEach(w => {
+    const x1 = timeScale.timeToCoordinate(w.start);
+    const x2 = timeScale.timeToCoordinate(w.end);
+    if (x1 == null || x2 == null) return;
+    const div = document.createElement("div");
+    div.style.position = "absolute";
+    div.style.left = Math.min(x1, x2) + "px";
+    div.style.top = "0";
+    div.style.width = Math.abs(x2 - x1) + "px";
+    div.style.bottom = "20px";  // leave time axis visible
+    div.style.background = "rgba(122, 150, 184, 0.06)";
+    div.style.borderLeft = "1px dashed rgba(122,150,184,0.25)";
+    div.style.borderRight = "1px dashed rgba(122,150,184,0.25)";
+    div.style.pointerEvents = "none";
+    div.style.zIndex = "1";
+    div.title = w.label;
+    container.appendChild(div);
+    _shadeEls.push(div);
+  });
+}
 
 // Real-time signal marker — push directly when one fires.
 // Skip if the marker is for a different symbol than the user is viewing.

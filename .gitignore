@@ -3,6 +3,8 @@
 *.key
 security.log
 spy_trader.log
+errors.log
+*.log.*
 __pycache__/
 venv/
 

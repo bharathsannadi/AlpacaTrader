@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.spy_auto_trader</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/bsannadi/Desktop/AlpacaTrader/venv/bin/python3.11</string>
+        <string>/Users/bsannadi/Desktop/AlpacaTrader/scripts/app.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/bsannadi/Desktop/AlpacaTrader</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the process exits unexpectedly. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- Wait at least 30s between automatic restarts to avoid hot loops. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- stdout / stderr captured to /tmp for diagnostic when crash-restarted. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/alpacatrader.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/alpacatrader.launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/bsannadi/Desktop/AlpacaTrader/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Run as the logged-in user (not as launchd's daemon context).
+         To activate:
+           cp com.spy_auto_trader.plist ~/Library/LaunchAgents/
+           launchctl load ~/Library/LaunchAgents/com.spy_auto_trader.plist
+         To deactivate:
+           launchctl unload ~/Library/LaunchAgents/com.spy_auto_trader.plist -->
+</dict>
+</plist>

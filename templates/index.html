@@ -1075,7 +1075,19 @@
         <span class="chart-legend">
           <span style="color:var(--green)">▲ Call</span>
           <span style="color:var(--red)">▼ Put</span>
+          <span style="color:#f59e0b">VWAP</span>
+          <span style="color:#22d3ee">EMA9</span>
+          <span style="color:#a78bfa">EMA21</span>
+          <span style="color:#f43f5e">EMA200d</span>
         </span>
+        <span id="chart-pnl-badge" style="
+          display:none; margin-left:8px; padding:2px 8px; border:1px solid;
+          border-radius:4px; font-family:var(--mono); font-size:11px; font-weight:700;
+        "></span>
+        <span id="chart-ema200-badge" style="
+          display:none; margin-left:8px; padding:2px 8px; border:1px solid;
+          border-radius:4px; font-family:var(--mono); font-size:10px; font-weight:600;
+        "></span>
         <button class="clear-btn" onclick="refreshChart()" style="margin-left:auto" title="Force refresh">↻</button>
       </div>
       <div id="chart-container">
@@ -1083,6 +1095,13 @@
           <div class="chart-empty-title">No data available</div>
           <div id="chart-empty-detail">Try pressing ↻ or switching timeframe.</div>
         </div>
+        <div id="chart-tooltip" style="
+          display:none; position:absolute; pointer-events:none;
+          background:rgba(4,7,14,0.92); border:1px solid #152035;
+          color:#a8c0dc; font-family:var(--mono); font-size:10px;
+          padding:6px 8px; border-radius:4px; z-index:10; line-height:1.4;
+          white-space:nowrap;
+        "></div>
       </div>
     </div>
 

@@ -4,12 +4,29 @@ Security: security headers, rate limiting, login lockout,
           session authentication, input validation.
 """
 
+# ── eventlet monkey-patch MUST run before any std-lib that uses sockets/threads.
+# Falls back to threading mode silently if eventlet isn't available.
+# Eventlet 0.41+ emits a deprecation warning that we acknowledge — for our
+# single-user paper-trading workload it remains the right choice today.
+# Long-term migration target: gevent (similar greenlet model, still active) or
+# switching the stack to ASGI (FastAPI + python-socketio async).
+import warnings
+try:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # eventlet's EventletDeprecationWarning at import
+        import eventlet
+        eventlet.monkey_patch()
+    _ASYNC_MODE = "eventlet"
+except ImportError:
+    _ASYNC_MODE = "threading"
+
 import os
 import logging
 import subprocess
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from functools import wraps
 from zoneinfo import ZoneInfo
 
@@ -41,6 +58,7 @@ ET = ZoneInfo("America/New_York")
 
 # ── Tunables (named constants over magic numbers) ─────────────────────────────
 TICKER_INTERVAL_SEC      = 5         # price + state push cadence
+ACCOUNT_REFRESH_TICKS    = 3         # refresh account/buying power every N ticks (~15s)
 VIX_CACHE_TTL_SEC        = 120       # VIX rarely changes
 PRIOR_LEVELS_CACHE_SEC   = 3600      # prior-day OHLC: refresh hourly
 CHART_CACHE_TTL_SEC      = 8         # short-window bar cache (matches 10s JS refresh)
@@ -75,7 +93,7 @@ app.config.update(
 socketio = SocketIO(
     app,
     cors_allowed_origins=[],          # No cross-origin WebSocket
-    async_mode="threading",
+    async_mode=_ASYNC_MODE,           # eventlet preferred, threading fallback
     cookie="__Host-spy_io",
     manage_session=False,
 )
@@ -175,22 +193,19 @@ trade_approval = TradeApproval()
 trader.TRADE_CONFIRM_CALLBACK = trade_approval.request
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.FileHandler("spy_trader.log"),
-        logging.StreamHandler(),
-    ],
-)
+# Root logging is already configured by spy_auto_trader.py at import time
+# (rotating spy_trader.log + errors.log with dedup + stream). Don't reconfigure
+# here — just grab the logger.
+from logging.handlers import RotatingFileHandler
+
 log = logging.getLogger(__name__)
 
 security_log = logging.getLogger("security")
-sec_handler   = logging.FileHandler("security.log")
+sec_handler  = RotatingFileHandler("security.log", maxBytes=5_000_000, backupCount=3)
 sec_handler.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s"))
 security_log.addHandler(sec_handler)
 security_log.setLevel(logging.INFO)
+security_log.propagate = False  # security events don't need to go to main log
 
 
 # ── Custom SocketIO log handler ───────────────────────────────────────────────
@@ -258,7 +273,7 @@ _session_stop_events: dict[str, threading.Event]  = {
 }
 
 # ── Sleep prevention (macOS caffeinate) ──────────────────────────────────────
-_caffeinate_proc: "subprocess.Popen | None" = None
+_caffeinate_proc: Optional[subprocess.Popen] = None
 _caffeinate_lock = threading.Lock()
 
 
@@ -387,7 +402,7 @@ _levels_cache: dict[str, dict] = {}
 _levels_lock = threading.Lock()
 
 
-def _cached_vix() -> float | None:
+def _cached_vix() -> Optional[float]:
     """Return VIX with TTL-based caching to avoid hammering the API."""
     now = time.monotonic()
     if now - _vix_cache["ts"] < VIX_CACHE_TTL_SEC:
@@ -443,7 +458,10 @@ def refresh_prices() -> None:
 
 def price_ticker() -> None:
     """Background thread: refresh prices on TICKER_INTERVAL_SEC.
-    Gated on streaming + at least one authenticated client connected."""
+    Gated on streaming + at least one authenticated client connected.
+    Also refreshes account/buying power every ACCOUNT_REFRESH_TICKS iterations
+    so the header stays current without waiting for a fill."""
+    tick = 0
     while True:
         try:
             with _state_lock:
@@ -452,7 +470,10 @@ def price_ticker() -> None:
                               and len(authenticated_sids) > 0)
             if should_run:
                 refresh_prices()
+                if tick % ACCOUNT_REFRESH_TICKS == 0:
+                    refresh_account()
                 emit_state()
+                tick += 1
         except Exception as e:
             log.warning(f"price_ticker iteration failed: {e}")
         socketio.sleep(TICKER_INTERVAL_SEC)
@@ -514,6 +535,20 @@ def _run_eod_review(trades_snapshot: list) -> None:
     log.info("EOD Review: starting analysis…")
     socketio.emit("log", {"message": "── EOD Learning Review starting… ──", "level": "INFO"})
     try:
+        # Persist today's closing equity for weekly-drawdown tracking
+        try:
+            acct_val = trader.account_value()
+            if acct_val > 0:
+                trader.record_eod_equity(acct_val)
+                dd5 = trader.rolling_drawdown_pct(5) * 100
+                dd20 = trader.rolling_drawdown_pct(20) * 100
+                socketio.emit("log", {
+                    "message": f"EOD equity: ${acct_val:,.2f}  |  5-day DD: {dd5:.2f}%  |  20-day DD: {dd20:.2f}%",
+                    "level": "INFO",
+                })
+        except Exception as e:
+            log.warning(f"EOD equity snapshot failed: {e}")
+
         review = trader.eod_review(LOG_PATH, trades_snapshot)
         for line in review.splitlines():
             if line.strip():
@@ -876,6 +911,39 @@ def on_stop_all_sessions():
     emit_state()
 
 
+@socketio.on("flatten_all")
+@require_auth
+def on_flatten_all(data=None):
+    """EMERGENCY: close every open position immediately + halt new entries.
+
+    Expects a confirmation token in the payload — the UI modal sets it after
+    the user types FLATTEN to confirm. Idempotent: safe to call repeatedly.
+    """
+    if not data or data.get("confirm") != "FLATTEN":
+        log.warning("flatten_all rejected: confirmation token missing")
+        socketio.emit("log", {"message": "Flatten-all needs confirmation — type FLATTEN.", "level": "WARNING"})
+        return
+    log.warning(f"🛑 FLATTEN-ALL requested from {request.remote_addr}")
+    summary = trader.flatten_all_positions(reason=f"user @ {request.remote_addr}")
+    refresh_account()
+    emit_state()
+    socketio.emit("log", {
+        "message": (
+            f"🛑 FLATTEN: {summary['succeeded']}/{summary['attempted']} closed "
+            f"({summary['dry_run']} dry-run, {summary['failed']} failed). Halt active."
+        ),
+        "level": "WARNING",
+    })
+
+
+@socketio.on("clear_emergency_halt")
+@require_auth
+def on_clear_emergency_halt():
+    """Re-enable entries after a flatten-all kill switch."""
+    trader.clear_emergency_halt()
+    socketio.emit("log", {"message": "Emergency halt cleared — entries re-enabled.", "level": "INFO"})
+
+
 @socketio.on("toggle_auto_schedule")
 @require_auth
 def on_toggle_auto_schedule():
@@ -974,6 +1042,46 @@ def on_set_active_symbol(data):
     emit_state()
 
 
+def _build_blocked_windows(bars: list) -> list:
+    """Compute time-of-day shaded regions for the chart: lunch hour and the
+    post-LAST_ENTRY_HOUR no-entry block. Returned as Unix-timestamp tuples
+    that the frontend can render as background rectangles.
+
+    Only emits windows that fall within the visible bar range so the frontend
+    doesn't have to clip.
+    """
+    if not bars:
+        return []
+    try:
+        from datetime import datetime as _dt, time as _t
+        from zoneinfo import ZoneInfo
+        ET = ZoneInfo("America/New_York")
+        first_ts, last_ts = bars[0]["time"], bars[-1]["time"]
+        # Anchor windows on the most-recent visible trading day (matches the
+        # 1D view; longer ranges show only the most recent day's blocked zones).
+        day_dt = _dt.fromtimestamp(last_ts, tz=ET).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        out = []
+        for label, start, end in [
+            ("lunch",       day_dt.replace(hour=11, minute=30),
+                            day_dt.replace(hour=13, minute=30)),
+            ("post-cutoff", day_dt.replace(hour=14, minute=0),
+                            day_dt.replace(hour=16, minute=0)),
+        ]:
+            if end.timestamp() < first_ts or start.timestamp() > last_ts:
+                continue
+            out.append({
+                "label": label,
+                "start": int(max(start.timestamp(), first_ts)),
+                "end":   int(min(end.timestamp(), last_ts)),
+            })
+        return out
+    except Exception as e:
+        log.warning(f"_build_blocked_windows: {e}")
+        return []
+
+
 @socketio.on("get_chart_data")
 @require_auth
 def on_get_chart_data(data=None):
@@ -997,6 +1105,35 @@ def on_get_chart_data(data=None):
         bars = _cached_chart_bars(interval, range_, symbol, force_refresh=force)
         with _state_lock:
             signals = [m for m in signal_history if m.get("symbol", "SPY") == symbol]
+
+        # Indicators + ORB + prior levels for the chart overlay
+        overlays = trader.chart_overlays(bars, symbol) if bars else {}
+
+        # Position overlay: every open position on this symbol, with stop/T1/T2/peak
+        positions_for_symbol = [
+            p for p in trader.open_positions_snapshot()
+            if p.get("symbol") == symbol and p.get("remaining", 0) > 0
+        ]
+        position_overlay = [
+            {
+                "occ_symbol":  p["occ_symbol"],
+                "direction":   p["direction"],
+                "entry_price": p["entry_price"],
+                "stop_price":  p["stop_price"],
+                "target_50":   p["target_50"],
+                "target_75":   p["target_75"],
+                "remaining":   p["remaining"],
+                "opened_at":   p.get("opened_at"),
+                "is_dry_run":  p.get("is_dry_run", False),
+                "partial_done":p.get("partial_done", False),
+                "peak_mid":    p.get("peak_mid_after_t1", 0.0),
+            }
+            for p in positions_for_symbol
+        ]
+
+        # Blocked windows: lunch + post-LAST_ENTRY_HOUR shading for the active day
+        blocked_windows = _build_blocked_windows(bars)
+
         socketio.emit("chart_data", {
             "bars":     bars,
             "signals":  signals,
@@ -1004,6 +1141,9 @@ def on_get_chart_data(data=None):
             "range":    range_,
             "symbol":   symbol,
             "_seq":     seq,
+            "overlays":         overlays,
+            "position_overlay": position_overlay,
+            "blocked_windows":  blocked_windows,
         })
     except Exception as e:
         log.warning(f"Chart data error: {e}", exc_info=True)
@@ -1052,11 +1192,17 @@ if __name__ == "__main__":
     print("  Logs : spy_trader.log  |  security.log")
     print("=" * 55 + "\n")
 
-    socketio.run(
-        app,
+    _run_kwargs = dict(
         host="127.0.0.1",     # Localhost only — not reachable from outside
         port=5000,
         debug=False,
-        allow_unsafe_werkzeug=True,
         log_output=False,
+    )
+    # allow_unsafe_werkzeug is only relevant when async_mode falls back to
+    # threading. Eventlet runs its own WSGI server and rejects this kwarg.
+    if _ASYNC_MODE == "threading":
+        _run_kwargs["allow_unsafe_werkzeug"] = True
+    socketio.run(
+        app,
+        **_run_kwargs,
     )

@@ -14,15 +14,19 @@ Risk      : 3% account per trade, ATR-based stops, partial exits at +50%
 Broker    : Alpaca (alpaca-py SDK)
 Modes     : Paper trading (default) or Live trading
 
-⚠️  DRY_RUN = True — set to False only when ready to trade real money.
+Safety stack:  PAPER_MODE (broker-level fake account) is the primary safety.
+               DRY_RUN (orders never sent at all) is optional on top.
+               Live-money requires explicitly setting PAPER_MODE = False at login.
 """
 
 import os
+import json
 import re
 import time
 import threading
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as _dtime
+from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import math
@@ -86,7 +90,7 @@ NEWS_FILTER_ENABLED = False   # toggled by app.py to mirror the UI checkbox
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DRY_RUN         = True
+DRY_RUN         = False   # paper-trading is already simulated — no need for dry-run on top
 MAX_RISK_PCT    = 0.005   # 0.5% per trade — allows ~6 concurrent vs MAX_PORTFOLIO_RISK
 STOP_LOSS_PCT          = 0.40    # tighter stop — losers pay less per trade
 PROFIT_TARGET          = 1.00    # +100% final target — let runners run
@@ -105,7 +109,8 @@ VIX_MAX         = 30
 ATR_MULT_TREND  = 2.5
 ATR_MULT_RANGE  = 1.5
 MIN_ORB_ATR_MULT     = 0.5        # ORB acceptable when width >= 0.5 * ATR (volatility-relative)
-PDT_REMAINING   = 3       # PDT does not apply to Alpaca margin accounts ≥$25K
+PDT_REMAINING   = 3       # Only enforced if account.pattern_day_trader is True
+                          # AND equity < $25K. Margin accounts ≥$25K are exempt.
 ET              = ZoneInfo("America/New_York")
 
 MORNING_START   = (9, 30)
@@ -134,6 +139,15 @@ LAST_ENTRY_MINUTE     = 0
 CHOP_ATR_RATIO        = 0.5       # if today's 1H ATR < 0.5× of 5-day avg → CHOP → skip trend-cont
 CHOP_REGIME_TTL_SEC   = 1800      # 30min — re-evaluate regime; ATR doesn't move fast intraday
 
+# Gap-day handling: large overnight gaps produce maximum first-30-min whipsaw.
+# Block new entries until the opening range has fully formed (default 10:00 ET)
+# when |open - prev_close| / prev_close exceeds this threshold.
+OPEN_GAP_DELAY_PCT     = 0.01      # 1.0% gap → push first-entry to 10:00 ET
+
+# Friday / expiry-week gamma throttle: prevent buying options that expire
+# inside the high-gamma final-week zone unless explicitly long-DTE.
+FRIDAY_MIN_DTE         = 10        # On Fridays, require 10+ DTE on new entries
+
 SECTOR_MAP: dict[str, str] = {
     "SPY": "index",  "QQQ": "index",  "IWM": "index",  "DIA": "index",
     "AMZN": "tech",  "GOOG": "tech",  "META": "tech",
@@ -149,6 +163,16 @@ DELTA_TARGET_MIN     = 0.40       # prefer contracts with delta in [0.40, 0.65]
 DELTA_TARGET_MAX     = 0.65       # outside this range we still trade but log a warning
 IV_RANK_REFRESH_MIN  = 60         # re-fetch IV rank every N minutes during a session
 STOP_CONFIRM_TICKS   = 2          # require N consecutive monitor cycles below stop before exit
+
+# Trailing stop after T1 (partial close): rather than holding a static T2,
+# trail the stop on the remaining contracts at TRAIL_GIVE_BACK below the highest
+# mid seen since the partial fired. Lets winners run but locks in gains.
+TRAIL_GIVE_BACK_PCT     = 0.20    # give back 20% of premium from the high-water mark
+TRAIL_MIN_STOP_AT_ENTRY = True    # never let the trailing stop fall back below entry
+
+# Exchange + clearing fees per option contract (Alpaca options are commission-free
+# but exchange/ORF/OCC fees still apply). $0.65 is a conservative round-trip estimate.
+OPTION_FEE_PER_CONTRACT = 0.65
 
 # ── Data freshness tracker ────────────────────────────────────────────────────
 # Free retail data is delayed (yfinance: ~15 min for bars, VIX, news). Without
@@ -272,12 +296,126 @@ def bs_delta(spot: float, strike: float, tte_days: float,
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.FileHandler("spy_trader.log"), logging.StreamHandler()],
-)
+from logging.handlers import RotatingFileHandler
+
+
+class _DedupFilter(logging.Filter):
+    """Collapse repeated identical log messages into one + a counter.
+
+    First occurrence passes through normally. Repeats of the same (levelname,
+    message) within DEDUP_WINDOW_SEC are suppressed; the first message after
+    the window expires emits a summary line "(prev message repeated N times)".
+    """
+    DEDUP_WINDOW_SEC = 60.0
+    MAX_REPEAT_REPORT = 10000
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_key: Optional[tuple] = None
+        self._last_ts: float = 0.0
+        self._repeat_count: int = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        key = (record.levelname, record.getMessage())
+        now = time.time()
+        if key == self._last_key and (now - self._last_ts) < self.DEDUP_WINDOW_SEC:
+            self._repeat_count += 1
+            if self._repeat_count > self.MAX_REPEAT_REPORT:
+                return False
+            return False
+        if self._repeat_count > 0 and self._last_key is not None:
+            summary = logging.LogRecord(
+                name=record.name,
+                level=logging.getLevelName(self._last_key[0]),
+                pathname=record.pathname,
+                lineno=record.lineno,
+                msg=f"(previous message repeated {self._repeat_count} times)",
+                args=None,
+                exc_info=None,
+            )
+            self._repeat_count = 0
+            logging.getLogger(record.name).handle(summary)
+        self._last_key = key
+        self._last_ts = now
+        return True
+
+
+_LOG_FMT = "%(asctime)s ET %(levelname)-8s  %(message)s"
+_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+
+class _ETFormatter(logging.Formatter):
+    """Force log timestamps to Eastern Time so they line up with market hours."""
+    _et = ZoneInfo("America/New_York")
+
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=self._et)
+        return dt.strftime(datefmt or _LOG_DATEFMT)
+
+
+_log_formatter = _ETFormatter(_LOG_FMT, datefmt=_LOG_DATEFMT)
+
+_main_handler = RotatingFileHandler("spy_trader.log", maxBytes=10_000_000, backupCount=5)
+_main_handler.setFormatter(_log_formatter)
+_main_handler.setLevel(logging.INFO)
+
+_err_handler = RotatingFileHandler("errors.log", maxBytes=5_000_000, backupCount=5)
+_err_handler.setFormatter(_log_formatter)
+_err_handler.setLevel(logging.ERROR)
+_err_handler.addFilter(_DedupFilter())
+
+
+class _WebhookAlertHandler(logging.Handler):
+    """Best-effort webhook poster for ERROR-level logs.
+
+    Picks up the URL from $ALERT_WEBHOOK_URL (Slack-compatible JSON: {"text": "..."}
+    works for Discord and Slack incoming webhooks). Rate-limited to MIN_ALERT_GAP
+    seconds between posts so a burst doesn't spam the channel.
+    """
+    MIN_ALERT_GAP_SEC = 60.0
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+        self._last_sent: float = 0.0
+        self._url: Optional[str] = os.environ.get("ALERT_WEBHOOK_URL", "").strip() or None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not self._url:
+            return
+        now = time.time()
+        if (now - self._last_sent) < self.MIN_ALERT_GAP_SEC:
+            return
+        try:
+            import json as _json
+            import urllib.request
+            payload = _json.dumps({"text": f"[SPY Trader] {record.levelname}: {record.getMessage()[:500]}"})
+            req = urllib.request.Request(
+                self._url,
+                data=payload.encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=3).read()
+            self._last_sent = now
+        except Exception:
+            pass  # Never let logging crash the app
+
+
+_webhook_handler = _WebhookAlertHandler()
+
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_log_formatter)
+_stream_handler.setLevel(logging.INFO)
+
+_root = logging.getLogger()
+_root.setLevel(logging.INFO)
+# Replace any handlers that basicConfig (or prior runs) may have left behind.
+for h in list(_root.handlers):
+    _root.removeHandler(h)
+_root.addHandler(_main_handler)
+_root.addHandler(_err_handler)
+_root.addHandler(_stream_handler)
+_root.addHandler(_webhook_handler)
+
 log = logging.getLogger(__name__)
 
 # Silence yfinance's own logger — it shouts ERROR for "delisted" tickers like
@@ -582,29 +720,136 @@ def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "S
             last_date = df.index.max().date()
             df = df[df.index.date == last_date]
 
-        out = []
+        # Two-pass build: first collect valid bars, then filter outliers.
+        # yfinance pre/post-market data routinely emits single bars with wild
+        # wicks (e.g. SPY pre-market print at $688 when real range is $733-$738).
+        # These single bad bars destroy the chart y-axis. Drop any bar whose
+        # high-low range or open-close excursion exceeds OUTLIER_PCT of its
+        # close — these are almost always thin-liquidity data errors.
+        OUTLIER_PCT = 0.02   # 2% intra-bar range = likely garbage on 1m/5m/15m
+        rough = []
         for ts, row in df.iterrows():
             o  = float(row["Open"])
             h  = float(row["High"])
             lo = float(row["Low"])
             c  = float(row["Close"])
-            if any(x != x for x in (o, h, lo, c)):   # skip NaN rows (can appear at market open)
+            if any(x != x for x in (o, h, lo, c)):   # skip NaN rows
                 continue
-            out.append({
-                "time":   int(pd.Timestamp(ts).timestamp()),
-                "open":   round(o,  2),
-                "high":   round(h,  2),
-                "low":    round(lo, 2),
-                "close":  round(c,  2),
+            rough.append({
+                "ts":     pd.Timestamp(ts),
+                "open":   o, "high": h, "low": lo, "close": c,
                 "volume": int(row["Volume"]),
             })
 
-        log.info(f"fetch_chart_bars({symbol}, {interval}+{range_}): {len(out)} bars")
+        # Compute median close as the reference; flag bars that diverge wildly.
+        if rough:
+            closes = sorted(b["close"] for b in rough)
+            median_close = closes[len(closes) // 2]
+        else:
+            median_close = None
+
+        out = []
+        dropped = 0
+        for b in rough:
+            c = b["close"]
+            # Drop if the bar's H-L range is unrealistic (data glitch)
+            if c > 0 and (b["high"] - b["low"]) / c > OUTLIER_PCT and yf_iv in ("1m", "5m", "15m"):
+                dropped += 1
+                continue
+            # Drop if the bar's close is wildly off the median (pre-market spike)
+            if median_close and median_close > 0 and abs(c - median_close) / median_close > 0.03:
+                dropped += 1
+                continue
+            out.append({
+                "time":   int(b["ts"].timestamp()),
+                "open":   round(b["open"],  2),
+                "high":   round(b["high"],  2),
+                "low":    round(b["low"],   2),
+                "close":  round(b["close"], 2),
+                "volume": b["volume"],
+            })
+
+        if dropped:
+            log.info(f"fetch_chart_bars({symbol}, {interval}+{range_}): "
+                     f"{len(out)} bars (dropped {dropped} outliers)")
+        else:
+            log.info(f"fetch_chart_bars({symbol}, {interval}+{range_}): {len(out)} bars")
         return out
 
     except Exception as e:
         log.warning(f"fetch_chart_bars({symbol}, {interval}+{range_}): {e}")
         return []
+
+
+def chart_overlays(bars: list, symbol: str) -> dict:
+    """Compute overlay series (VWAP / EMAs / volume ratio / ORB / prior levels)
+    aligned to a list of chart bars. Returns a dict the UI can plot directly.
+
+    Light implementation: doesn't reuse _add_indicators because the chart bars
+    use yfinance schema (open/high/low/close) and may not align to the 5-min
+    signal bars. Keeping it self-contained avoids invariant drift.
+    """
+    if not bars:
+        return {}
+    try:
+        df = pd.DataFrame(bars)
+        c, h, l, v = df["close"], df["high"], df["low"], df["volume"]
+        tp = (h + l + c) / 3
+        cum_tpv = (tp * v).cumsum()
+        cum_v   = v.cumsum().replace(0, np.nan)
+        df["vwap"]   = cum_tpv / cum_v
+        df["ema9"]   = c.ewm(span=9,  adjust=False).mean()
+        df["ema21"]  = c.ewm(span=21, adjust=False).mean()
+        df["vol_avg20"] = v.rolling(20).mean()
+        df["vol_ratio"] = v / df["vol_avg20"].replace(0, 1)
+
+        # EMA200 daily — fetched separately and broadcast as a flat horizontal line
+        ema200d = fetch_daily_ema200(symbol) if "fetch_daily_ema200" in globals() else None
+
+        # ORB: high/low of the first 30 min of the *current* trading day
+        df["ts"] = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_convert(ET)
+        today_df = df[df["ts"].dt.date == df["ts"].dt.date.max()]
+        morning  = today_df[
+            (today_df["ts"].dt.time >= _dtime(MORNING_START[0], MORNING_START[1])) &
+            (today_df["ts"].dt.time <  _dtime(MORNING_END[0],   MORNING_END[1]))
+        ]
+        orb = {}
+        if len(morning) >= 2:
+            orb = {
+                "high": round(float(morning["high"].max()), 2),
+                "low":  round(float(morning["low"].min()),  2),
+                "formed_at_ts": int(morning["time"].iloc[-1]),
+            }
+
+        # Prior day levels (best-effort)
+        try:
+            pl = fetch_prior_day_levels(symbol) or {}
+        except Exception:
+            pl = {}
+
+        def _series(col):
+            return [
+                {"time": int(row["time"]),
+                 "value": (None if pd.isna(row[col]) else round(float(row[col]), 4))}
+                for _, row in df.iterrows()
+            ]
+
+        return {
+            "vwap":      _series("vwap"),
+            "ema9":      _series("ema9"),
+            "ema21":     _series("ema21"),
+            "ema200d":   round(float(ema200d), 2) if ema200d else None,
+            "vol_ratio": _series("vol_ratio"),
+            "orb":       orb,
+            "prior_levels": {
+                "prev_high":  pl.get("prev_high"),
+                "prev_low":   pl.get("prev_low"),
+                "prev_close": pl.get("prev_close"),
+            },
+        }
+    except Exception as e:
+        log.warning(f"chart_overlays({symbol}): {e}")
+        return {}
 
 
 def fetch_prior_day_levels(symbol: str = "SPY"):
@@ -710,7 +955,7 @@ _vix_cache: dict = {"value": None, "ts": 0.0}  # cached VIX value + monotonic ti
 _VIX_CACHE_TTL = 300  # use cached value for up to 5 minutes on fetch failure
 
 
-def fetch_vix_live(underlying: str = "SPY") -> float | None:
+def fetch_vix_live(underlying: str = "SPY") -> Optional[float]:
     """Compute a real-time VIX-equivalent from SPY option chain via Alpaca.
 
     Implements a simplified CBOE VIX formula on a single ~30-DTE expiry:
@@ -1065,7 +1310,7 @@ def fetch_historical_vol_baseline(symbol: str, days: int = 5, interval_min: int 
         return {}
 
 
-def fetch_daily_ema200(symbol: str) -> float | None:
+def fetch_daily_ema200(symbol: str) -> Optional[float]:
     """Compute EMA200 from the last 300 daily closes.
 
     Intraday 5-min bars only accumulate ~78 bars/day, so the rolling EMA200
@@ -1087,7 +1332,7 @@ def fetch_daily_ema200(symbol: str) -> float | None:
         return None
 
 
-def inject_daily_ema200(df: pd.DataFrame, ema200_val: float | None) -> pd.DataFrame:
+def inject_daily_ema200(df: pd.DataFrame, ema200_val: Optional[float]) -> pd.DataFrame:
     """Broadcast the daily EMA200 scalar into every row of the intraday df."""
     if ema200_val is not None:
         df = df.copy()
@@ -1095,7 +1340,7 @@ def inject_daily_ema200(df: pd.DataFrame, ema200_val: float | None) -> pd.DataFr
     return df
 
 
-def fetch_iv_rank(symbol: str) -> tuple[float | None, float | None]:
+def fetch_iv_rank(symbol: str) -> Tuple[Optional[float], Optional[float]]:
     """Compute IV Rank (IVR) from the past 52 weeks of the nearest ATM option IV.
 
     IVR = (current_iv - 52w_low_iv) / (52w_high_iv - 52w_low_iv) * 100
@@ -1443,7 +1688,7 @@ def _strike_window(current_price: float) -> float:
 
 
 def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY",
-                    current_iv: float | None = None):
+                    current_iv: Optional[float] = None):
     """Find ATM call (bull) or put (bear) for `symbol` at given expiry.
 
     current_iv: annualised IV as a percentage (e.g. 18.5 means 18.5%).
@@ -1642,10 +1887,169 @@ def sector_risk_check(symbol: str) -> bool:
 
 
 def pdt_check():
-    if PDT_REMAINING <= 0:
-        log.warning("PDT limit reached. No new day trades.")
-        return False
-    log.info(f"PDT day trades remaining: {PDT_REMAINING}")
+    """Block new entries if PDT rule applies and we're out of day trades.
+
+    Only relevant for sub-$25K margin accounts flagged as `pattern_day_trader`.
+    For accounts ≥$25K (or anyone Alpaca hasn't flagged), Alpaca returns
+    daytrade_count without enforcing a 4-in-5 cap, so we never block.
+
+    Reads the live remaining count from Alpaca instead of trusting a static
+    module constant — the previous behavior (constant `3`) was wrong for any
+    sub-$25K account that had already used some day trades.
+    """
+    if not TRADING_CLIENT:
+        return True  # no broker → no enforcement
+    try:
+        acct = TRADING_CLIENT.get_account()
+        is_pdt = bool(getattr(acct, "pattern_day_trader", False))
+        if not is_pdt:
+            return True  # rule doesn't apply
+        day_trades = int(getattr(acct, "daytrade_count", 0) or 0)
+        remaining  = max(0, 3 - day_trades)  # PDT allows 3 in any rolling 5-day window
+        if remaining <= 0:
+            log.warning(f"PDT limit reached ({day_trades} day-trades used). No new entries.")
+            return False
+        log.info(f"PDT day trades remaining: {remaining}")
+        return True
+    except Exception as e:
+        log.warning(f"pdt_check: account lookup failed ({e}) — allowing entry")
+        return True
+
+
+_vix_prev_close: Optional[float] = None
+VIX_SPIKE_PCT  = 0.15   # block new entries if VIX up >15% from yesterday's close
+
+
+def gap_day_delay_ok(symbol: str = "SPY") -> bool:
+    """Return False if today opened with a big gap AND we're still inside the
+    first 30 min of the session (before 10:00 ET). The opening-range
+    whipsaw window is the worst time to enter on a gap day.
+    """
+    now = datetime.now(ET)
+    if now.hour > 10 or (now.hour == 10 and now.minute > 0):
+        return True  # Past 10:00 ET — opening range has formed; gap is digested.
+    try:
+        prior = fetch_prior_day_levels(symbol)
+        prev_close = prior.get("close") if prior else None
+        if not prev_close or prev_close <= 0:
+            return True
+        spot = get_symbol_price(symbol) or 0.0
+        if spot <= 0:
+            return True
+        gap = abs(spot - prev_close) / prev_close
+        if gap >= OPEN_GAP_DELAY_PCT:
+            log.warning(
+                f"  ⏸  Gap-day delay ({symbol}): gap={gap*100:+.2f}% > "
+                f"{OPEN_GAP_DELAY_PCT*100:.1f}% — waiting until 10:00 ET."
+            )
+            return False
+    except Exception as e:
+        log.warning(f"gap_day_delay_ok({symbol}): {e}")
+    return True
+
+
+# ── Macro event blackout ──────────────────────────────────────────────────────
+# Hardcoded calendar of known high-impact macro events. Format: ISO date + ET time
+# of release. Blackout window = MACRO_BLACKOUT_BEFORE_MIN before to AFTER_MIN after.
+# Update this list periodically; ideally swap for an API (FRED / TradingEconomics).
+MACRO_BLACKOUT_BEFORE_MIN = 30
+MACRO_BLACKOUT_AFTER_MIN  = 30
+MACRO_EVENTS: list[tuple[str, str, str]] = [
+    # (date YYYY-MM-DD, ET time HH:MM, label)
+    # 2026 FOMC dates (placeholder — verify before live trading):
+    ("2026-01-28", "14:00", "FOMC"),
+    ("2026-03-18", "14:00", "FOMC"),
+    ("2026-04-29", "14:00", "FOMC"),
+    ("2026-06-17", "14:00", "FOMC"),
+    ("2026-07-29", "14:00", "FOMC"),
+    ("2026-09-16", "14:00", "FOMC"),
+    ("2026-11-04", "14:00", "FOMC"),
+    ("2026-12-16", "14:00", "FOMC"),
+    # Monthly CPI releases (2nd Tue/Wed at 8:30 — verify with BLS schedule):
+    ("2026-01-14", "08:30", "CPI"),
+    ("2026-02-11", "08:30", "CPI"),
+    ("2026-03-11", "08:30", "CPI"),
+    ("2026-04-15", "08:30", "CPI"),
+    ("2026-05-13", "08:30", "CPI"),
+    ("2026-06-10", "08:30", "CPI"),
+    ("2026-07-15", "08:30", "CPI"),
+    ("2026-08-12", "08:30", "CPI"),
+    ("2026-09-09", "08:30", "CPI"),
+    ("2026-10-14", "08:30", "CPI"),
+    ("2026-11-12", "08:30", "CPI"),
+    ("2026-12-10", "08:30", "CPI"),
+    # NFP — first Friday of month at 8:30 ET:
+    ("2026-01-02", "08:30", "NFP"),
+    ("2026-02-06", "08:30", "NFP"),
+    ("2026-03-06", "08:30", "NFP"),
+    ("2026-04-03", "08:30", "NFP"),
+    ("2026-05-01", "08:30", "NFP"),
+    ("2026-06-05", "08:30", "NFP"),
+    ("2026-07-02", "08:30", "NFP"),
+    ("2026-08-07", "08:30", "NFP"),
+    ("2026-09-04", "08:30", "NFP"),
+    ("2026-10-02", "08:30", "NFP"),
+    ("2026-11-06", "08:30", "NFP"),
+    ("2026-12-04", "08:30", "NFP"),
+]
+
+
+def macro_event_blackout_ok() -> bool:
+    """Return False if we're currently inside a macro event blackout window.
+
+    Windows: BEFORE_MIN before release through AFTER_MIN after. Catches FOMC,
+    CPI, NFP. The hardcoded list must be kept current — see TODO #5 for the
+    longer-term plan to source from an API.
+    """
+    now = datetime.now(ET)
+    today_str = now.strftime("%Y-%m-%d")
+    for date_str, time_str, label in MACRO_EVENTS:
+        if date_str != today_str:
+            continue
+        try:
+            hh, mm = map(int, time_str.split(":"))
+            event_time = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            window_start = event_time - timedelta(minutes=MACRO_BLACKOUT_BEFORE_MIN)
+            window_end   = event_time + timedelta(minutes=MACRO_BLACKOUT_AFTER_MIN)
+            if window_start <= now <= window_end:
+                log.warning(
+                    f"  📰 Macro blackout: {label} at {time_str} ET — "
+                    f"no entries from {window_start.strftime('%H:%M')} "
+                    f"to {window_end.strftime('%H:%M')}."
+                )
+                return False
+        except Exception as e:
+            log.warning(f"macro_event_blackout_ok parse error for {date_str} {time_str}: {e}")
+    return True
+
+
+def friday_gamma_ok(expiry_date) -> bool:
+    """Return False if entering on a Friday with DTE < FRIDAY_MIN_DTE.
+
+    Buying short-dated options on Fridays loads up on gamma right when theta
+    accelerates over the weekend. expiry_date can be a date or YYYY-MM-DD string.
+    """
+    now = datetime.now(ET)
+    if now.weekday() != 4:  # 4 = Friday
+        return True
+    if expiry_date is None:
+        return True
+    try:
+        if isinstance(expiry_date, str):
+            exp = datetime.strptime(expiry_date, "%Y-%m-%d").date()
+        elif hasattr(expiry_date, "date"):
+            exp = expiry_date.date()
+        else:
+            exp = expiry_date
+        dte = (exp - now.date()).days
+        if dte < FRIDAY_MIN_DTE:
+            log.warning(
+                f"  📅 Friday gamma throttle: DTE={dte} < {FRIDAY_MIN_DTE} — "
+                f"skipping short-dated entry on Friday."
+            )
+            return False
+    except Exception as e:
+        log.warning(f"friday_gamma_ok: {e}")
     return True
 
 
@@ -1656,9 +2060,36 @@ def vix_check(vix):
     if vix > VIX_MAX:
         log.warning(f"VIX={vix:.1f} > {VIX_MAX} — too volatile. Skipping session.")
         return False
+    # Rate-of-change check: even within absolute bounds, a sharp intraday spike
+    # is a regime change and a bad time to add directional vega.
+    prev = _get_vix_prev_close()
+    if prev and prev > 0:
+        change = (vix - prev) / prev
+        if change >= VIX_SPIKE_PCT:
+            log.warning(
+                f"VIX={vix:.1f} up {change*100:+.1f}% from prev close {prev:.1f} "
+                f"(threshold {VIX_SPIKE_PCT*100:.0f}%) — regime shift, skipping entries."
+            )
+            return False
     regime = "Calm" if vix < 14 else "Normal" if vix < 20 else "Elevated" if vix < 28 else "High"
     log.info(f"VIX={vix:.1f} [{regime}]")
     return True
+
+
+def _get_vix_prev_close() -> Optional[float]:
+    """Cached fetch of yesterday's VIX close via yfinance (^VIX)."""
+    global _vix_prev_close
+    if _vix_prev_close is not None:
+        return _vix_prev_close
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("^VIX").history(period="5d", interval="1d")
+        if len(hist) >= 2:
+            _vix_prev_close = float(hist["Close"].iloc[-2])
+            return _vix_prev_close
+    except Exception as e:
+        log.warning(f"_get_vix_prev_close failed: {e}")
+    return None
 
 
 # ── Daily loss circuit-breaker ────────────────────────────────────────────────
@@ -1666,6 +2097,90 @@ _day_start_equity: float = 0.0
 _day_start_date:   object = None   # datetime.date
 _daily_loss_halt:  bool   = False  # True = ALL symbols blocked for the rest of the day
 _equity_lock = threading.Lock()
+
+# Multi-day equity history persisted to disk so weekly/monthly drawdown can
+# be computed across restarts. Stored as a JSON list of {"date","equity"}.
+_EQUITY_HISTORY_FILE = os.path.expanduser("~/.spy_trader/equity_history.json")
+WEEKLY_LOSS_HALT_PCT = 0.04   # halt new entries if 5-day rolling DD >= 4%
+
+
+def _load_equity_history() -> list:
+    if not os.path.exists(_EQUITY_HISTORY_FILE):
+        return []
+    try:
+        with open(_EQUITY_HISTORY_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_equity_history(history: list) -> None:
+    try:
+        os.makedirs(os.path.dirname(_EQUITY_HISTORY_FILE), exist_ok=True)
+        tmp = _EQUITY_HISTORY_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(history, f)
+        os.replace(tmp, _EQUITY_HISTORY_FILE)
+    except Exception as e:
+        log.warning(f"_save_equity_history failed: {e}")
+
+
+def record_eod_equity(acct_val: float) -> None:
+    """Append today's end-of-day equity to history (idempotent per day)."""
+    today = datetime.now(ET).date().isoformat()
+    history = _load_equity_history()
+    history = [h for h in history if h.get("date") != today]
+    history.append({"date": today, "equity": round(acct_val, 2)})
+    history = history[-90:]  # keep last 90 trading days
+    _save_equity_history(history)
+
+
+def rolling_drawdown_pct(window_days: int = 5) -> float:
+    """Compute rolling drawdown over the last N entries in equity history.
+
+    Returns the worst peak-to-current drop as a fraction (e.g., 0.04 = 4%).
+    """
+    history = _load_equity_history()
+    if len(history) < 2:
+        return 0.0
+    window = history[-window_days:]
+    peak = max(h["equity"] for h in window)
+    current = window[-1]["equity"]
+    if peak <= 0:
+        return 0.0
+    return max(0.0, (peak - current) / peak)
+
+
+_weekly_halt: bool = False
+
+def weekly_drawdown_check(acct_val: float) -> bool:
+    """Return False (halt entries) if 5-day rolling DD exceeds WEEKLY_LOSS_HALT_PCT.
+
+    Uses the CURRENT live equity vs. the recent peak (history + today's live).
+    Cleared automatically once the peak refreshes.
+    """
+    global _weekly_halt
+    with _equity_lock:
+        if _weekly_halt:
+            log.info("  📉 Weekly drawdown halt active — entries blocked.")
+            return False
+        history = _load_equity_history()
+        if len(history) < 2:
+            return True
+        recent = [h["equity"] for h in history[-5:]] + [acct_val]
+        peak = max(recent)
+        if peak <= 0:
+            return True
+        dd = (peak - acct_val) / peak
+        if dd >= WEEKLY_LOSS_HALT_PCT:
+            _weekly_halt = True
+            log.warning(
+                f"  📉 Weekly drawdown limit reached: {dd*100:.2f}% from 5-day peak "
+                f"(limit {WEEKLY_LOSS_HALT_PCT*100:.1f}%). Halting new entries."
+            )
+            return False
+    return True
 
 def set_day_start_equity(acct_val: float) -> None:
     """Record start-of-day equity once per calendar day (first symbol to call wins).
@@ -1754,7 +2269,7 @@ def _record_global_trade() -> None:
 # Today's log showed BULL → BEAR signals 6 SECONDS apart on correlated symbols.
 # Net result: flat exposure with double the spread cost. Track the most recent
 # fired-signal direction (across all symbols) and reject the opposite within 15min.
-_last_signal_direction: str | None = None
+_last_signal_direction: Optional[str] = None
 _last_signal_ts: float = 0.0
 _whipsaw_lock = threading.Lock()
 
@@ -1892,8 +2407,16 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
         verdict = "ALLOWED" if approved else "SKIPPED"
         log.info(f"[DRY RUN] User {verdict} — no order placed.")
         if approved:
-            # Register simulated position so the monitor can test stop/target logic
-            register_trade(occ_symbol, mid_price, contracts, direction, symbol, "DRY_RUN")
+            # Unique per-trade id so ChromaDB doesn't collide across dry-runs.
+            dry_id = f"DRY_{occ_symbol}_{int(time.time() * 1000)}"
+            TRADE_MEMORY.record(
+                symbol=symbol, direction=direction,
+                indicators=details.get("_indicators", {}),
+                entry_price=mid_price, trade_id=dry_id,
+                is_dry_run=True,
+            )
+            register_trade(occ_symbol, mid_price, contracts, direction, symbol,
+                           order_id=dry_id, is_dry_run=True)
             _notify_fill()  # refresh UI: deployed_risk_pct ticks even in dry-run
         return None
 
@@ -1952,8 +2475,10 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
             symbol=symbol, direction=direction,
             indicators=details.get("_indicators", {}),
             entry_price=mid_price, trade_id=str(order.id),
+            is_dry_run=False,
         )
-        register_trade(occ_symbol, mid_price, contracts, direction, symbol, str(order.id))
+        register_trade(occ_symbol, mid_price, contracts, direction, symbol,
+                       order_id=str(order.id), is_dry_run=False)
         return order
     except Exception as e:
         log.error(f"Order failed: {e}")
@@ -2233,8 +2758,8 @@ def evaluate_trend_continuation(bar, prev_bar, df):
 # ── Session runner ────────────────────────────────────────────────────────────
 def run_session(session_name, session_end_hour, session_end_min,
                 evaluate_fn, prior_levels, gap_info=None, stop_event=None,
-                symbol: str = "SPY", daily_ema200: float | None = None,
-                iv_rank: float | None = None, current_iv: float | None = None):
+                symbol: str = "SPY", daily_ema200: Optional[float] = None,
+                iv_rank: Optional[float] = None, current_iv: Optional[float] = None):
     symbol = symbol.upper()
     session_end = datetime.now(ET).replace(
         hour=session_end_hour, minute=session_end_min, second=0, microsecond=0
@@ -2806,6 +3331,35 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                     time.sleep(60)
                 continue
 
+            if not weekly_drawdown_check(acct_val):
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
+            if emergency_halt_active():
+                log.info(f"  🛑 Emergency halt active — skipping {symbol}.")
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
+            if not gap_day_delay_ok(symbol):
+                if stop_event:
+                    stop_event.wait(timeout=120)
+                else:
+                    time.sleep(120)
+                continue
+
+            if not macro_event_blackout_ok():
+                if stop_event:
+                    stop_event.wait(timeout=180)
+                else:
+                    time.sleep(180)
+                continue
+
             # Global cross-symbol cooldown — prevent two symbols firing in the same second
             if not global_cooldown_ok():
                 log.info(f"  Global cooldown ({GLOBAL_COOLDOWN_SEC}s) active across symbols — waiting.")
@@ -2845,10 +3399,14 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 )
             elif not sector_risk_check(symbol):
                 pass  # warning already logged inside sector_risk_check
+            elif not portfolio_delta_check(acct_val, intended_direction=direction):
+                pass  # warning already logged
             else:
                 expiry = target_expiry(symbol)
                 if not expiry:
                     log.warning(f"No {symbol} expiry in DTE range. Skipping.")
+                elif not friday_gamma_ok(expiry):
+                    pass  # warning already logged
                 else:
                     option, strike = find_atm_option(direction, expiry, current, symbol,
                                                         current_iv=_current_iv)
@@ -2874,6 +3432,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                                 filled_qty = wait_for_fill(str(order.id), stop_event=stop_event)
                                 if filled_qty > 0:
                                     acct_val = account_value()
+                                    update_slippage_for_order(str(order.id), target_mid=mid)
                                     _notify_fill()  # refresh UI account stats post-entry
                                 else:
                                     log.warning(
@@ -2907,6 +3466,69 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 _open_positions: list[dict] = []
 _positions_lock = threading.Lock()
 
+# Persisted across restarts so dry-run positions survive and real-position
+# metadata (stop/target/opened_at) isn't lost when reconcile_positions reseeds
+# from Alpaca with default risk parameters.
+_POSITIONS_FILE = os.path.expanduser("~/.spy_trader/open_positions.json")
+
+
+def _save_positions() -> None:
+    """Atomic JSON dump of _open_positions to disk. Best-effort, never raises."""
+    try:
+        os.makedirs(os.path.dirname(_POSITIONS_FILE), exist_ok=True)
+        with _positions_lock:
+            snapshot = [dict(p) for p in _open_positions]
+        tmp = _POSITIONS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(snapshot, f, default=str)
+        os.replace(tmp, _POSITIONS_FILE)
+    except Exception as e:
+        log.warning(f"_save_positions failed: {e}")
+
+
+def _load_positions() -> int:
+    """Load persisted positions from disk into _open_positions. Returns count loaded.
+
+    Called once at session start before reconcile_positions(). Real-Alpaca
+    positions that exist in both sources are de-duped by occ_symbol — the
+    persisted entry wins because it has our original stop/T1/T2 levels.
+    Dry-run positions (is_dry_run=True) come back exactly as they were.
+    """
+    if not os.path.exists(_POSITIONS_FILE):
+        return 0
+    try:
+        with open(_POSITIONS_FILE) as f:
+            saved = json.load(f)
+        if not isinstance(saved, list):
+            return 0
+        loaded = 0
+        with _positions_lock:
+            known = {p["occ_symbol"] for p in _open_positions}
+            for p in saved:
+                if not isinstance(p, dict) or "occ_symbol" not in p:
+                    continue
+                if p.get("remaining", 0) <= 0:
+                    continue  # closed positions left over from a partial save
+                if p["occ_symbol"] in known:
+                    continue
+                # Defensive defaults for fields added after the file was written
+                p.setdefault("is_dry_run", False)
+                p.setdefault("breakeven_armed", False)
+                p.setdefault("stop_breach_count", 0)
+                p.setdefault("close_attempted", False)
+                p.setdefault("close_client_id", None)
+                p.setdefault("partial_done", False)
+                p.setdefault("peak_mid_after_t1", 0.0)
+                _open_positions.append(p)
+                known.add(p["occ_symbol"])
+                loaded += 1
+        if loaded:
+            log.info(f"Restored {loaded} open position(s) from {_POSITIONS_FILE}")
+        return loaded
+    except Exception as e:
+        log.warning(f"_load_positions failed: {e}")
+        return 0
+
 # ── Stop-hit registry ─────────────────────────────────────────────────────────
 # Maps symbol → {"direction": str, "time": datetime} for the most recent stop.
 # Written by check_positions(); read by all_day_session() to extend cooldown
@@ -2927,13 +3549,14 @@ def record_stop_hit(symbol: str, direction: str) -> None:
             "time":      datetime.now(ET),
         }
 
-def get_last_stop(symbol: str) -> dict | None:
+def get_last_stop(symbol: str) -> Optional[dict]:
     with _stop_lock:
         return _last_stop.get(symbol.upper())
 
 
 def register_trade(occ_symbol: str, entry_price: float, contracts: int,
-                   direction: str, symbol: str, order_id: str | None = None) -> None:
+                   direction: str, symbol: str, order_id: Optional[str] = None,
+                   is_dry_run: bool = False) -> None:
     """Register a new position for the monitor after an order is submitted.
 
     Stop/target levels follow the swing-style risk profile:
@@ -2962,15 +3585,49 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
         "stop_breach_count": 0,    # consecutive monitor cycles below stop_price (bid)
         "close_client_id": None,   # idempotency for close orders — reused on retry
         "breakeven_armed": False,  # set True once stop_price moved to entry on +30%
+        "is_dry_run":      is_dry_run,  # captured at entry — close path branches on this
+        "peak_mid_after_t1": 0.0,  # high-water mark for the trailing stop
     }
     with _positions_lock:
         _open_positions.append(pos)
+    _save_positions()
     log.info(
         f"Position registered: {occ_symbol} {contracts}x  "
         f"entry=${entry_price:.2f}  stop=${stop_price:.2f}  "
         f"T1=${tgt_50:.2f} (+{int(PARTIAL_TRIGGER_PCT*100)}% close {int(PARTIAL_QTY_FRAC*100)}%)  "
         f"T2=${tgt_75:.2f} (+{int(PROFIT_TARGET*100)}%)"
     )
+
+
+def update_slippage_for_order(order_id: str, target_mid: float) -> None:
+    """Look up the actual fill price for a recently-submitted order and compute
+    realized slippage in basis points vs the target mid we aimed for.
+
+    Stored on the position dict under `entry_slippage_bps`. Negative = filled
+    cheaper than mid (rare); positive = paid up vs mid (the usual case).
+    """
+    if not TRADING_CLIENT or not order_id or target_mid <= 0:
+        return
+    try:
+        order = TRADING_CLIENT.get_order_by_id(order_id)
+        fill = float(order.filled_avg_price or 0)
+        if fill <= 0:
+            return
+        slip_bps = round((fill - target_mid) / target_mid * 10000, 1)
+        with _positions_lock:
+            for p in _open_positions:
+                if p.get("order_id") == order_id:
+                    p["actual_fill_price"]   = fill
+                    p["target_mid"]          = target_mid
+                    p["entry_slippage_bps"]  = slip_bps
+                    log.info(
+                        f"  Slippage {p['occ_symbol']}: fill=${fill:.2f} vs target=${target_mid:.2f} "
+                        f"→ {slip_bps:+.1f} bps"
+                    )
+                    break
+        _save_positions()
+    except Exception as e:
+        log.warning(f"update_slippage_for_order({order_id}): {e}")
 
 
 def open_positions_snapshot() -> list[dict]:
@@ -3025,16 +3682,24 @@ def _fetch_real_entry(occ_symbol: str, fallback: float) -> float:
 
 
 def reconcile_positions() -> int:
-    """Sync _open_positions with actual Alpaca option positions.
+    """Sync _open_positions with persisted state + actual Alpaca option positions.
 
-    Adds any option position held at Alpaca that our local list lost track of
-    (e.g. after a server restart mid-trade). Returns count of positions added.
-    Call at session start and after any unexpected restart.
+    Pipeline:
+      1. Load anything we persisted to disk (carries our original stop/T1/T2 +
+         dry-run flag through the restart).
+      2. Query Alpaca for real option positions; add any that aren't already
+         tracked (covers orphans from a different host or external close).
 
-    Entry price is fetched from order history (via _fetch_real_entry) so that
-    stop/target levels are computed from the *actual* fill, not the current
-    avg_entry_price (which can be skewed by partial closes).
+    Returns count of NEW positions added from Alpaca (persisted ones don't count
+    as new). Call at session start and after any unexpected restart.
+
+    Entry price for orphans is fetched from order history (via _fetch_real_entry)
+    so that stop/target levels are computed from the *actual* fill, not the
+    current avg_entry_price (which can be skewed by partial closes).
     """
+    # 1. Restore persisted positions first — these have our original risk plan.
+    _load_positions()
+
     if not TRADING_CLIENT:
         return 0
     added = 0
@@ -3059,7 +3724,9 @@ def reconcile_positions() -> int:
             _m = re.search(r'([CP])\d{8}$', occ)
             direction = "bull" if (_m and _m.group(1) == "C") else "bear"
             underlying = occ[:6].rstrip()
-            register_trade(occ, real_entry, qty, direction, underlying, order_id=None)
+            # Orphaned Alpaca positions are by definition real (they exist at the broker).
+            register_trade(occ, real_entry, qty, direction, underlying,
+                           order_id=None, is_dry_run=False)
             entry_note = (
                 f"@ ${real_entry:.2f}" if real_entry == fallback_price
                 else f"@ ${real_entry:.2f} (avg shown ${fallback_price:.2f})"
@@ -3094,22 +3761,94 @@ def deployed_risk_pct(acct_val: float) -> float:
     return total_at_risk / acct_val
 
 
+# Correlation-adjusted portfolio delta cap. With 6 high-beta tech names + SPY
+# in the watchlist, six 0.5% directional bets in the same direction = effectively
+# one 3% market bet. This cap measures the actual signed delta exposure.
+MAX_NET_PORTFOLIO_DELTA_PCT = 0.05   # |net signed delta-$| / equity must stay ≤ 5%
+
+
+def net_portfolio_delta_dollars() -> float:
+    """Sum of signed delta-dollars across all open positions.
+
+    Signed: long calls = +delta×spot×100×qty, long puts = -|delta|×spot×100×qty.
+    Spot is fetched from the position's underlying; if unavailable, the position
+    contributes 0 (conservative — won't trip the gate spuriously).
+    """
+    total = 0.0
+    with _positions_lock:
+        positions = [dict(p) for p in _open_positions if p.get("remaining", 0) > 0]
+    for pos in positions:
+        try:
+            occ = pos.get("occ_symbol", "")
+            # OCC: SYM + YYMMDD + C|P + 8-digit strike (in 1/1000 of $)
+            m = re.match(r"^([A-Z]+)(\d{6})([CP])(\d{8})$", occ)
+            if not m:
+                continue
+            sym, ymd, cp, strike_str = m.group(1), m.group(2), m.group(3), m.group(4)
+            strike = int(strike_str) / 1000.0
+            spot = get_symbol_price(sym) or 0.0
+            if spot <= 0:
+                continue
+            exp_date = datetime.strptime(ymd, "%y%m%d").date()
+            tte_days = max(1, (exp_date - datetime.now(ET).date()).days)
+            d = bs_delta(spot, strike, tte_days, is_call=(cp == "C"))
+            # bs_delta returns positive for calls, negative-ish for puts via 1-d for puts
+            if cp == "P":
+                d = -abs(d)
+            else:
+                d = abs(d)
+            total += d * spot * 100 * pos["remaining"]
+        except Exception:
+            continue
+    return total
+
+
+def portfolio_delta_check(acct_val: float, intended_direction: str = "bull") -> bool:
+    """Return False if adding a same-direction position would push |net delta|
+    above MAX_NET_PORTFOLIO_DELTA_PCT × equity.
+
+    Only blocks adds in the *same* direction as the current net exposure —
+    hedging trades (opposite-direction) can always go through (they reduce risk).
+    """
+    if acct_val <= 0:
+        return True
+    net_d = net_portfolio_delta_dollars()
+    cap = acct_val * MAX_NET_PORTFOLIO_DELTA_PCT
+    # Check whether the intended trade is in the same direction as current net
+    intended_sign = 1 if intended_direction == "bull" else -1
+    current_sign = 1 if net_d >= 0 else -1
+    if intended_sign != current_sign and abs(net_d) > 0:
+        return True  # hedging — allowed
+    if abs(net_d) >= cap:
+        log.warning(
+            f"  🧭 Net portfolio delta cap: |${net_d:,.0f}| ≥ ${cap:,.0f} "
+            f"({MAX_NET_PORTFOLIO_DELTA_PCT*100:.1f}% of equity). "
+            f"Skipping same-direction add."
+        )
+        return False
+    return True
+
+
 def _close_option_position(occ_symbol: str, qty: int, reason: str,
-                           client_order_id: str | None = None) -> bool:
+                           client_order_id: Optional[str] = None) -> bool:
     """Limit-sell at the current bid to close an option position quickly.
 
-    Uses IOC time-in-force so unfilled remainders don't sit on the book — the
-    next monitor cycle will re-quote and try again at the new bid.
-
-    client_order_id makes the submission idempotent: if Alpaca already saw this
-    ID it returns the existing order instead of creating a duplicate sell.
-    Caller should pass the same ID on retries (stored on the position dict).
+    Uses DAY time-in-force because Alpaca rejects IOC for options orders
+    (error 42210000). client_order_id makes the submission idempotent —
+    if Alpaca already saw this ID it returns the existing order instead of
+    creating a duplicate sell. Caller should pass the same ID on retries
+    (stored on the position dict).
     """
     if not OPTION_CLIENT or not TRADING_CLIENT:
         return False
     try:
         req   = OptionLatestQuoteRequest(symbol_or_symbols=[occ_symbol])
         res   = OPTION_CLIENT.get_option_latest_quote(req)
+        # Stamp freshness so the UI's option_quote panel doesn't go red just
+        # because no entry attempts have happened for this underlying recently.
+        _m = re.match(r"^([A-Z]+)\d", occ_symbol)
+        if _m:
+            stamp_freshness(f"option_quote:{_m.group(1)}", source_tag="alpaca")
         quote = res.get(occ_symbol)
         bid   = float((quote.bid_price or 0)) if quote else 0.0
         ask   = float((quote.ask_price or 0)) if quote else 0.0
@@ -3123,7 +3862,7 @@ def _close_option_position(occ_symbol: str, qty: int, reason: str,
             qty           = qty,
             side          = OrderSide.SELL,
             type          = OrderType.LIMIT,
-            time_in_force = TimeInForce.IOC,   # don't leave a resting close order
+            time_in_force = TimeInForce.DAY,   # IOC not supported for Alpaca options
             limit_price   = limit,
         )
         if client_order_id:
@@ -3142,12 +3881,79 @@ def _remove_position(pos: dict) -> None:
             _open_positions.remove(pos)
         except ValueError:
             pass
+    _save_positions()
+
+
+# ── Kill switch ───────────────────────────────────────────────────────────────
+_EMERGENCY_HALT = False   # When True: block all new entries indefinitely.
+
+
+def emergency_halt_active() -> bool:
+    return _EMERGENCY_HALT
+
+
+def flatten_all_positions(reason: str = "user kill switch") -> dict:
+    """Close every open position at the ask (worst case but immediate fill) and
+    block new entries via the emergency halt flag.
+
+    Returns a summary dict with counts attempted/succeeded/failed.
+    """
+    global _EMERGENCY_HALT
+    _EMERGENCY_HALT = True
+    log.warning(f"🛑 EMERGENCY FLATTEN-ALL: {reason}")
+
+    summary = {"attempted": 0, "succeeded": 0, "failed": 0, "dry_run": 0}
+    with _positions_lock:
+        targets = [dict(p) for p in _open_positions if p.get("remaining", 0) > 0]
+
+    for pos in targets:
+        summary["attempted"] += 1
+        qty = pos["remaining"]
+        occ = pos["occ_symbol"]
+        # Dry-run positions close locally — no broker call
+        if pos.get("is_dry_run", False):
+            with _positions_lock:
+                for p in _open_positions:
+                    if p["occ_symbol"] == occ:
+                        p["remaining"] = 0
+                        _open_positions.remove(p)
+                        break
+            log.info(f"[DRY RUN] Flattened {qty}x {occ}")
+            summary["dry_run"] += 1
+            summary["succeeded"] += 1
+            continue
+        cid = f"flatten_{occ}_{int(time.time())}"
+        ok = _close_option_position(occ, qty, f"FLATTEN: {reason}", client_order_id=cid)
+        if ok:
+            with _positions_lock:
+                for p in _open_positions:
+                    if p["occ_symbol"] == occ:
+                        p["remaining"] = 0
+                        _open_positions.remove(p)
+                        break
+            summary["succeeded"] += 1
+        else:
+            summary["failed"] += 1
+    _save_positions()
+    log.warning(
+        f"FLATTEN-ALL complete: {summary['succeeded']}/{summary['attempted']} closed "
+        f"({summary['dry_run']} dry-run, {summary['failed']} failed). "
+        f"Halt active — call clear_emergency_halt() to resume."
+    )
+    return summary
+
+
+def clear_emergency_halt() -> None:
+    global _EMERGENCY_HALT
+    _EMERGENCY_HALT = False
+    log.info("Emergency halt cleared — entries re-enabled.")
 
 
 def check_positions() -> list[dict]:
     """Evaluate every open position and close at stop / target / hard-close.
 
-    Called every 30 s by the position_monitor background task in app.py.
+    Called every POSITION_MONITOR_SEC (10s by default) by the position_monitor
+    background task in app.py.
     Returns a list of close-event dicts for the UI log and trades_today.
     """
     if not _open_positions:
@@ -3168,6 +3974,7 @@ def check_positions() -> list[dict]:
         try:
             req   = OptionLatestQuoteRequest(symbol_or_symbols=[occ])
             res   = OPTION_CLIENT.get_option_latest_quote(req)
+            stamp_freshness(f"option_quote:{pos.get('symbol', '?')}", source_tag="alpaca")
             quote = res.get(occ)
             if not quote:
                 continue
@@ -3214,6 +4021,26 @@ def check_positions() -> list[dict]:
                 f"  ⚡ Breakeven armed for {occ}: pnl=+{pnl_frac*100:.0f}% — "
                 f"stop moved ${old_stop:.2f} → ${pos['stop_price']:.2f} (entry)"
             )
+            _save_positions()
+
+        # Trailing stop after T1: once the partial has fired, track the highest
+        # mid seen and trail the stop on the remainder at TRAIL_GIVE_BACK_PCT
+        # below that peak. Lets winners run instead of riding back to entry.
+        if pos.get("partial_done", False):
+            peak = max(pos.get("peak_mid_after_t1", 0.0), mid)
+            new_stop = round(peak * (1.0 - TRAIL_GIVE_BACK_PCT), 2)
+            if TRAIL_MIN_STOP_AT_ENTRY:
+                new_stop = max(new_stop, pos["entry_price"])
+            with _positions_lock:
+                pos["peak_mid_after_t1"] = peak
+                if new_stop > pos["stop_price"]:
+                    old_stop = pos["stop_price"]
+                    pos["stop_price"] = new_stop
+                    pos["stop_breach_count"] = 0
+                    log.info(
+                        f"  📈 Trail {occ}: peak=${peak:.2f}  stop ${old_stop:.2f} → ${new_stop:.2f}"
+                    )
+                    _save_positions()
 
         # Time-stop: exit stalled positions (pnl flat-ish) after TIME_STOP_MINS.
         # Range tightened to [-15%, +10%] — don't kill clear winners early; let
@@ -3289,7 +4116,10 @@ def check_positions() -> list[dict]:
             continue
 
         close_succeeded = False
-        if DRY_RUN:
+        # Use the position's own dry-run flag (set at entry) — NOT the current
+        # global DRY_RUN. A position entered as dry-run must always close as
+        # dry-run, even if the global was toggled mid-session.
+        if pos.get("is_dry_run", False):
             log.info(f"[DRY RUN] Would close {close_qty}x {occ}: {reason}")
             pos["remaining"] -= close_qty
             if pos["remaining"] <= 0:
@@ -3325,6 +4155,14 @@ def check_positions() -> list[dict]:
         if close_succeeded:
             # Refresh UI account stats post-close (entry was already refreshed at fill).
             _notify_fill()
+            # Persist after each close (covers partials where _remove_position
+            # didn't fire). Full closes are already persisted by _remove_position.
+            _save_positions()
+
+        # Fees-adjusted P&L: subtract exchange/clearing fees on both entry + exit legs.
+        # Per-contract %: fee_dollars / (entry_premium * 100) * 100  → 2*fee/entry per leg
+        fees_pct = (2 * OPTION_FEE_PER_CONTRACT) / max(pos["entry_price"], 0.01)
+        pnl_pct_net = round(pnl_pct - fees_pct, 2)
 
         events.append({
             "occ_symbol":  occ,
@@ -3334,10 +4172,13 @@ def check_positions() -> list[dict]:
             "mid":         mid,
             "entry_price": pos["entry_price"],
             "pnl_pct":     round(pnl_pct, 1),
+            "pnl_pct_net": pnl_pct_net,          # fees-adjusted
+            "fees_pct":    round(fees_pct, 2),
             "reason":      reason,
             "is_partial":  is_partial,
             "order_id":    pos.get("order_id"),
             "opened_at":   pos.get("opened_at"),
+            "slippage_bps": pos.get("entry_slippage_bps"),  # captured at entry, if real
         })
 
     return events
@@ -3478,9 +4319,36 @@ def eod_review(log_path: str, trades_today: list) -> str:
     wins  = [t for t in trades_today if not t.get("is_partial") and t.get("pnl_pct", 0) > 0]
     loses = [t for t in trades_today if not t.get("is_partial") and t.get("pnl_pct", 0) < 0]
     flat  = [t for t in trades_today if not t.get("is_partial") and t.get("pnl_pct", 0) == 0]
+    closed = wins + loses + flat
     avg_win  = round(sum(t["pnl_pct"] for t in wins)  / len(wins),  1) if wins  else 0
     avg_loss = round(sum(t["pnl_pct"] for t in loses) / len(loses), 1) if loses else 0
 
+    # Pro metrics:
+    # - Win rate: % of closed trades that profited
+    # - Profit factor: |sum(wins) / sum(losses)| — >1.0 = profitable system
+    # - Expectancy: average $ per trade if you repeated the day's setups
+    # - R-multiple: P&L per trade as multiple of risk (using STOP_LOSS_PCT as 1R)
+    # - Max consecutive losers: psychological + system-stress indicator
+    n_closed   = len(closed)
+    win_rate   = (len(wins) / n_closed * 100) if n_closed else 0.0
+    gross_wins  = sum(t["pnl_pct"] for t in wins)
+    gross_loss  = abs(sum(t["pnl_pct"] for t in loses))
+    profit_factor = (gross_wins / gross_loss) if gross_loss > 0 else (float("inf") if gross_wins > 0 else 0.0)
+    expectancy = ((win_rate / 100) * avg_win + (1 - win_rate / 100) * avg_loss) if n_closed else 0.0
+    r_unit     = STOP_LOSS_PCT * 100  # 1R in %
+    avg_r      = (sum(t["pnl_pct"] for t in closed) / n_closed / r_unit) if n_closed and r_unit else 0.0
+    # Longest losing streak (chronological order — assumes trades_today is append-order)
+    streak = max_streak = 0
+    for t in trades_today:
+        if t.get("is_partial"):
+            continue
+        if t.get("pnl_pct", 0) < 0:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+
+    pf_str = "∞" if profit_factor == float("inf") else f"{profit_factor:.2f}"
     summary_lines = [
         f"Signals fired: {counts['signal']}",
         f"Orders placed: {counts['order']}  (dry-run allowed: {counts['dry_run']})",
@@ -3488,6 +4356,8 @@ def eod_review(log_path: str, trades_today: list) -> str:
         f"News vetoes: {counts['news_veto']}  |  Debate suppressed: {counts['debate_no']}  |  Debate proceed: {counts['debate_ok']}",
         f"Exits — stops: {counts['stop']}  T1-partial: {counts['target1']}  T2: {counts['target2']}  hard-close: {counts['hard_close']}",
         f"Closed trades: {len(wins)} wins ({avg_win:+.1f}% avg)  {len(loses)} losses ({avg_loss:+.1f}% avg)  {len(flat)} flat",
+        f"Win rate: {win_rate:.1f}%  |  Profit factor: {pf_str}  |  Expectancy: {expectancy:+.2f}% / trade  |  Avg R: {avg_r:+.2f}R",
+        f"Max consecutive losses: {max_streak}  |  Gross wins: {gross_wins:+.1f}%  |  Gross losses: -{gross_loss:.1f}%",
     ]
     if trades_today:
         for t in trades_today:
