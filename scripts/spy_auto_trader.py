@@ -2415,8 +2415,9 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
                 entry_price=mid_price, trade_id=dry_id,
                 is_dry_run=True,
             )
+            _narr = generate_signal_narrative(details)
             register_trade(occ_symbol, mid_price, contracts, direction, symbol,
-                           order_id=dry_id, is_dry_run=True)
+                           order_id=dry_id, is_dry_run=True, narrative=_narr)
             _notify_fill()  # refresh UI: deployed_risk_pct ticks even in dry-run
         return None
 
@@ -2477,8 +2478,9 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
             entry_price=mid_price, trade_id=str(order.id),
             is_dry_run=False,
         )
+        _narr = generate_signal_narrative(details)
         register_trade(occ_symbol, mid_price, contracts, direction, symbol,
-                       order_id=str(order.id), is_dry_run=False)
+                       order_id=str(order.id), is_dry_run=False, narrative=_narr)
         return order
     except Exception as e:
         log.error(f"Order failed: {e}")
@@ -3556,7 +3558,7 @@ def get_last_stop(symbol: str) -> Optional[dict]:
 
 def register_trade(occ_symbol: str, entry_price: float, contracts: int,
                    direction: str, symbol: str, order_id: Optional[str] = None,
-                   is_dry_run: bool = False) -> None:
+                   is_dry_run: bool = False, narrative: str = "") -> None:
     """Register a new position for the monitor after an order is submitted.
 
     Stop/target levels follow the swing-style risk profile:
@@ -3587,6 +3589,7 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
         "breakeven_armed": False,  # set True once stop_price moved to entry on +30%
         "is_dry_run":      is_dry_run,  # captured at entry — close path branches on this
         "peak_mid_after_t1": 0.0,  # high-water mark for the trailing stop
+        "narrative":       narrative,  # LLM-generated rationale for this entry
     }
     with _positions_lock:
         _open_positions.append(pos)
@@ -4306,6 +4309,59 @@ def _parse_today_log(log_path: str) -> dict:
     except FileNotFoundError:
         pass
     return counts
+
+
+def generate_signal_narrative(details: dict, debate_summary: str = "") -> str:
+    """Generate a 1-paragraph LLM rationale for a trade entry.
+
+    Stored on the position dict under 'narrative'. Falls back to a plain
+    rule-based sentence when ANTHROPIC_API_KEY is not set or LLM call fails.
+    """
+    sym   = details.get("symbol", "?")
+    dir_  = details.get("direction", "?").upper()
+    rsn   = details.get("reason", "")
+    mid   = details.get("mid_price", 0)
+    stop  = details.get("stop_price", 0)
+    t1    = details.get("target_50", 0)
+    t2    = details.get("target_75", 0)
+    inds  = details.get("_indicators", {})
+
+    def _key(k):
+        return f"{inds.get(k, float('nan')):.2f}" if isinstance(inds.get(k), (int, float)) else "n/a"
+
+    plain = (
+        f"{sym} {dir_} | reason: {rsn} | entry ${mid:.2f} | "
+        f"stop ${stop:.2f} | T1 ${t1:.2f} | T2 ${t2:.2f} | "
+        f"RSI {_key('rsi')} | VWAP {_key('vwap')} | "
+        f"EMA9 {_key('ema9')} | IVR {_key('iv_rank')} | "
+        f"vol_ratio {_key('volume_ratio')}"
+    )
+    if debate_summary:
+        plain += f" | debate: {debate_summary}"
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        return (f"Entered {sym} {dir_} at ${mid:.2f} ({rsn}). "
+                f"Stop ${stop:.2f} · T1 ${t1:.2f} · T2 ${t2:.2f}.")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = (
+            "You are a trading co-pilot. Write ONE sentence (max 40 words) explaining "
+            "why this options trade was taken, what the edge is, and what to watch. "
+            "Be specific and direct. No preamble.\n\n"
+            f"Trade: {plain}"
+        )
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        log.warning(f"generate_signal_narrative LLM failed: {e}")
+        return (f"Entered {sym} {dir_} at ${mid:.2f} ({rsn}). "
+                f"Stop ${stop:.2f} · T1 ${t1:.2f} · T2 ${t2:.2f}.")
 
 
 def eod_review(log_path: str, trades_today: list) -> str:

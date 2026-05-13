@@ -282,6 +282,29 @@
     animation: pulse 1.5s infinite;
   }
 
+  /* ── Open Positions card ── */
+  .pos-empty { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0; }
+  .pos-row {
+    border-top: 1px solid var(--border);
+    padding: 7px 0 5px;
+  }
+  .pos-row:first-child { border-top: none; }
+  .pos-top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .pos-sym { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--text); }
+  .pos-dir { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+  .pos-dir.bull { background: rgba(0,229,160,0.15); color: var(--green); }
+  .pos-dir.bear { background: rgba(255,61,104,0.15); color: var(--red);   }
+  .pos-pnl { margin-left: auto; font-family: var(--mono); font-size: 11px; font-weight: 700; }
+  .pos-pnl.up   { color: var(--green); }
+  .pos-pnl.down { color: var(--red);   }
+  .pos-levels { display: flex; gap: 8px; font-size: 10px; color: var(--muted); font-family: var(--mono); margin-bottom: 3px; }
+  .pos-narrative {
+    font-size: 10.5px; color: var(--muted); line-height: 1.4;
+    font-style: italic; opacity: .85;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
   /* ── Exec Brief bar ── */
   .exec-bar {
     display: flex; align-items: center; gap: 10px;
@@ -1072,6 +1095,15 @@
       <div class="btn-row">
         <button class="btn-run"  id="btn-start-all" onclick="startAllSessions()">▶▶ Start All</button>
         <button class="btn-stop" id="btn-stop-all"  onclick="stopAllSessions()">■■ Stop All</button>
+      </div>
+    </div>
+
+    <!-- Open Positions -->
+    <div class="card" data-card-id="positions">
+      <span class="drag-grip">⋮⋮</span>
+      <div class="card-title">Open Positions</div>
+      <div id="positions-list">
+        <div class="pos-empty">No open positions</div>
       </div>
     </div>
 

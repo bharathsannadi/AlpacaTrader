@@ -286,6 +286,9 @@ function updateUI(s) {
 
   if (s.timestamp) setEl("hdr-time", s.timestamp);
 
+  // Open positions card
+  if (s.open_positions !== undefined) renderPositions(s.open_positions);
+
   // Refresh exec brief when trade count changes
   const newCount = (s.trades_today || []).length;
   if (newCount !== (updateUI._lastTradeCount ?? -1)) {
@@ -1212,3 +1215,44 @@ socket.on("chart_signal", (s) => {
   };
   candleSeries.setMarkers([...existing, newMark]);
 });
+
+// ── Open Positions card ───────────────────────────────────────────────────────
+function renderPositions(positions) {
+  const el = document.getElementById("positions-list");
+  if (!el) return;
+  const active = (positions || []).filter(p => (p.remaining ?? p.contracts ?? 0) > 0);
+  if (!active.length) {
+    el.innerHTML = '<div class="pos-empty">No open positions</div>';
+    return;
+  }
+  el.innerHTML = active.map(p => {
+    const dir    = (p.direction || "bull").toLowerCase();
+    const dirLbl = dir === "bull" ? "CALL" : "PUT";
+    const entry  = p.entry_price ?? 0;
+    const stop   = p.stop_price  ?? 0;
+    const t1     = p.target_50   ?? 0;
+    const t2     = p.target_75   ?? 0;
+    const qty    = p.remaining   ?? p.contracts ?? 0;
+    const unreal = p.unrealized_pct ?? null;
+    const pnlHtml = unreal != null
+      ? `<span class="pos-pnl ${unreal >= 0 ? 'up' : 'down'}">${unreal >= 0 ? '+' : ''}${unreal.toFixed(1)}%</span>`
+      : '';
+    const sym = p.occ_symbol ?? p.symbol ?? '?';
+    const dryTag = p.is_dry_run ? ' <span style="color:var(--muted);font-size:9px">[DRY]</span>' : '';
+    const narr = p.narrative ? `<div class="pos-narrative">${p.narrative}</div>` : '';
+    return `<div class="pos-row">
+      <div class="pos-top">
+        <span class="pos-sym">${sym}${dryTag}</span>
+        <span class="pos-dir ${dir}">${dirLbl} ×${qty}</span>
+        ${pnlHtml}
+      </div>
+      <div class="pos-levels">
+        <span>Entry $${entry.toFixed(2)}</span>
+        <span>Stop $${stop.toFixed(2)}</span>
+        <span>T1 $${t1.toFixed(2)}</span>
+        <span>T2 $${t2.toFixed(2)}</span>
+      </div>
+      ${narr}
+    </div>`;
+  }).join('');
+}
