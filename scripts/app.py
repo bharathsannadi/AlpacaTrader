@@ -632,7 +632,13 @@ def on_login(data):
     account, ok, err = trader.init_clients(api_key, api_secret, paper=paper)
     if not ok:
         login_tracker.record_failure(ip)
-        security_log.warning(f"Failed Alpaca login from {ip}: {err}")
+        # Include the paper-mode flag + key prefix so we can diagnose
+        # "credentials work in curl but not in app" mismatches.
+        key_prefix = api_key[:6] if api_key else "?"
+        security_log.warning(
+            f"Failed Alpaca login from {ip}: paper={paper} key={key_prefix}... "
+            f"err={err}"
+        )
         socketio.emit("login_result", {
             "success": False,
             "error":   f"Login failed: {err[:120] if err else 'invalid credentials'}"

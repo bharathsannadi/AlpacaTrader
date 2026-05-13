@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# SPY Auto Trader launcher
+# ========================
+# This is the executable for the .app bundle. It locates the repo's
+# desktop.py script (always at the same absolute path) and launches it
+# under the project's venv Python. The repo can be on Desktop or elsewhere
+# — adjust REPO if you move the project.
+#
+# Logs go to ~/Library/Logs/SPYAutoTrader/launcher.log so you can debug
+# launch failures by Console.app or `tail` instead of seeing the dock icon
+# silently bounce and disappear.
+
+set -u
+
+REPO="/Users/bsannadi/Desktop/AlpacaTrader"
+PYTHON="$REPO/venv/bin/python3.11"
+DESKTOP="$REPO/desktop.py"
+
+LOG_DIR="$HOME/Library/Logs/SPYAutoTrader"
+LOG_FILE="$LOG_DIR/launcher.log"
+mkdir -p "$LOG_DIR"
+
+echo "" >> "$LOG_FILE"
+echo "=== Launch: $(date) ===" >> "$LOG_FILE"
+echo "REPO=$REPO" >> "$LOG_FILE"
+echo "PYTHON=$PYTHON" >> "$LOG_FILE"
+
+# Sanity checks — surface a Finder-visible error dialog instead of silently dying
+if [ ! -x "$PYTHON" ]; then
+    osascript -e 'display alert "SPY Auto Trader" message "Python venv not found at '"$PYTHON"'.\n\nRun:\n  python3.11 -m venv venv\n  venv/bin/pip install -r requirements.txt" as critical'
+    echo "FATAL: venv python missing at $PYTHON" >> "$LOG_FILE"
+    exit 1
+fi
+
+if [ ! -f "$DESKTOP" ]; then
+    osascript -e 'display alert "SPY Auto Trader" message "desktop.py not found at '"$DESKTOP"'."  as critical'
+    echo "FATAL: desktop.py missing at $DESKTOP" >> "$LOG_FILE"
+    exit 1
+fi
+
+cd "$REPO"
+exec "$PYTHON" "$DESKTOP" >> "$LOG_FILE" 2>&1

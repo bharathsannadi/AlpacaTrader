@@ -153,6 +153,53 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ---
 
+## 🎯 Strategy & Edge Validation — the single most important sub-project
+
+> **The most honest critique of this codebase:** the infrastructure is A+ but the strategy edge is unproven. We've added 18 filters without ever verifying the underlying signal has positive expectancy after fees and slippage. Every item below is about answering "does this thing actually make money, and how do we know?"
+
+### 🎯-P0 — Backtest harness (cannot validate edge without this)
+- [ ] **Build `backtest.py`** as a standalone file (no changes to webapp) that:
+  - Loads historical 5-min bars from yfinance or Polygon for SPY + watchlist over 3+ years
+  - Loads historical option chains (Polygon `/options/contracts/historical` or theta-data) — required for realistic fills
+  - Replays the existing `_add_indicators` + signal logic against each bar
+  - Simulates entry/exit at the historical mid + spread + fee
+  - Outputs: total return, Sharpe, Sortino, max DD, win rate, profit factor, expectancy, R-distribution, monthly equity curve
+- [ ] **Compare against a dumb baseline.** "Buy SPY 30-DTE ATM call at every >0.5% gap up." If our strategy can't beat a 5-line baseline by 30%+, we don't have edge — we have complexity.
+- [ ] **Walk-forward validation.** Train parameters on 2023, test on H1 2024. Refit on H1 2024, test on H2 2024. Repeat. Look for in-sample-only fits.
+- [ ] **Parameter sensitivity sweep.** What happens if VIX_MAX moves 25→35, IV_RANK_MAX 60→80, STOP_LOSS_PCT 30→50? Robust systems work in a *neighborhood* of params, fragile ones cliff-edge.
+
+### 🎯-P1 — Strategy structural changes (long-premium math is rough)
+- [ ] **Stop-loss on underlying price, not premium %.** Current: `stop_price = entry × 0.6` on the *option*. A 0.7% adverse move in SPY can fully stop you out — that's noise. Better: store `entry_underlying_px` on the position and trigger stop when underlying moves ≥ 1.0× ATR against you. Gives consistent dollar risk.
+- [ ] **A/B test debit spreads vs naked long options.** Same setups, same risk %, run for 30 days paper:
+  - Spread: buy ATM, sell 2 strikes OTM → half the theta, half the vega, defined max profit (~50%)
+  - Naked: current behavior
+  - If naked wins by enough to justify the extra theta/vega cost → keep. If not → switch.
+- [ ] **Pick a DTE side.** Current 7-14 DTE is incoherent — too much theta for swing, too much premium for scalp.
+  - Option A (true intraday): DTE_MIN = 0, DTE_MAX = 2. Use 0-1 DTE SPY for breakouts. Theta is brutal but holding period is hours.
+  - Option B (real swing): DTE_MIN = 21, DTE_MAX = 45. Less theta, more vega, hold 3-7 days. Pair with daily/weekly trend filter.
+- [ ] **Diversify the watchlist beyond mega-cap-tech.** SPY + AMZN + GOOG + MSFT + NVDA + META are >0.85 correlated. Sector cap doesn't fix this — they all crash together on a Fed surprise. Add: IWM (small-cap, lower correlation), XLE or XLU (defensive), and consider dropping one of the tech names.
+
+### 🎯-P2 — Track real performance, not vibes
+- [ ] **Daily equity curve persisted + visible.** Append day-end equity to `~/.spy_trader/equity_curve.json`. Display rolling 30-day equity + 30-day drawdown chart in dashboard. **Without this you cannot tell if you're getting better or worse.**
+- [ ] **Per-symbol P&L attribution.** Are we making money on SPY and losing it on NVDA? On bull signals vs bear? On ORB vs VWAP-momentum? Today's EOD review aggregates everything — split it.
+- [ ] **Benchmark vs SPY buy-and-hold.** Each month: did the bot beat just buying SPY? If not for 3 months running, the strategy needs surgery, not a new filter.
+- [ ] **Track avg slippage in bps and visualize trend.** The `entry_slippage_bps` field is captured but not surfaced anywhere — if it's drifting up, our fills are getting worse.
+- [ ] **Per-trade R-multiple distribution histogram.** Quick visual of whether winners >> losers. A "lots of small wins, occasional big loss" distribution is the failure mode of every long-vol strategy.
+
+### 🎯-P3 — Real-money readiness gates (don't trade real money until these pass)
+- [ ] **Minimum 60 days of paper trading** with the *current* parameters, no mid-stream changes. Daily Sharpe > 0.5 annualized.
+- [ ] **Drawdown discipline drill.** Simulate hitting `WEEKLY_LOSS_HALT_PCT` (currently 4%). Does the system actually halt? Does the user actually stop manually overriding? If you'd override yourself, you'll override the halt → don't go live.
+- [ ] **Tax / wash-sale awareness for live.** Options are short-term capital gains regardless of holding period. If running ≥6 figures real, this materially affects after-tax returns and may favor IRA/Roth wrapping.
+- [ ] **Margin call & PDT scenario tests** for sub-$25K accounts. The new `pdt_check` reading from Alpaca handles this — but verify by simulating 4+ day trades in one week on a paper sub-$25K account.
+
+### 🎯-Stretch — quantitative refinement
+- [ ] **Replace fixed filter thresholds with probability-of-success estimates.** Instead of "skip if IVR>70", use historical data to compute "for setups like this, IVR>70 trades have win rate X% — go/no-go based on expected value, not a hard cutoff."
+- [ ] **Bayesian parameter updating.** As ChromaDB accumulates closed trades, update prior beliefs about which indicator combinations work. (This is closer to what the LLM debate aspires to but isn't.)
+- [ ] **Regime detection.** Trend vs. chop vs. high-vol regimes call for different strategies. A regime classifier (HMM or simple range-rule) that switches strategy weights is what modern quant funds do.
+- [ ] **Reality check: is the LLM debate gate actually helping?** Compare 30 days of trades passed by debate vs. similar trades the gate rejected (use ChromaDB retrieval). If passed-rate isn't materially higher P&L → it's a $0.001-per-call placebo.
+
+---
+
 ## 📊 Chart View Upgrades — separate sub-project
 
 The current chart is functional but bare: candles + bull/bear arrow markers. To match what the engine actually trades on (VWAP, EMAs, ORB levels, IV, etc.) the chart needs significant additions. Grouped by priority below.
