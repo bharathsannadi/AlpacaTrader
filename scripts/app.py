@@ -1239,7 +1239,9 @@ def _build_exec_brief() -> None:
         if api_key:
             try:
                 import anthropic
-                client = anthropic.Anthropic(api_key=api_key)
+                import debate as _d; client = _d.get_anthropic_client()
+                if client is None:
+                    raise RuntimeError('no anthropic client')
                 prompt = (
                     "You are the co-pilot AI for an automated SPY options trading system. "
                     "Write ONE short paragraph (3-4 sentences max) summarising today's trading activity "

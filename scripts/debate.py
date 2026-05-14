@@ -63,6 +63,25 @@ def _load_kb_rules() -> str:
 
 _KB_RULES = _load_kb_rules()
 
+# ── Singleton Anthropic client (reused across all calls to avoid fd exhaustion) ─
+_anthropic_client = None
+
+def get_anthropic_client():
+    """Return a cached Anthropic client, creating it on first call."""
+    global _anthropic_client
+    if _anthropic_client is not None:
+        return _anthropic_client
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        import anthropic
+        _anthropic_client = anthropic.Anthropic(api_key=api_key)
+        return _anthropic_client
+    except Exception as e:
+        log.warning(f"debate: failed to create Anthropic client: {e}")
+        return None
+
 _KB_PREAMBLE = (
     "You have been trained on 28 professional options & trading books (Natenberg, Passarelli, "
     "Saliba, McMillan, Sinclair, Hull, Schwager, Brooks, Holmes/VSA). Apply these rules strictly:\n"
@@ -153,12 +172,9 @@ def run_debate(
         log.debug("debate: ANTHROPIC_API_KEY not set — skipping debate (gate OFF)")
         return True, 1.0, "no_api_key"
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-    except Exception as e:
-        log.warning(f"debate: failed to create Anthropic client: {e} — gate OFF")
-        return True, 1.0, f"client_init_failed: {e}"
+    client = get_anthropic_client()
+    if client is None:
+        return True, 1.0, "client_init_failed"
 
     setup = _fmt_indicators(symbol, direction, indicators)
     if news_summary:

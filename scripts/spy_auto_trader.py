@@ -4373,7 +4373,9 @@ def generate_signal_narrative(details: dict, debate_summary: str = "") -> str:
                 f"Stop ${stop:.2f} · T1 ${t1:.2f} · T2 ${t2:.2f}.")
     try:
         import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+        import debate as _d; client = _d.get_anthropic_client()
+        if client is None:
+            raise RuntimeError('no anthropic client')
         prompt = (
             "You are a trading co-pilot trained on Natenberg, Passarelli, and Saliba. "
             "Write ONE sentence (max 45 words) explaining why this options trade was taken, "
@@ -4461,7 +4463,9 @@ def eod_review(log_path: str, trades_today: list) -> str:
 
     try:
         import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+        import debate as _d; client = _d.get_anthropic_client()
+        if client is None:
+            raise RuntimeError('no anthropic client')
         prompt = (
             "You are a quantitative trading coach reviewing a day of automated options trading.\n"
             "Given the stats below, provide:\n"
