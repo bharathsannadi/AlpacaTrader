@@ -355,7 +355,7 @@ class _ETFormatter(logging.Formatter):
 
 _log_formatter = _ETFormatter(_LOG_FMT, datefmt=_LOG_DATEFMT)
 
-_main_handler = RotatingFileHandler("spy_trader.log", maxBytes=10_000_000, backupCount=5)
+_main_handler = RotatingFileHandler("auto_trader.log", maxBytes=10_000_000, backupCount=5)
 _main_handler.setFormatter(_log_formatter)
 _main_handler.setLevel(logging.INFO)
 
