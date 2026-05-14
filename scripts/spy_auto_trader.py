@@ -92,7 +92,7 @@ NEWS_FILTER_ENABLED = False   # toggled by app.py to mirror the UI checkbox
 # ── Config ────────────────────────────────────────────────────────────────────
 DRY_RUN         = False   # paper-trading is already simulated — no need for dry-run on top
 MAX_RISK_PCT    = 0.005   # 0.5% per trade — allows ~6 concurrent vs MAX_PORTFOLIO_RISK
-STOP_LOSS_PCT          = 0.40    # tighter stop — losers pay less per trade
+STOP_LOSS_PCT          = 0.50    # 50% premium stop per knowledge base (Natenberg/Saliba)
 PROFIT_TARGET          = 1.00    # +100% final target — let runners run
 PARTIAL_QTY_FRAC       = 0.25    # close 25% (not 50%) at the partial trigger
 PARTIAL_TRIGGER_PCT    = 0.50    # take a sliver off at +50%
@@ -113,7 +113,7 @@ PDT_REMAINING   = 3       # Only enforced if account.pattern_day_trader is True
                           # AND equity < $25K. Margin accounts ≥$25K are exempt.
 ET              = ZoneInfo("America/New_York")
 
-MORNING_START   = (9, 30)
+MORNING_START   = (9, 45)    # KB rule: no entries in first 15 min (9:30–9:45 = whipsaw zone)
 MORNING_END     = (10, 0)
 LUNCH_START     = (11, 30)
 LUNCH_END       = (13, 30)
@@ -2321,6 +2321,22 @@ def record_daily_entry() -> int:
         return _daily_entries_count
 
 
+# ── First-entry-time gate: no NEW entries before 9:45 ET ─────────────────────
+# First 15 min (9:30–9:45) are pure whipsaw — wide spreads, algos shaking out
+# retail, ORB not yet formed. KB rule: never enter in the first 15 min.
+FIRST_ENTRY_HOUR   = 9
+FIRST_ENTRY_MINUTE = 45
+
+def first_entry_time_ok() -> bool:
+    now = datetime.now(ET)
+    earliest = now.replace(hour=FIRST_ENTRY_HOUR, minute=FIRST_ENTRY_MINUTE,
+                           second=0, microsecond=0)
+    if now < earliest:
+        log.info(f"  Too early for entry ({now.strftime('%H:%M')} ET) — wait until 09:45 ET (KB: no entries in first 15 min)")
+        return False
+    return True
+
+
 # ── Last-entry-time gate: no NEW entries after 14:00 ET ──────────────────────
 # After ~14:00 ET, price action is increasingly dominated by closing-imbalance
 # flow rather than directional moves. Stop opening new positions; manage existing.
@@ -2858,8 +2874,9 @@ def run_session(session_name, session_end_hour, session_end_min,
                         time.sleep(60)
                     continue
 
-            # Daily loss circuit-breaker + profit lock + global cooldown + per-signal news
-            if (not daily_loss_check(acct_val) or not daily_profit_check(acct_val)
+            # Daily loss circuit-breaker + profit lock + global cooldown + per-signal news + time gates
+            if (not first_entry_time_ok() or not last_entry_time_ok()
+                    or not daily_loss_check(acct_val) or not daily_profit_check(acct_val)
                     or not global_cooldown_ok() or not news_check_ok(symbol)):
                 if stop_event:
                     stop_event.wait(timeout=60)
@@ -2877,6 +2894,8 @@ def run_session(session_name, session_end_hour, session_end_min,
                 )
             elif not sector_risk_check(symbol):
                 pass  # warning already logged inside sector_risk_check
+            elif position_exists_for_symbol_direction(symbol, direction):
+                log.info(f"  Duplicate guard: {symbol} {direction.upper()} position already open — skipping.")
             else:
                 expiry = target_expiry(symbol)
                 if not expiry:
@@ -3319,6 +3338,13 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                         time.sleep(60)
                     continue
 
+            if not first_entry_time_ok() or not last_entry_time_ok():
+                if stop_event:
+                    stop_event.wait(timeout=60)
+                else:
+                    time.sleep(60)
+                continue
+
             if not daily_loss_check(acct_val):
                 if stop_event:
                     stop_event.wait(timeout=60)
@@ -3403,6 +3429,8 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 pass  # warning already logged inside sector_risk_check
             elif not portfolio_delta_check(acct_val, intended_direction=direction):
                 pass  # warning already logged
+            elif position_exists_for_symbol_direction(symbol, direction):
+                log.info(f"  Duplicate guard: {symbol} {direction.upper()} position already open — skipping.")
             else:
                 expiry = target_expiry(symbol)
                 if not expiry:
