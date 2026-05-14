@@ -3061,7 +3061,8 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 
     acct_val = account_value()
     set_day_start_equity(acct_val)
-    reconcile_positions()   # recover any orphaned positions from a previous session/restart
+    _load_positions()       # restore full position state (entry, stop, target, narrative)
+    reconcile_positions()   # cross-check with Alpaca; add any positions missed by JSON
     log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * MAX_RISK_PCT:,.2f}  |  {symbol}")
     if prior_levels:
         log.info(
@@ -3496,24 +3497,23 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
 _open_positions: list[dict] = []
 _positions_lock = threading.Lock()
 
-# Persisted across restarts so dry-run positions survive and real-position
-# metadata (stop/target/opened_at) isn't lost when reconcile_positions reseeds
-# from Alpaca with default risk parameters.
-_POSITIONS_FILE = os.path.expanduser("~/.spy_trader/open_positions.json")
-
+# ── Position persistence ──────────────────────────────────────────────────────
+_SPY_DIR        = os.path.expanduser("~/.spy_trader")
+_POSITIONS_FILE = os.path.join(_SPY_DIR, "open_positions.json")
 
 def _save_positions() -> None:
-    """Atomic JSON dump of _open_positions to disk. Best-effort, never raises."""
+    """Persist _open_positions to disk (must be called while holding _positions_lock)."""
     try:
-        os.makedirs(os.path.dirname(_POSITIONS_FILE), exist_ok=True)
-        with _positions_lock:
-            snapshot = [dict(p) for p in _open_positions]
+        os.makedirs(_SPY_DIR, exist_ok=True)
         tmp = _POSITIONS_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(snapshot, f, default=str)
+        data = json.dumps(_open_positions, default=str)
+        with open(tmp, "w") as fh:
+            fh.write(data)
         os.replace(tmp, _POSITIONS_FILE)
     except Exception as e:
         log.warning(f"_save_positions failed: {e}")
+
+
 
 
 def _load_positions() -> int:

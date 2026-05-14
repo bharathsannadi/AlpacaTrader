@@ -221,8 +221,12 @@ def _parse_judge(raw: str) -> tuple[bool, float, str]:
     """
     import json, re
     try:
-        # Strip markdown fences if present
-        clean = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+        # Strip markdown fences if present (handles ```json\n...\n``` patterns)
+        clean = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+        # Extract first JSON object if there's surrounding text
+        m = re.search(r'\{.*\}', clean, re.DOTALL)
+        if m:
+            clean = m.group(0)
         data = json.loads(clean)
         proceed    = bool(data.get("proceed", True))
         confidence = float(data.get("confidence", 1.0))
