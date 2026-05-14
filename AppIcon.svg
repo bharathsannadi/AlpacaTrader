@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1040"/>
+      <stop offset="100%" style="stop-color:#2d1b6b"/>
+    </linearGradient>
+    <linearGradient id="bar1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff6eb4"/>
+      <stop offset="100%" style="stop-color:#c850c0"/>
+    </linearGradient>
+    <linearGradient id="bar2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff8c42"/>
+      <stop offset="100%" style="stop-color:#e040a0"/>
+    </linearGradient>
+    <linearGradient id="bar3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#a855f7"/>
+      <stop offset="100%" style="stop-color:#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="bar4" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff6eb4"/>
+      <stop offset="100%" style="stop-color:#9333ea"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background rounded rect -->
+  <rect width="512" height="512" rx="100" fill="url(#bg)"/>
+
+  <!-- Subtle inner glow -->
+  <rect width="512" height="512" rx="100" fill="none" stroke="#7c3aed" stroke-width="4" opacity="0.4"/>
+
+  <!-- Chart bars with glow -->
+  <g filter="url(#glow)">
+    <!-- Bar 1 (short) -->
+    <rect x="82" y="290" width="72" height="160" rx="18" fill="url(#bar3)" opacity="0.95"/>
+    <!-- Bar 2 (tallest) -->
+    <rect x="182" y="130" width="72" height="320" rx="18" fill="url(#bar1)" opacity="0.95"/>
+    <!-- Bar 3 (medium) -->
+    <rect x="282" y="200" width="72" height="250" rx="18" fill="url(#bar2)" opacity="0.95"/>
+    <!-- Bar 4 (tall) -->
+    <rect x="382" y="160" width="72" height="290" rx="18" fill="url(#bar4)" opacity="0.95"/>
+  </g>
+
+  <!-- Baseline -->
+  <rect x="60" y="458" width="392" height="6" rx="3" fill="#7c3aed" opacity="0.5"/>
+
+  <!-- Sparkle dots at bar tops -->
+  <circle cx="118" cy="280" r="8" fill="#ffffff" opacity="0.8"/>
+  <circle cx="218" cy="120" r="8" fill="#ffffff" opacity="0.8"/>
+  <circle cx="318" cy="190" r="8" fill="#ffffff" opacity="0.8"/>
+  <circle cx="418" cy="150" r="10" fill="#ffcce8" opacity="0.9"/>
+</svg>
