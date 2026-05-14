@@ -53,7 +53,7 @@ from security import (
     SECURITY_HEADERS,
 )
 
-load_dotenv()
+load_dotenv(override=True)
 ET = ZoneInfo("America/New_York")
 
 # ── Tunables (named constants over magic numbers) ─────────────────────────────
@@ -263,7 +263,7 @@ state = {
     "auto_schedule":        True,   # auto-start sessions at 9:30 ET on weekdays
     "news_filter_enabled":  True,   # veto session if bad headlines detected
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
-    "debate_enabled":       False,  # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
+    "debate_enabled":       True,   # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
     "auto_trade":           False,  # skip approval modal — orders placed automatically
 }
 
