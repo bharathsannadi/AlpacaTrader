@@ -3771,7 +3771,24 @@ def reconcile_positions() -> int:
 
         if added:
             log.warning(f"reconcile_positions: {added} orphaned position(s) recovered.")
-        else:
+
+        # ── Two-way sync: remove local positions Alpaca no longer holds ──────
+        alpaca_occs = {str(ap.symbol) for ap in option_positions}
+        with _positions_lock:
+            stale = [
+                p for p in _open_positions
+                if p["occ_symbol"] not in alpaca_occs and not p.get("is_dry_run")
+            ]
+            for p in stale:
+                _open_positions.remove(p)
+                log.warning(
+                    f"reconcile_positions: removed stale local position "
+                    f"{p['occ_symbol']} — not found in Alpaca (closed externally or expired)"
+                )
+            if stale:
+                _save_positions()
+
+        if not added and not stale:
             log.info("reconcile_positions: local positions match Alpaca.")
     except Exception as e:
         log.warning(f"reconcile_positions failed: {e}")
