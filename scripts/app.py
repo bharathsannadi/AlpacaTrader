@@ -439,8 +439,33 @@ def _cached_prior_levels(symbol: str = "SPY") -> dict:
 
 
 def refresh_prices() -> None:
-    # Refresh ALL symbols so the Data Freshness panel stays current for every tab,
-    # not just the active one. Each call also stamps price:SYM freshness.
+    """Fast path — refresh ONLY the active symbol (sub-second). Called inline
+    from login + UI refresh handlers. Other symbols' freshness is updated by
+    refresh_all_prices() running on the price_ticker background thread.
+    """
+    try:
+        price, chg_pct, session = trader.get_symbol_price(state["active_symbol"])
+        with _state_lock:
+            state["market_session"] = session
+            if price is not None:
+                state["spy_price"]      = price
+                state["spy_change_pct"] = chg_pct
+    except Exception as e:
+        log.warning(f"refresh_prices (price) failed: {e}")
+    try:
+        vix = _cached_vix()
+        if vix:
+            with _state_lock:
+                state["vix"] = round(vix, 2)
+    except Exception as e:
+        log.warning(f"refresh_prices (vix) failed: {e}")
+
+
+def refresh_all_prices() -> None:
+    """Background path — refresh ALL 6 symbols so Data Freshness panel stays
+    green for every tab. Slow (1-3s total) so this is only called from the
+    price_ticker thread, never from a request handler.
+    """
     active_sym = state["active_symbol"]
     for sym in _SYMBOLS_ORDERED:
         try:
@@ -452,14 +477,14 @@ def refresh_prices() -> None:
                         state["spy_price"]      = price
                         state["spy_change_pct"] = chg_pct
         except Exception as e:
-            log.warning(f"refresh_prices ({sym}) failed: {e}")
+            log.warning(f"refresh_all_prices ({sym}) failed: {e}")
     try:
         vix = _cached_vix()
         if vix:
             with _state_lock:
                 state["vix"] = round(vix, 2)
     except Exception as e:
-        log.warning(f"refresh_prices (vix) failed: {e}")
+        log.warning(f"refresh_all_prices (vix) failed: {e}")
 
 
 def price_ticker() -> None:
@@ -475,7 +500,12 @@ def price_ticker() -> None:
                               and state["streaming"]
                               and len(authenticated_sids) > 0)
             if should_run:
-                refresh_prices()
+                # Every tick: refresh active symbol fast.
+                # Every 3rd tick: also refresh other symbols (keeps Data Freshness green).
+                if tick % 3 == 0:
+                    refresh_all_prices()
+                else:
+                    refresh_prices()
                 if tick % ACCOUNT_REFRESH_TICKS == 0:
                     refresh_account()
                 emit_state()
