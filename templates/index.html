@@ -481,6 +481,13 @@
   }
   .btn-stop:hover   { background: var(--red); color: #fff; box-shadow: 0 4px 18px var(--red-glow); transform: translateY(-1px); }
   .btn-stop:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+  .btn-neutral {
+    padding: 8px 18px; border-radius: 8px; font-size: .85rem; font-weight: 600;
+    border: 1px solid var(--border); background: var(--card); color: var(--text-muted);
+    cursor: pointer; transition: all .2s;
+  }
+  .btn-neutral:hover   { background: var(--hover); color: var(--text); transform: translateY(-1px); }
+  .btn-neutral:disabled { opacity: .35; cursor: not-allowed; transform: none; }
 
   /* Automation toggles card */
   .auto-schedule-card { padding: 10px 14px; }
@@ -1168,6 +1175,7 @@
       <div class="btn-row">
         <button class="btn-run"  id="btn-start-all" onclick="startAllSessions()">▶▶ Start All</button>
         <button class="btn-stop" id="btn-stop-all"  onclick="stopAllSessions()">■■ Stop All</button>
+        <button class="btn-neutral" id="btn-sync-positions" onclick="syncPositions()" title="Pull live positions from Alpaca — no restart needed">⟳ Sync Positions</button>
       </div>
     </div>
 

@@ -1028,6 +1028,17 @@ def on_refresh():
     emit_state()
 
 
+@socketio.on("sync_positions")
+@require_auth
+def on_sync_positions():
+    """Force a two-way reconcile with Alpaca — picks up positions opened outside
+    this session and drops stale local entries. No restart needed."""
+    added = trader.reconcile_positions()
+    refresh_account()
+    emit_state()
+    emit("sync_positions_done", {"added": added})
+
+
 _VALID_INTERVALS  = frozenset({"1m", "5m", "15m", "30m", "1h", "1d"})
 _VALID_RANGES     = frozenset({"1D", "5D", "1M", "3M", "1Y", "5Y"})
 

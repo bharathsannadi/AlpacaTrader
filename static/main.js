@@ -456,6 +456,21 @@ function stopSession(sym) {
 function startAllSessions() { socket.emit("start_all_sessions"); }
 function stopAllSessions()  { socket.emit("stop_all_sessions");  }
 
+function syncPositions() {
+  const btn = document.getElementById("btn-sync-positions");
+  if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
+  socket.emit("sync_positions");
+}
+socket.on("sync_positions_done", (data) => {
+  const btn = document.getElementById("btn-sync-positions");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "⟳ Sync Positions";
+    const added = data && data.added ? data.added : 0;
+    if (added > 0) btn.title = `Last sync: +${added} position(s) added`;
+  }
+});
+
 function setSessionEnd() {
   socket.emit("set_session_end", {
     session_end: document.getElementById("session-end").value,
