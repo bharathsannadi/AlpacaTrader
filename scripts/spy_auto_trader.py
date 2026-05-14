@@ -3736,7 +3736,17 @@ def reconcile_positions() -> int:
     added = 0
     try:
         all_positions = TRADING_CLIENT.get_all_positions()
-        option_positions = [p for p in all_positions if str(getattr(p, "asset_class", "")).lower() == "us_option"]
+        # Detect options by asset_class OR by OCC symbol pattern (17-char alphanum with C/P)
+        # Alpaca sometimes returns asset_class as "us_option", "us_equity", or None for options
+        def _is_option(p) -> bool:
+            ac = str(getattr(p, "asset_class", "") or "").lower()
+            if "option" in ac:
+                return True
+            sym = str(p.symbol or "")
+            return bool(re.match(r'^[A-Z]{1,6}\d{6}[CP]\d{8}$', sym))
+        option_positions = [p for p in all_positions if _is_option(p)]
+        log.info(f"reconcile_positions: {len(all_positions)} total Alpaca positions, "
+                 f"{len(option_positions)} option(s): {[str(p.symbol) for p in option_positions]}")
 
         with _positions_lock:
             known_occs = {p["occ_symbol"] for p in _open_positions}
@@ -3754,7 +3764,7 @@ def reconcile_positions() -> int:
             # Best-guess direction from OCC symbol: find C or P before the 8-digit strike
             _m = re.search(r'([CP])\d{8}$', occ)
             direction = "bull" if (_m and _m.group(1) == "C") else "bear"
-            underlying = occ[:6].rstrip()
+            underlying = re.match(r'^([A-Z]+)', occ).group(1) if re.match(r'^([A-Z]+)', occ) else occ[:6].rstrip()
             # Orphaned Alpaca positions are by definition real (they exist at the broker).
             register_trade(occ, real_entry, qty, direction, underlying,
                            order_id=None, is_dry_run=False)
