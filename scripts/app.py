@@ -786,19 +786,10 @@ def _launch_session(sym: str) -> None:
             return
         filter_on = state["news_filter_enabled"]
 
-    # Portfolio risk cap: refuse to open a new session if total deployed risk
-    # across all open positions already meets or exceeds MAX_PORTFOLIO_RISK (3%).
-    acct = trader.account_value()
-    deployed = trader.deployed_risk_pct(acct)
-    if deployed >= trader.MAX_PORTFOLIO_RISK:
-        msg = (
-            f"{sym} session blocked — portfolio already at "
-            f"{deployed*100:.1f}% risk "
-            f"(cap={trader.MAX_PORTFOLIO_RISK*100:.0f}%)"
-        )
-        log.warning(msg)
-        socketio.emit("log", {"message": f"⚠ {msg}", "level": "WARNING"})
-        return
+    # Note: portfolio risk cap is enforced INSIDE the trade-entry logic
+    # (spy_auto_trader.all_day_session checks deployed_risk before placing
+    # new orders). We don't gate session startup itself, so sessions can
+    # still monitor existing positions even when at the risk cap.
 
     if filter_on:
         vetoed, reason = news_filter.check_news_sentiment(sym)
