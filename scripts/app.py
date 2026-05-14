@@ -863,15 +863,20 @@ def scheduler():
         market_open = (now.hour, now.minute) >= (sh, sm)
         market_open = market_open and (now.hour, now.minute) < (end_h, end_m)
 
-        # Fire if: exact 9:30 tick, OR market already open and haven't fired today
-        should_fire = (
-            market_open and session_fired_on != today
-        )
-        if should_fire:
-            session_fired_on = today
-            log.info("Auto-scheduler: starting all-day sessions for all symbols")
-            for sym in _SYMBOLS_ORDERED:
-                _launch_session(sym)
+        # Fire if: market is open. Launch any symbol that isn't already running.
+        # This handles the case where a symbol was blocked at first attempt
+        # (e.g. portfolio risk cap) and frees the scheduler to keep retrying.
+        if market_open:
+            with _state_lock:
+                missing = [s for s in _SYMBOLS_ORDERED if not state["sessions"].get(s, False)]
+            if missing:
+                if session_fired_on != today:
+                    session_fired_on = today
+                    log.info(f"Auto-scheduler: starting all-day sessions for {missing}")
+                else:
+                    log.info(f"Auto-scheduler: retrying missing sessions: {missing}")
+                for sym in missing:
+                    _launch_session(sym)
 
         # EOD learning review — fires once at 15:35 ET after all sessions have ended
         if (now.hour, now.minute) == (EOD_REVIEW_HOUR, EOD_REVIEW_MINUTE) and eod_fired_on != today:
