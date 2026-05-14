@@ -1,12 +1,14 @@
 # Options Trading Knowledge Base
 
-> Distilled from 28 professional options & trading books:
-> **Options Foundations:** Natenberg, Passarelli, Saliba, Smith, Lowell, Benklifa, Thomsett, Optionetics, Toghraie, McMillan
-> **Options Strategy & Pricing:** Sinclair (*Option Trading: Pricing & Volatility*), Ward (*Options And Options Trading*), Haug (*Complete Guide to Option Pricing Formulas*), Danes (*Options Trading Strategies*), Fontanills (*The Options Course*, *Trade Options Online*)
-> **Price Action & Volume:** Holmes (*The Complete Volume Spread Analysis System* — VSA/Wyckoff), Brooks (*Trading Price Action Trends*)
-> **Risk & Volatility:** Hull (*Options, Futures and Other Derivatives*), Schwager (*Complete Guide to the Futures Market*)
-> **Conservative/Practical:** Thomsett (*Options Trading for the Conservative Investor*), Benklifa (*Think Like an Option Trader*), Cofnas (*Trading Binary Options*)
-> **Beginner/Quick Reference:** OIC (*Option Strategies Quick Guide*), Danes (*Options Trading QuickStart Guide*)
+> Distilled from 30+ professional options & trading books in `/Users/bsannadi/Desktop/books/Trading/Options Trading`:
+> **Foundations:** Natenberg (*Option Volatility and Pricing*), Passarelli (*Trading Option Greeks*), Saliba (*Option Spread Strategies*, *Option Strategies for Stock/Index/Commodity*), Hull (*Options, Futures and Other Derivatives*)
+> **Pricing & Quant:** Sinclair (*Option Trading: Pricing & Volatility*), Haug (*Complete Guide to Option Pricing Formulas*), Statistics of Financial Markets (2013), Option Pricing Models (2007)
+> **Strategies & Spreads:** Lowell (*Get Rich With Options*), Smith (*The Complete Guide to Option Strategies*), Saliba (*Option Spread Strategies*), Levy (*Your Options Handbook*)
+> **Price Action & Volume:** Holmes (*Complete Volume Spread Analysis System* — VSA/Wyckoff), Brooks (*Trading Price Action Trends*)
+> **Put-Specific:** Thomsett (*Put Option Strategies for Smarter Trading*, *Options Trading for the Conservative Investor*)
+> **Risk & Discipline:** Fontanills (*The Options Course*, *Trade Options Online*), Benklifa (*Think Like an Option Trader*), Schwager (*Complete Guide to the Futures Market*)
+> **Specialty:** Cofnas (*Trading Binary Options* — sentiment/NFP analysis applicable to intraday bias)
+> **Quick reference:** OIC (*Option Strategies Quick Guide*), Danes (*Options Trading QuickStart*, *Options Trading Strategies*), Optionetics, Trading Options For Dummies
 >
 > **Purpose:** AI trading system reference for debate gate, signal evaluation, and trade approval.
 > **System trades:** SPY + AMZN, GOOG, MSFT, NVDA, META long calls/puts, 7-14 DTE, ORB/VWAP/EMA signals on 5-min bars.
@@ -560,6 +562,60 @@ Use this checklist before submitting any order. Each item should have a definiti
 
 ---
 
+## 15. Professional Trader Habits (Pro vs Retail)
+
+*Distilled from Levy, "Your Options Handbook" (2011) — "Top 10 Things Professionals Do That The Average Retail Trader Doesn't" + cross-referenced with Lowell, Saliba, Fontanills*
+
+### The 10 Habits
+
+| # | Habit | Why it matters for this system |
+|---|-------|--------------------------------|
+| 10 | **Hedge / diversify with beta, not just sectors** | SPY + AMZN/GOOG/MSFT/NVDA/META all have β > 1.1 to SPY. Six high-beta tech names are functionally one bet. Already a P1 TODO (#7 correlation cap). |
+| 9 | **Plan max downside dollar BEFORE the trade** | Already enforced: stop_loss% + risk_per_trade%. Debate prompt should explicitly cite both numbers. |
+| 8 | **Be a contrarian — buy the rumour, sell the news** | Earnings filter already vetoes pre-earnings entries. Post-earnings IV crush is the perfect "sell-on-news" context for credit spreads (we're long-only — known gap). |
+| 7 | **Sell/protect while the trend is still strong** | T1 partial close at +50% premium gain executes this rule. After T1, trailing stop is the protection-while-strong mechanism. |
+| 6 | **Learn from losses, not just profits** | EOD review covers winners + losers. The "stalled trade" time-stop (60 min in -15% to +10% range) is direct loss-discipline enforcement. |
+| 5 | **Be consistent in the types of issues you trade** | Watchlist is locked to 6 mega-caps + SPY. No random tickers, no penny stocks, no earnings plays. |
+| 4 | **Think three steps ahead — plan flat AND adverse scenarios, not just best case** | Trade approval modal must show: max_loss, stop, T1, T2. All four are pre-computed and emitted. |
+| 3 | **Trust yourself / your plan** | Auto-trade ON = trust the rules. Manual override available but should be rare. |
+| 2 | **Be adaptable, yet adept** | Knowledge base updates (this doc!) refine the plan. Don't trade strategies you don't understand. |
+| 1 | **Ask questions** | The bull/bear debate IS the "asking questions" gate — three Haiku calls explicitly poking holes in every signal. |
+
+### Levy's "Mechanic's Checklist" Philosophy
+- **Treat each trade like a pre-flight checklist.** Pilots, mechanics, surgeons all use checklists. Discretionary "feel" is the enemy.
+- **Each data point gets a pass/fail rating** with explicit tolerance. If any item fails → skip the trade, don't force it.
+- **"There will always be trades out there; don't force anything when it comes to your money."**
+- **Our checklist** (the 18 risk-control gates in [ARCHITECTURE.md §5](ARCHITECTURE.md)): news → earnings → IVR → VIX → lunch → chop → sector cap → PDT → daily loss → daily profit → portfolio risk → per-trade sizing → cooldown → whipsaw → daily entry cap → time of day → spread → debate. Every signal must pass ALL.
+
+### The Three Mantras
+1. **"Hope" is not a strategy.** Lowell (*Get Rich With Options*): "Are you in an investment based on hope?" If a trade requires hope, the math is wrong — re-check IVR, delta, theta budget.
+2. **"Insurance is cheaper before the accident."** Buy puts when complacent, not panicking. For long-call holders: trail stop while strong, don't wait for the reversal.
+3. **"It's the little things that make the biggest difference."** A 5 bps slippage tax × 200 trades/year = 1% annual drag. Track slippage. Tighter limit fills > marketable orders.
+
+---
+
+## 16. Put-Specific Strategy Rules
+
+*Distilled from Thomsett, "Put Option Strategies for Smarter Trading" (2010)*
+
+### When to Prefer Puts Over Calls
+- **Bearish weekly trend on underlying.** If 50-DMA crossing below 200-DMA + price below both, put bias is structural, not contrarian.
+- **VIX rising from < 15 toward 20+.** Volatility expansion days favor puts (markets fall faster than they rise).
+- **IV term structure in backwardation** (front-month IV > back-month IV) → put protection demand spiking = bearish institutional positioning.
+- **Negative gamma in dealer positioning** (rare retail data, but VIX > 25 + steepening skew is a proxy).
+
+### Put Entry Rules
+- **Don't buy puts after a 2%+ down day.** IV is already inflated; you're paying for fear that's already priced in. Wait for a relief bounce, then buy puts on rejection.
+- **Best put setups:** lower highs forming + below VWAP + EMA9 < EMA21 + RSI 40–55 (NOT < 30 — oversold = bounce coming).
+- **Put delta target same as calls:** 0.40–0.60. Deep OTM puts (delta < 0.25) are lottery tickets; deep ITM puts are stock-replacement positions.
+
+### Put Risk Asymmetry vs Calls
+- **Puts have a hard floor:** stock can only go to $0. Max profit on a put is bounded; max profit on a call is theoretically unbounded.
+- **Practical implication:** put profit targets should be more aggressive (close at +75–100%, don't wait for moonshots).
+- **Put theta is slightly worse than call theta** at the same strike due to put-call parity + interest rate effect. Subtract ~5% from call theta to estimate put theta on equivalent strikes.
+
+---
+
 ## Appendix: Quick Rules Summary
 
 | Rule | Threshold | Action |
@@ -592,3 +648,10 @@ Use this checklist before submitting any order. Each item should have a definiti
 | DTE and dividend | Delta > 0.85 within 3 days of ex-div | Do not hold long calls |
 | Scale out | +50% premium gain | Close half position unconditionally |
 | Consecutive losses | 3 in one day | No new entries rest of day |
+| Pro habit (Levy #9) | Plan max-loss $ before entry | Every signal must show stop + max-loss in approval |
+| Pro habit (Levy #7) | Sell/protect while strong | After T1, trail stop; don't wait for reversal |
+| Pro habit (Levy #4) | Plan 3 scenarios | Best-case, flat, adverse — all pre-computed (T2, time-stop, stop) |
+| Pro habit (Lowell) | "Hope" is not a strategy | If trade requires hope (deep OTM, IVR > 50%), reject |
+| Thomsett put rule | Don't buy puts after 2%+ down day | IV already inflated; wait for relief bounce |
+| Thomsett put rule | Put RSI sweet spot | 40–55, NOT < 30 (oversold = bounce risk) |
+| Thomsett put rule | Put profit target | +75–100% (more aggressive than calls — bounded upside) |

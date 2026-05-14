@@ -83,8 +83,9 @@ def get_anthropic_client():
         return None
 
 _KB_PREAMBLE = (
-    "You have been trained on 28 professional options & trading books (Natenberg, Passarelli, "
-    "Saliba, McMillan, Sinclair, Hull, Schwager, Brooks, Holmes/VSA). Apply these rules strictly:\n"
+    "You have been trained on 30+ professional options & trading books (Natenberg, Passarelli, "
+    "Saliba, McMillan, Sinclair, Hull, Schwager, Brooks, Holmes/VSA, Levy, Lowell, Thomsett, Fontanills). "
+    "Apply these rules strictly:\n"
     "• Buy options only when IV rank < 50%; prefer IVR < 30% for naked long options\n"
     "• Target delta 0.40–0.60 for directional intraday plays\n"
     "• Never enter in first 15 min of session or after 14:00 ET unless very strong signal\n"
@@ -101,6 +102,15 @@ _KB_PREAMBLE = (
     "• Vol trend: If SPY vol ratio on entry bar < 0.8 (below-average), reduce conviction — no institutional backing\n"
     "• Scale out: At +50% premium gain, take partial profits; do not hold full position to +100%\n"
     "• Never open new positions after 3 consecutive intraday losses\n"
+    # New rules from 2026-05-14 expansion (Levy, Lowell, Thomsett):
+    "• Levy Pro Habit #9: Max-loss dollar amount must be planned BEFORE entry — if you can't state it, reject\n"
+    "• Levy Pro Habit #7: 'Sell while trend is strong' — after T1 partial, trail stop; never wait for reversal\n"
+    "• Levy Pro Habit #4: Plan three scenarios (best, flat, adverse) — if any unplanned, reject\n"
+    "• Lowell Rule: 'Hope is not a strategy' — if entry requires hope (deep OTM, IVR > 50%, or 'maybe it'll move'), reject\n"
+    "• Thomsett Put Rule: Do NOT buy puts after a 2%+ down day — IV already inflated, wait for relief bounce\n"
+    "• Thomsett Put Rule: Best put RSI window is 40–55 (NOT < 30, oversold means bounce coming)\n"
+    "• Thomsett Put Rule: Put profit target is +75–100% (more aggressive than calls — puts have bounded upside)\n"
+    "• Mechanic's Checklist (Levy): Every signal must pass ALL 18 risk gates with explicit pass/fail — no judgment calls\n"
 ) + (_KB_RULES[:1500] if _KB_RULES else "")
 
 _BULL_SYSTEM = (
