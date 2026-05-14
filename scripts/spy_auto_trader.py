@@ -4347,9 +4347,10 @@ def generate_signal_narrative(details: dict, debate_summary: str = "") -> str:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
         prompt = (
-            "You are a trading co-pilot. Write ONE sentence (max 40 words) explaining "
-            "why this options trade was taken, what the edge is, and what to watch. "
-            "Be specific and direct. No preamble.\n\n"
+            "You are a trading co-pilot trained on Natenberg, Passarelli, and Saliba. "
+            "Write ONE sentence (max 45 words) explaining why this options trade was taken, "
+            "referencing the specific edge (Greeks, IV, pattern), and what the key risk is. "
+            "Be direct. No preamble.\n\n"
             f"Trade: {plain}"
         )
         resp = client.messages.create(

@@ -18,6 +18,7 @@ Usage:
 
 import os
 import logging
+from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -26,22 +27,81 @@ DEBATE_MIN_CONFIDENCE = 0.65   # suppress trade if judge confidence < this
 DEBATE_MODEL          = "claude-haiku-4-5-20251001"
 MAX_TOKENS            = 256    # keep responses tight
 
-_BULL_SYSTEM = """\
-You are a bullish options trader. Given a market setup, make the strongest \
-possible bull case in 3–4 sentences. Focus on momentum, support levels, and \
-risk/reward. Be specific and concise. End with: Confidence: X% (0–100)."""
+# ── Load knowledge base (distilled from 10 options trading books) ─────────────
+def _load_kb_rules() -> str:
+    """Load the key rules sections from knowledge_base.md for injection into prompts."""
+    kb_path = Path(__file__).parent.parent / "knowledge_base.md"
+    if not kb_path.exists():
+        return ""
+    try:
+        text = kb_path.read_text()
+        # Extract sections 2, 3, 7, 8 (IV rules, timing, mistakes, master rules)
+        # Keep it concise — only inject the checklist + key rules so prompts stay fast
+        sections = []
+        capture = False
+        for line in text.splitlines():
+            if any(h in line for h in [
+                "## 2. IV & Volatility Rules",
+                "## 3. Entry & Exit Timing",
+                "## 7. Common Mistakes",
+                "## 8. Key Rules from the Masters",
+                "## 9. Checklist Before Every Trade",
+            ]):
+                capture = True
+            elif line.startswith("## ") and capture:
+                # stop at next top-level section not in our list
+                if not any(h in line for h in [
+                    "## 2.", "## 3.", "## 7.", "## 8.", "## 9."
+                ]):
+                    capture = False
+            if capture:
+                sections.append(line)
+        extracted = "\n".join(sections[:200])  # cap at ~200 lines to stay within token budget
+        return extracted
+    except Exception:
+        return ""
 
-_BEAR_SYSTEM = """\
-You are a bearish options trader. Given a market setup, make the strongest \
-possible bear case in 3–4 sentences. Focus on resistance, overextension, and \
-downside risk. Be specific and concise. End with: Confidence: X% (0–100)."""
+_KB_RULES = _load_kb_rules()
 
-_JUDGE_SYSTEM = """\
-You are a neutral trading judge. Given a bull argument and a bear argument for \
-the same setup, decide whether to proceed with the proposed trade direction. \
-Respond with exactly this JSON (no markdown):
-{"proceed": true/false, "confidence": 0.00, "reason": "one sentence"}
-confidence is 0.0–1.0. Only set proceed=true if confidence >= 0.65."""
+_KB_PREAMBLE = (
+    "You have been trained on professional options trading books (Natenberg, Passarelli, "
+    "Saliba, McMillan). Apply these rules strictly:\n"
+    "• Buy options only when IV rank < 50%; prefer IVR < 30% for naked long options\n"
+    "• Target delta 0.40–0.60 for directional intraday plays\n"
+    "• Never enter in first 15 min of session or after 14:00 ET unless very strong signal\n"
+    "• 7 DTE options lose ~1/7 of remaining value per day — theta is the enemy; require fast moves\n"
+    "• Stop at 50% premium loss; never hold past 80% loss\n"
+    "• ORB breakout requires volume confirmation (vol ratio > 1.3) and close above/below ORB level\n"
+    "• VWAP cross alone is NOT sufficient — require EMA alignment + volume\n"
+    "• Avoid entries when RSI > 70 (overbought for calls) or RSI < 30 (oversold for puts)\n"
+) + (_KB_RULES[:1500] if _KB_RULES else "")
+
+_BULL_SYSTEM = (
+    "You are a bullish options trader with deep knowledge of Greeks and volatility. "
+    "Given a market setup, make the strongest possible bull case in 3–4 sentences. "
+    "Reference relevant Greeks (delta, gamma, theta) and IV conditions. "
+    "Flag any risks that would make the bull case weaker. "
+    "Be specific and concise. End with: Confidence: X% (0–100).\n\n"
+    + _KB_PREAMBLE
+)
+
+_BEAR_SYSTEM = (
+    "You are a bearish options trader with deep knowledge of Greeks and volatility. "
+    "Given a market setup, make the strongest possible bear case in 3–4 sentences. "
+    "Reference relevant risks (theta decay, IV crush, overextension). "
+    "Be specific and concise. End with: Confidence: X% (0–100).\n\n"
+    + _KB_PREAMBLE
+)
+
+_JUDGE_SYSTEM = (
+    "You are a neutral trading judge with expertise in options risk management. "
+    "Given a bull argument and a bear argument, decide whether to proceed with the proposed trade direction. "
+    "Apply professional options trading standards: Is IV reasonable? Is the setup clean? Is risk/reward justified? "
+    "Respond with exactly this JSON (no markdown):\n"
+    '{"proceed": true/false, "confidence": 0.00, "reason": "one sentence"}\n'
+    "confidence is 0.0–1.0. Only set proceed=true if confidence >= 0.65.\n\n"
+    + _KB_PREAMBLE
+)
 
 
 def _fmt_indicators(symbol: str, direction: str, indicators: dict) -> str:
