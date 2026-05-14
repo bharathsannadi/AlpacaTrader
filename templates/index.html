@@ -420,6 +420,33 @@
     overflow: hidden;
   }
 
+  /* ── View modes ── */
+  /* Chart view: hide left panel, chart fills full width */
+  body.view-chart .left-panel   { display: none !important; }
+  body.view-chart .panel-divider{ display: none !important; }
+  body.view-chart .dashboard    { grid-template-columns: 0 0 1fr; padding-left: var(--s-4); padding-right: var(--s-4); }
+  body.view-chart .right-panel  { padding-left: 0; }
+
+  /* Settings view: hide right panel, settings fills full width */
+  body.view-settings .right-panel  { display: none !important; }
+  body.view-settings .panel-divider{ display: none !important; }
+  body.view-settings .dashboard    { grid-template-columns: 1fr 0 0; }
+  body.view-settings .left-panel   {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-auto-rows: max-content;
+    gap: 12px;
+    overflow-y: auto;
+    padding-right: 0;
+    width: 100%;
+    align-content: start;
+  }
+  body.view-settings .left-panel .card { flex: unset; }
+
+  /* Settings tab style */
+  .settings-tab { color: var(--purple) !important; }
+  .settings-tab.active { background: rgba(167,139,250,0.08) !important; border-bottom-color: var(--purple) !important; text-shadow: 0 0 16px rgba(167,139,250,0.5) !important; }
+
   /* ── Panel resize divider (VS Code–style) ── */
   .panel-divider {
     width: 5px; align-self: stretch;
@@ -1003,6 +1030,8 @@
   <button class="symbol-tab"        data-symbol="META" onclick="setActiveSymbol('META')"><span class="tab-dot" id="tab-dot-META"></span>META</button>
   <div class="tab-divider"></div>
   <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
+  <div class="tab-divider"></div>
+  <button class="symbol-tab settings-tab" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
 </div>
 
 <!-- ── Exec Brief ─────────────────────────────────────────────────────────── -->
@@ -1189,6 +1218,36 @@
       </div>
     </div>
 
+    <!-- Last signal (moved from right panel) -->
+    <div id="signal-banner" class="card" data-card-id="signal"
+         style="background: var(--green-dim); border-color: var(--green); padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--green); display: none;">
+      <div class="sig-label" style="font-size:9px">Last Signal</div>
+      <span id="signal-text">—</span>
+    </div>
+
+    <!-- Log terminal (moved from right panel) -->
+    <div class="card terminal-card" data-card-id="log" style="grid-column: 1 / -1;">
+      <span class="drag-grip">⋮⋮</span>
+      <div class="terminal-header">
+        <div class="terminal-dots">
+          <div class="dot dot-red"></div>
+          <div class="dot dot-yellow"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <span class="terminal-title">spy_trader.log</span>
+        <div class="stream-controls">
+          <span class="stream-dot live" id="dot-stream"></span>
+          <button class="stream-btn start" id="btn-start-stream" onclick="startStream()" disabled>▶</button>
+          <button class="stream-btn stop"  id="btn-stop-stream"  onclick="stopStream()">■</button>
+          <button class="copy-btn-sm" id="btn-copy-log" onclick="copyLog()">Copy</button>
+          <button class="clear-btn" onclick="clearLog()">Clear</button>
+        </div>
+      </div>
+      <div id="log-output">
+        <span class="log-line log-INFO" style="color:#334155">Waiting for session to start...</span>
+      </div>
+    </div>
+
   </div>
 
   <!-- Panel resize handle -->
@@ -1262,7 +1321,6 @@
       </div>
     </div>
 
-    <!-- Last signal -->
     <!-- ── Backtest Panel ────────────────────────────────────────────── -->
     <div id="backtest-panel" class="card bt-panel" style="display:none">
       <div class="bt-header">
@@ -1328,34 +1386,6 @@
       <div id="bt-log" class="bt-log"></div>
     </div>
 
-    <div id="signal-banner" class="card" data-card-id="signal"
-         style="background: var(--green-dim); border-color: var(--green); padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--green); display: none;">
-      <div class="sig-label" style="font-size:9px">Last Signal</div>
-      <span id="signal-text">—</span>
-    </div>
-
-    <!-- Log terminal -->
-    <div class="card terminal-card" data-card-id="log">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="terminal-header">
-        <div class="terminal-dots">
-          <div class="dot dot-red"></div>
-          <div class="dot dot-yellow"></div>
-          <div class="dot dot-green"></div>
-        </div>
-        <span class="terminal-title">spy_trader.log</span>
-        <div class="stream-controls">
-          <span class="stream-dot live" id="dot-stream"></span>
-          <button class="stream-btn start" id="btn-start-stream" onclick="startStream()" disabled>▶</button>
-          <button class="stream-btn stop"  id="btn-stop-stream"  onclick="stopStream()">■</button>
-          <button class="copy-btn-sm" id="btn-copy-log" onclick="copyLog()">Copy</button>
-          <button class="clear-btn" onclick="clearLog()">Clear</button>
-        </div>
-      </div>
-      <div id="log-output">
-        <span class="log-line log-INFO" style="color:#334155">Waiting for session to start...</span>
-      </div>
-    </div>
   </div>
 </div>
 

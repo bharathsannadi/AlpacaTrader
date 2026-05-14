@@ -513,6 +513,9 @@ function setRisk() {
 
 // ── Enter key on login ────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // Default to chart view (SPY tab) on load
+  _setViewMode("chart");
+
   ["login-api-key", "login-api-secret"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
@@ -966,9 +969,22 @@ function resetZoom() {
 
 function refreshChart() { _fetchChart(true); }
 
+function _setViewMode(mode) {
+  // mode: "chart" | "settings"
+  document.body.classList.remove("view-chart", "view-settings");
+  document.body.classList.add("view-" + mode);
+}
+
 function setActiveSymbol(symbol) {
-  hideBacktest();   // switch back to chart view if backtest was open
+  _setViewMode("chart");
+  // hide backtest, show chart
+  const bp = document.getElementById("backtest-panel");
+  const cc = document.querySelector(".chart-card");
+  if (bp) bp.style.display = "none";
+  if (cc) cc.style.display = "";
   currentSymbol = symbol;
+  // deactivate all tabs, activate the clicked one
+  document.querySelectorAll(".symbol-tab, .settings-tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".symbol-tab").forEach(tab =>
     tab.classList.toggle("active", tab.dataset.symbol === symbol));
   setEl("ticker-symbol", symbol);
@@ -977,13 +993,20 @@ function setActiveSymbol(symbol) {
   _fetchChart(false);
 }
 
+function showSettings() {
+  _setViewMode("settings");
+  document.querySelectorAll(".symbol-tab, .bt-tab").forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-settings").classList.add("active");
+}
+
 // ── Backtest UI ───────────────────────────────────────────────────────────────
 let _btDays = 7;
 
 function showBacktest() {
+  _setViewMode("chart");
   document.getElementById("backtest-panel").style.display = "";
   document.querySelector(".chart-card").style.display = "none";
-  document.querySelectorAll(".symbol-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".symbol-tab, .settings-tab").forEach(t => t.classList.remove("active"));
   document.getElementById("tab-backtest").classList.add("active");
 }
 
