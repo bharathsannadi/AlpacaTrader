@@ -536,12 +536,13 @@ def position_monitor() -> None:
                 )
                 socketio.emit("log", {"message": msg, "level": "INFO"})
                 close_entry = {
-                    "symbol":     ev["symbol"],
-                    "direction":  ev["direction"],
-                    "pnl_pct":    ev["pnl_pct"],
-                    "reason":     ev["reason"],
-                    "time":       datetime.now(ET).strftime("%H:%M"),
-                    "is_partial": ev.get("is_partial", False),
+                    "symbol":       ev["symbol"],
+                    "direction":    ev["direction"],
+                    "pnl_pct":      ev["pnl_pct"],
+                    "reason":       ev["reason"],
+                    "time":         datetime.now(ET).strftime("%H:%M"),
+                    "is_partial":   ev.get("is_partial", False),
+                    "signal_class": ev.get("signal_class", "unknown"),
                 }
                 with _state_lock:
                     state["trades_today"].append(close_entry)

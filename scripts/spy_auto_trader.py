@@ -2349,7 +2349,7 @@ def last_entry_time_ok() -> bool:
 # ── Trade execution ───────────────────────────────────────────────────────────
 def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbol: str = "SPY",
                 indicators: dict = None, ask_price: float = 0.0,
-                underlying_price: float = 0.0):
+                underlying_price: float = 0.0, signal_class: str = "unknown"):
     symbol     = symbol.upper()
     opt_type   = option.get("type", "?")
     strike     = option.get("strike_price", "?")
@@ -2433,7 +2433,8 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
             )
             _narr = generate_signal_narrative(details)
             register_trade(occ_symbol, mid_price, contracts, direction, symbol,
-                           order_id=dry_id, is_dry_run=True, narrative=_narr)
+                           order_id=dry_id, is_dry_run=True, narrative=_narr,
+                           signal_class=signal_class)
             _notify_fill()  # refresh UI: deployed_risk_pct ticks even in dry-run
         return None
 
@@ -2496,7 +2497,8 @@ def place_trade(option, contracts, mid_price, direction, reason, atr=None, symbo
         )
         _narr = generate_signal_narrative(details)
         register_trade(occ_symbol, mid_price, contracts, direction, symbol,
-                       order_id=str(order.id), is_dry_run=False, narrative=_narr)
+                       order_id=str(order.id), is_dry_run=False, narrative=_narr,
+                       signal_class=signal_class)
         return order
     except Exception as e:
         log.error(f"Order failed: {e}")
@@ -2834,6 +2836,7 @@ def run_session(session_name, session_end_hour, session_end_min,
         )
 
         direction, reason = evaluate_fn(bar, prev_bar, df)
+        signal_class = classify_signal(evaluate_fn.__name__, reason or "")
 
         if direction:
             # IV Rank gate — skip buying when options are too expensive
@@ -2911,7 +2914,7 @@ def run_session(session_name, session_end_hour, session_end_min,
                             if contracts > 0:
                                 place_trade(option, contracts, mid, direction, reason, atr, symbol,
                                             indicators=indicators_snapshot, ask_price=ask,
-                                            underlying_price=current)
+                                            underlying_price=current, signal_class=signal_class)
                                 _record_global_trade()
                                 traded = True
                         else:
@@ -3214,21 +3217,26 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
         # Phase-based evaluator selection
         is_opening_phase = (now.hour == 9) or (now.hour == 10 and now.minute < 30)
         direction = reason = None
+        signal_class = "unknown"
 
         if is_opening_phase and or_high and or_low:
             or_width = or_high - or_low
             # ATR-relative width gate: range must be >= MIN_ORB_ATR_MULT * ATR
             if atr and or_width >= MIN_ORB_ATR_MULT * atr:
                 direction, reason = evaluate_orb(bar, prev_bar, or_high, or_low, df)
+                if direction: signal_class = "orb_breakout"
             elif not atr and (or_width / or_low) >= 0.0005:
                 # Fallback when ATR unavailable: tiny absolute floor
                 direction, reason = evaluate_orb(bar, prev_bar, or_high, or_low, df)
+                if direction: signal_class = "orb_breakout"
 
         if not direction and gap_pct and gap_dir:
             direction, reason = evaluate_gap_fade(bar, gap_pct, gap_dir, df)
+            if direction: signal_class = "gap_fade"
 
         if not direction:
             direction, reason = evaluate_vwap_momentum(bar, prev_bar, df)
+            if direction: signal_class = "vwap_momentum"
 
         # Last lane: trend-continuation by score + mean-reversion at extremes.
         # Catches the setups the strict gates above filter out (mid-day flow,
@@ -3236,6 +3244,9 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
         # the downstream gate stack (cooldown, IV rank, sector cap, etc).
         if not direction:
             direction, reason = evaluate_trend_continuation(bar, prev_bar, df)
+            if direction:
+                # Same evaluator returns both lanes — distinguish by reason prefix
+                signal_class = "mean_rev" if (reason or "").startswith("Mean-rev") else "trend_cont"
 
         if direction:
             # Cool-down: 5 min normally; 20 min after a stop hit
@@ -3452,7 +3463,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                                     order = place_trade(
                                         option, contracts, mid, direction, reason, atr, symbol,
                                         indicators=indicators_snapshot, ask_price=ask,
-                                        underlying_price=current,
+                                        underlying_price=current, signal_class=signal_class,
                                     )
                                 except Exception as _place_exc:
                                     log.error(f"place_trade raised unexpectedly: {_place_exc}", exc_info=True)
@@ -3549,6 +3560,8 @@ def _load_positions() -> int:
                 p.setdefault("close_client_id", None)
                 p.setdefault("partial_done", False)
                 p.setdefault("peak_mid_after_t1", 0.0)
+                p.setdefault("narrative", "")
+                p.setdefault("signal_class", "unknown")  # legacy positions before signal-class attribution
                 _open_positions.append(p)
                 known.add(p["occ_symbol"])
                 loaded += 1
@@ -3584,9 +3597,31 @@ def get_last_stop(symbol: str) -> Optional[dict]:
         return _last_stop.get(symbol.upper())
 
 
+def classify_signal(evaluator_name: str, reason: str = "") -> str:
+    """Map an evaluator function name + reason string to a signal_class tag.
+
+    See knowledge_base.md §17c (Cofnas's 11 categories) for the taxonomy.
+    Used by register_trade() to persist per-trade strategy attribution so
+    EOD review can split P&L by signal class.
+    """
+    if evaluator_name == "evaluate_orb":
+        return "orb_breakout"
+    if evaluator_name == "evaluate_gap_fade":
+        return "gap_fade"
+    if evaluator_name == "evaluate_vwap_momentum":
+        return "vwap_momentum"
+    if evaluator_name == "evaluate_trend_continuation":
+        # This evaluator has two lanes — distinguish by reason prefix.
+        if reason.startswith("Mean-rev"):
+            return "mean_rev"
+        return "trend_cont"
+    return "unknown"
+
+
 def register_trade(occ_symbol: str, entry_price: float, contracts: int,
                    direction: str, symbol: str, order_id: Optional[str] = None,
-                   is_dry_run: bool = False, narrative: str = "") -> None:
+                   is_dry_run: bool = False, narrative: str = "",
+                   signal_class: str = "unknown") -> None:
     """Register a new position for the monitor after an order is submitted.
 
     Stop/target levels follow the swing-style risk profile:
@@ -3594,6 +3629,15 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
       partial   = entry × (1 + PARTIAL_TRIGGER_PCT)      — close PARTIAL_QTY_FRAC here
       target    = entry × (1 + PROFIT_TARGET)            — close remainder
       breakeven = stop is moved to entry once pnl_frac >= BREAKEVEN_TRIGGER_PCT
+
+    signal_class taxonomy (Cofnas-mapped — see knowledge_base.md §17c):
+      "orb_breakout"   — first 30 min ORB break with volume confirmation
+      "gap_fade"       — gap > GAP_THRESHOLD, fade back to VWAP
+      "vwap_momentum"  — price above/below VWAP with EMA alignment + volume
+      "trend_cont"     — multi-factor score (EMA stacking + RSI + MACD)
+      "mean_rev"       — extreme RSI bounce (oversold/overbought reversal)
+      "reconciled"     — orphan position recovered from Alpaca (no original signal)
+      "unknown"        — caller didn't tag (legacy / dry-run / etc.)
     """
     stop_price = round(entry_price * (1 - STOP_LOSS_PCT), 2)
     tgt_50     = round(entry_price * (1 + PARTIAL_TRIGGER_PCT), 2)
@@ -3618,6 +3662,7 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
         "is_dry_run":      is_dry_run,  # captured at entry — close path branches on this
         "peak_mid_after_t1": 0.0,  # high-water mark for the trailing stop
         "narrative":       narrative,  # LLM-generated rationale for this entry
+        "signal_class":    signal_class,  # for per-strategy P&L attribution in EOD
     }
     with _positions_lock:
         _open_positions.append(pos)
@@ -3626,7 +3671,8 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
         f"Position registered: {occ_symbol} {contracts}x  "
         f"entry=${entry_price:.2f}  stop=${stop_price:.2f}  "
         f"T1=${tgt_50:.2f} (+{int(PARTIAL_TRIGGER_PCT*100)}% close {int(PARTIAL_QTY_FRAC*100)}%)  "
-        f"T2=${tgt_75:.2f} (+{int(PROFIT_TARGET*100)}%)"
+        f"T2=${tgt_75:.2f} (+{int(PROFIT_TARGET*100)}%)  "
+        f"class={signal_class}"
     )
 
 
@@ -3767,7 +3813,7 @@ def reconcile_positions() -> int:
             underlying = re.match(r'^([A-Z]+)', occ).group(1) if re.match(r'^([A-Z]+)', occ) else occ[:6].rstrip()
             # Orphaned Alpaca positions are by definition real (they exist at the broker).
             register_trade(occ, real_entry, qty, direction, underlying,
-                           order_id=None, is_dry_run=False)
+                           order_id=None, is_dry_run=False, signal_class="reconciled")
             entry_note = (
                 f"@ ${real_entry:.2f}" if real_entry == fallback_price
                 else f"@ ${real_entry:.2f} (avg shown ${fallback_price:.2f})"
@@ -4279,6 +4325,7 @@ def check_positions() -> list[dict]:
             "order_id":    pos.get("order_id"),
             "opened_at":   pos.get("opened_at"),
             "slippage_bps": pos.get("entry_slippage_bps"),  # captured at entry, if real
+            "signal_class": pos.get("signal_class", "unknown"),  # for per-strategy P&L attribution
         })
 
     return events
@@ -4504,6 +4551,22 @@ def eod_review(log_path: str, trades_today: list) -> str:
         else:
             streak = 0
 
+    # Per-signal-class attribution (Cofnas §17c) — which strategies actually made money
+    by_class: dict[str, list[float]] = {}
+    for t in closed:
+        cls = t.get("signal_class", "unknown")
+        by_class.setdefault(cls, []).append(t.get("pnl_pct", 0))
+    class_lines: list[str] = []
+    for cls, pnls in sorted(by_class.items(), key=lambda kv: -sum(kv[1])):
+        n = len(pnls)
+        wins_n = sum(1 for p in pnls if p > 0)
+        wr = (wins_n / n * 100) if n else 0
+        total_pnl = sum(pnls)
+        avg = total_pnl / n if n else 0
+        class_lines.append(
+            f"  {cls:15} n={n:2}  win={wr:4.0f}%  total={total_pnl:+6.1f}%  avg={avg:+5.1f}%"
+        )
+
     pf_str = "∞" if profit_factor == float("inf") else f"{profit_factor:.2f}"
     summary_lines = [
         f"Signals fired: {counts['signal']}",
@@ -4515,6 +4578,9 @@ def eod_review(log_path: str, trades_today: list) -> str:
         f"Win rate: {win_rate:.1f}%  |  Profit factor: {pf_str}  |  Expectancy: {expectancy:+.2f}% / trade  |  Avg R: {avg_r:+.2f}R",
         f"Max consecutive losses: {max_streak}  |  Gross wins: {gross_wins:+.1f}%  |  Gross losses: -{gross_loss:.1f}%",
     ]
+    if class_lines:
+        summary_lines.append("Per-signal-class P&L (best → worst):")
+        summary_lines.extend(class_lines)
     if trades_today:
         for t in trades_today:
             if not t.get("is_partial"):
