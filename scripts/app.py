@@ -243,7 +243,7 @@ state = {
     # Per-symbol running state (tabs are chart-only; any symbol can trade anytime)
     "sessions":        {s: False for s in _SYMBOLS_ORDERED},
     "streaming":       True,         # Live price + log streaming
-    "dry_run":         True,
+    "dry_run":         False,  # paper account = real orders
     "paper_mode":      True,         # Alpaca paper vs live
     "active_symbol":   "SPY",        # currently selected chart tab
     "session_end":     "15:45",      # all-day session end time (HH:MM ET)
@@ -264,7 +264,7 @@ state = {
     "news_filter_enabled":  True,   # veto session if bad headlines detected
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
     "debate_enabled":       True,   # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
-    "auto_trade":           False,  # skip approval modal — orders placed automatically
+    "auto_trade":           True,   # skip approval modal — auto-execute on paper account
 }
 
 # Per-symbol session threads and stop events
@@ -659,8 +659,10 @@ def on_login(data):
     login_tracker.record_success(ip)
     security_log.info(f"Successful Alpaca login from {ip} (paper={paper})")
     trader.init_memory(enabled=state.get("trade_memory_enabled", True))
-    trader.init_debate(enabled=state.get("debate_enabled", False))
+    trader.init_debate(enabled=state.get("debate_enabled", True))
     trader.init_news_filter(enabled=state.get("news_filter_enabled", True))
+    trader.DRY_RUN = state.get("dry_run", False)
+    trade_approval.auto_trade = state.get("auto_trade", True)
     refresh_account()
     refresh_prices()
     socketio.emit("login_result", {"success": True})
@@ -848,12 +850,13 @@ LOG_PATH = os.path.join(os.path.dirname(__file__), "spy_trader.log")
 
 def scheduler():
     """Background task: auto-start all-day sessions at 9:30 ET on weekdays,
-    and fire end-of-day learning review at 15:35 ET."""
+    and fire end-of-day learning review at 15:35 ET.
+    Also fires immediately if market is already open when user logs in."""
     session_fired_on = None
     eod_fired_on     = None
 
     while True:
-        socketio.sleep(30)
+        socketio.sleep(15)
         now = datetime.now(ET)
 
         if now.weekday() > 4:   # skip weekends
@@ -864,8 +867,16 @@ def scheduler():
                 continue
 
         today = now.date()
-        sh, sm = SESSION_AUTO_START
-        if (now.hour, now.minute) == (sh, sm) and session_fired_on != today:
+        sh, sm = SESSION_AUTO_START  # 9:30 ET
+        end_h, end_m = 15, 45        # sessions end at 15:45 ET
+        market_open = (now.hour, now.minute) >= (sh, sm)
+        market_open = market_open and (now.hour, now.minute) < (end_h, end_m)
+
+        # Fire if: exact 9:30 tick, OR market already open and haven't fired today
+        should_fire = (
+            market_open and session_fired_on != today
+        )
+        if should_fire:
             session_fired_on = today
             log.info("Auto-scheduler: starting all-day sessions for all symbols")
             for sym in _SYMBOLS_ORDERED:

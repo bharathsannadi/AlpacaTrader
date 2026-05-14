@@ -44,7 +44,7 @@ from alpaca.data.requests            import (
 )
 from alpaca.data.timeframe           import TimeFrame, TimeFrameUnit
 from alpaca.trading.requests         import (
-    GetOptionContractsRequest, LimitOrderRequest,
+    GetOptionContractsRequest, LimitOrderRequest, ClosePositionRequest,
 )
 from alpaca.trading.enums            import (
     OrderSide, TimeInForce, OrderType, ContractType, AssetStatus,
@@ -3888,18 +3888,35 @@ def _close_option_position(occ_symbol: str, qty: int, reason: str,
             return False
         # Sell at bid to prioritise execution; fall back to mid if bid=0
         limit = round(max(bid, 0.01), 2) if bid > 0 else round(max((bid + ask) / 2, 0.01), 2)
-        order_kwargs = dict(
-            symbol        = occ_symbol,
-            qty           = qty,
-            side          = OrderSide.SELL,
-            type          = OrderType.LIMIT,
-            time_in_force = TimeInForce.DAY,   # IOC not supported for Alpaca options
-            limit_price   = limit,
-        )
-        if client_order_id:
-            order_kwargs["client_order_id"] = client_order_id
-        order = TRADING_CLIENT.submit_order(LimitOrderRequest(**order_kwargs))
-        log.info(f"CLOSE [{reason}]: {qty}x {occ_symbol} @ ${limit:.2f}  id={order.id}")
+        # Use close_position for full qty; fall back to limit sell for partials.
+        # close_position avoids "uncovered option" rejection because Alpaca knows
+        # it's closing an existing long, not opening a short.
+        try:
+            all_pos = TRADING_CLIENT.get_all_positions()
+            held_qty = next(
+                (int(float(p.qty)) for p in all_pos if str(p.symbol) == occ_symbol), 0
+            )
+        except Exception:
+            held_qty = qty  # fallback: assume we hold what we're trying to close
+
+        if qty >= held_qty:
+            # Full close — use the dedicated endpoint
+            order = TRADING_CLIENT.close_position(occ_symbol)
+            log.info(f"CLOSE [{reason}]: {qty}x {occ_symbol} (full)  id={order.id}")
+        else:
+            # Partial close — sell limit with explicit qty
+            order_kwargs = dict(
+                symbol        = occ_symbol,
+                qty           = qty,
+                side          = OrderSide.SELL,
+                type          = OrderType.LIMIT,
+                time_in_force = TimeInForce.DAY,
+                limit_price   = limit,
+            )
+            if client_order_id:
+                order_kwargs["client_order_id"] = client_order_id
+            order = TRADING_CLIENT.submit_order(LimitOrderRequest(**order_kwargs))
+            log.info(f"CLOSE PARTIAL [{reason}]: {qty}x {occ_symbol} @ ${limit:.2f}  id={order.id}")
         return True
     except Exception as e:
         log.error(f"_close_option_position({occ_symbol}): {e}")
@@ -4175,13 +4192,38 @@ def check_positions() -> list[dict]:
                         pos["close_client_id"] = None
                 close_succeeded = True
             else:
-                # Order failed — roll back flags so the next monitor cycle can retry
-                # using the SAME client_order_id (idempotent retry).
+                # Order failed — roll back flags so the next monitor cycle can retry.
+                # After 5 consecutive failures, accept that Alpaca can't close it and
+                # check if Alpaca has already removed the position on their side.
                 with _positions_lock:
-                    if is_partial:
-                        pos["partial_done"] = False
+                    fail_count = pos.get("close_fail_count", 0) + 1
+                    pos["close_fail_count"] = fail_count
+                    if fail_count >= 5:
+                        log.warning(
+                            f"  {occ}: {fail_count} consecutive close failures — "
+                            f"checking Alpaca for position status"
+                        )
+                        # Check if Alpaca still holds it; if not, remove locally
+                        try:
+                            all_pos = TRADING_CLIENT.get_all_positions() if TRADING_CLIENT else []
+                            still_held = any(str(p.symbol) == occ for p in all_pos)
+                        except Exception:
+                            still_held = True
+                        if not still_held:
+                            log.warning(f"  {occ}: not found in Alpaca — removing from local tracking")
+                            _open_positions.remove(pos) if pos in _open_positions else None
+                            _save_positions()
+                        else:
+                            pos["close_fail_count"] = 0  # reset and keep retrying
+                            if is_partial:
+                                pos["partial_done"] = False
+                            else:
+                                pos["close_attempted"] = False
                     else:
-                        pos["close_attempted"] = False
+                        if is_partial:
+                            pos["partial_done"] = False
+                        else:
+                            pos["close_attempted"] = False
 
         if close_succeeded:
             # Refresh UI account stats post-close (entry was already refreshed at fill).
