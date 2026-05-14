@@ -233,11 +233,11 @@ on close: update_outcome to ChromaDB + emit close event to UI + refresh account
 
 | What | Where | Persisted? |
 |---|---|---|
-| Open positions | `_open_positions` (in-memory) | ❌ — re-derived from Alpaca on restart via `reconcile_positions` (real only, dry-runs lost) |
+| Open positions | `_open_positions` (in-memory) + `~/.spy_trader/open_positions.json` | ✅ — atomic tmp+rename on every mutation; loaded before two-way Alpaca reconcile on restart |
 | Trade memory (past trades + outcomes) | ChromaDB on disk (`~/.spy_trader/memory`) | ✅ |
 | Login session | Flask session cookie | ✅ (until expiry) |
 | Day-start equity / halt flags | Module globals | ❌ — resets on restart |
-| Logs | `spy_trader.log`, `security.log` (current dir) | ✅ (no rotation) |
+| Logs | `auto_trader.log` (main), `errors.log` (ERROR-only), `security.log` | ✅ — RotatingFileHandler 10MB×5 main, 5MB×5 errors |
 | API keys | Provided via UI on login or `.env` | `.env` only if used |
 
 ---
@@ -257,25 +257,47 @@ on close: update_outcome to ChromaDB + emit close event to UI + refresh account
 ## 11. Observability
 
 - **Dashboard:** live equity, buying power, deployed risk %, open positions table, signal feed, chart, trade log.
-- **EOD Review:** auto-runs after `EVENING_END`. Parses today's log + closed trades, computes win/loss stats, calls Claude Haiku for "what worked / what didn't / one parameter to tune" (falls back to plain stats if no API key).
-- **Logs:** `spy_trader.log` (engine + Flask), `security.log` (auth events).
+- **EOD Review:** auto-runs at `EOD_REVIEW_HOUR:EOD_REVIEW_MINUTE` (default 15:35 ET, after the All Day Session 15:45 cutoff). Parses today's log + closed trades, computes win/loss stats, calls Claude Haiku for "what worked / what didn't / one parameter to tune" (falls back to plain stats if no API key).
+- **Logs:** `auto_trader.log` (engine + Flask, RotatingFileHandler 10MB×5), `errors.log` (ERROR-only, 5MB×5), `security.log` (auth events). All timestamps in ET.
+- **Webhook alerts:** ERROR-level events posted to `$ALERT_WEBHOOK_URL` (Slack/Discord JSON) with 60s rate-limit. Set the env var to enable.
 
 ---
 
 ## 12. What's NOT in the system (known gaps)
 
-See [TODO.md](TODO.md) for the full prioritized list. Highlights:
+See [TODO.md](TODO.md) for the full prioritized list. Current highlights (post-2026-05-14):
 - No FOMC/CPI macro-event blackout (earnings only)
 - No Friday/expiry-week gamma throttle
 - No trailing stop after T1 partial (static T2 only)
 - No correlation-adjusted portfolio delta cap
-- Commissions/fees not in P&L calc
-- No log rotation, no auto-restart supervision, no kill switch
-- Dry-run positions not persisted across restart
+- `MAX_PORTFOLIO_RISK` not exposed in Settings UI (hard-coded 3%)
+- No process supervision / auto-restart
+- Strategy edge unproven (backtest harness exists but full validation pending)
+
+✅ Recently shipped (no longer gaps):
+- Position persistence across restart (JSON + two-way Alpaca reconcile)
+- Manual `⟳ Sync Positions` button (UI-driven reconcile)
+- Kill switch / `flatten_all` socket event
+- Log rotation + ET timestamps + separate `errors.log`
+- ERROR webhook alerts (Slack/Discord)
+- Dry-run learning loop into ChromaDB
+- Native macOS `.app` bundle with custom icon
+
+## 13. UI / View modes (post-2026-05-14)
+
+Tab-based layout with three view modes selected via body classes:
+
+| View | Body class | Active tab | What's shown |
+|---|---|---|---|
+| Settings | `view-settings` | ⚙ Settings (default on load) | Config, Automation toggles, Data Freshness, Session controls, Open Positions — CSS grid (auto-fill 300px columns) |
+| Chart   | `view-chart`    | SPY/AMZN/GOOG/MSFT/NVDA/META or 📊 Backtest | Full-screen chart (or backtest panel). No sidebar. |
+| Log     | `view-log`      | 📋 Log | Full-screen `auto_trader.log` terminal with live socket stream |
+
+`_setViewMode(mode)` in `static/main.js` toggles the body class. CSS in `templates/index.html` hides/shows the appropriate panel via `display: none !important`. No reflow JS — pure CSS view switching.
 
 ---
 
-## 13. Glossary (for non-trader reviewers)
+## 14. Glossary (for non-trader reviewers)
 
 - **OCC symbol** — the standard option ticker format, e.g. `SPY260519P00737000` = SPY put, May 19 2026 expiry, strike $737.000.
 - **ORB** — Opening Range Breakout. Trade the first breakout after the first N minutes' high/low form.

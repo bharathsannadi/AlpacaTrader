@@ -90,45 +90,41 @@ Bold rows = highest leverage areas.
 
 ## 🔴 P0 — Real bugs / data-integrity gaps
 
-### 1. Dry-run trades all share `order_id="DRY_RUN"` (collision)
-- **Where:** [scripts/spy_auto_trader.py:1897](scripts/spy_auto_trader.py:1897)
-- **Problem:** Hard-coded string. Multiple concurrent dry-runs collide on the same key.
-- **Fix:** `f"DRY_{occ_symbol}_{int(time.time()*1000)}"`.
+> **All P0 items below shipped between 2026-05-12 and 2026-05-14.** Keeping the entries for history.
 
-### 2. Dry-run entries not recorded in ChromaDB
-- **Where:** [scripts/spy_auto_trader.py:1892-1899](scripts/spy_auto_trader.py:1892) vs [1952](scripts/spy_auto_trader.py:1952)
-- **Problem:** `TRADE_MEMORY.record()` is real-trade-only. `update_outcome()` for dry-runs silently no-ops — learning loop is dormant during dry-run mode.
-- **Fix:** Add `TRADE_MEMORY.record(..., is_dry_run=True)` in the dry-run branch. Update `retrieve_similar()` to filter dry-runs out by default (keep dataset clean for live), but expose them for backtesting / what-if review.
+### ✅ 1. Dry-run trades all share `order_id="DRY_RUN"` (collision) — SHIPPED
+- **Fix:** `f"DRY_{occ_symbol}_{int(time.time()*1000)}"` in `register_trade`.
 
-### 3. Dry-run positions vanish on app restart
-- **Where:** [scripts/spy_auto_trader.py:reconcile_positions](scripts/spy_auto_trader.py:3050)
-- **Problem:** `reconcile_positions()` queries Alpaca for orphaned positions. Dry-runs don't exist at Alpaca → wiped clean on restart. If we restarted the app today after the 09:15 SPY 737P fired, all tracking would be lost.
-- **Fix:** Persist `_open_positions` to a JSON file on every change; reload on startup; reconcile real ones with Alpaca + retain dry-runs from the JSON.
+### ✅ 2. Dry-run entries not recorded in ChromaDB — SHIPPED
+- **Fix:** `TRADE_MEMORY.record(..., is_dry_run=True)` in the dry-run branch; `retrieve_similar` filters dry-runs by default.
 
-### 3b. **CRITICAL** — `TimeInForce.IOC` not supported by Alpaca for options
-- **Where:** [scripts/spy_auto_trader.py:3129](scripts/spy_auto_trader.py:3129) in `_close_option_position`.
-- **Problem:** Alpaca rejects every close order with `{"code":42210000,"message":"order_time_in_force provided not supported for options trading"}`. Alpaca options only support `DAY` and `GTC`. The system **cannot close positions in real (non-dry-run) mode**. Stops, T1, T2, hard-close — all fail.
-- **Observed today (2026-05-12):** **1,313 ERROR lines** all from this single bug. SPY 737P stop-out couldn't close, error spam every 10s after the dry-run toggle flipped off.
-- **Fix:** Change to `TimeInForce.DAY`. The existing `client_order_id` retry logic already dedupes, so the "don't leave a resting close order" concern in the original comment is moot — same client_order_id = same order at Alpaca.
-- **Severity:** **P0 blocker for going live.** Must be fixed before flipping `DRY_RUN = False` for real.
+### ✅ 3. Dry-run positions vanish on app restart — SHIPPED
+- **Fix:** `_save_positions` writes `~/.spy_trader/open_positions.json` (atomic tmp+rename) on every mutation; `_load_positions` restores before `reconcile_positions` runs. Dry-runs survive restart, real positions get two-way reconciled with Alpaca.
 
-### 3c. **CRITICAL** — DRY_RUN toggle at runtime creates inconsistent close behavior
-- **Where:** runtime state across [spy_auto_trader.py:1892](scripts/spy_auto_trader.py:1892) (entry branch) and [spy_auto_trader.py:3293](scripts/spy_auto_trader.py:3293) (close branch); UI toggle at [app.py:645](scripts/app.py:645).
-- **Problem:** Position metadata doesn't carry `is_dry_run`. Entry path checks `DRY_RUN` global at entry time; close path checks it at close time. If user flips `DRY_RUN` off mid-session, dry-run-entered positions try to close as real Alpaca orders → fail (no position at Alpaca).
-- **Observed today:** This is exactly what produced the stranded position + error spam.
-- **Fix:**
-  1. Add `is_dry_run: bool` field to the position dict in `register_trade()`, captured from `DRY_RUN` at entry time.
-  2. In `check_positions` close path, branch on `pos["is_dry_run"]`, not the global `DRY_RUN`.
-  3. (Optional) Disable the UI dry-run toggle when there are open positions of a different mode, OR queue the toggle to take effect after all positions close.
+### ✅ 3b. `TimeInForce.IOC` not supported by Alpaca for options — SHIPPED
+- **Fix:** Changed to `TimeInForce.DAY`. Full closes now use `TRADING_CLIENT.close_position(occ)` (not `submit_order(SELL)` which Alpaca treats as opening an uncovered short).
 
-### 4. Reconciled positions get default risk params, not the original ones
-- **Where:** [scripts/spy_auto_trader.py:3063](scripts/spy_auto_trader.py:3063)
-- **Problem:** When `reconcile_positions` recovers an orphan, it calls `register_trade()` with current defaults for stop_pct, T1, T2 — so a position originally entered with a different config gets the wrong management plan after a restart.
-- **Fix:** Persist the full position dict (stops/targets/entry_price/opened_at) alongside the symbol so reconciliation restores the exact plan.
+### ✅ 3c. DRY_RUN toggle at runtime creates inconsistent close behavior — SHIPPED
+- **Fix:** `register_trade` accepts `is_dry_run` (captured at entry time, persisted with the position). Close path branches on `pos["is_dry_run"]`, not the global. Toggle no longer strands positions.
+
+### ✅ 4. Reconciled positions get default risk params, not the original ones — SHIPPED
+- **Fix:** `_save_positions` persists the full position dict (entry_price, stop, T1, T2, opened_at, is_dry_run); reconcile restores the exact plan. Orphans from Alpaca (not in JSON) still use defaults but log a warning.
+
+### ✅ 4a. `reconcile_positions` was one-way (Alpaca→local) — SHIPPED
+- **Problem:** Local JSON could hold positions Alpaca no longer had (closed externally, expired). Caused repeated `position not found` errors every 10s on stale entries.
+- **Fix:** Two-way sync — also removes any local position whose OCC isn't in Alpaca's current position list. Option detection by OCC regex (not asset_class) so non-SPY options (e.g. NVDA) are picked up correctly. Manual on-demand resync exposed as `⟳ Sync Positions` button in Settings tab.
 
 ---
 
 ## 🟠 P1 — Risk-management gaps a pro trader would flag
+
+### 4c. Per-symbol UI state (open positions, P&L badge) — wishlist
+- **Status:** Open Positions card shows all symbols together. When clicking a symbol tab (full-screen chart), no quick way to see "what's my exposure to this name."
+- **Fix:** Mini pill on each symbol tab showing position count + P&L %. Filter Open Positions card by active symbol in chart view.
+
+### 4d. Data freshness for non-active symbols (✅ partially shipped)
+- **Status:** `refresh_all_prices()` (split from `refresh_prices`) runs on background ticker every 3rd tick and stamps freshness for all 6 symbols. Active symbol still refreshes every tick.
+- **Still TODO:** stamp `option_quote:{underlying}` freshness inside `check_positions` (issue #22 below).
 
 ### 4b. Max account risk % is hard-coded — expose in Settings UI
 - **Status:** `MAX_PORTFOLIO_RISK = 0.03` (3%) is a hard constant in [spy_auto_trader.py](scripts/spy_auto_trader.py:130). Changing it requires a code edit + app restart.
@@ -196,26 +192,23 @@ Bold rows = highest leverage areas.
 - **Why it matters:** A bot can be flat each day but bleed -0.3% × 20 days = -6% in a month and the daily limits never fire.
 - **Fix:** Persist daily equity to JSON; expose 5-day / 20-day rolling drawdown in the EOD review. Add `WEEKLY_LOSS_HALT_PCT = 0.04`.
 
-### 15. No log rotation
-- **Status:** `spy_trader.log` grows unbounded.
-- **Fix:** Wrap the file handler in `logging.handlers.RotatingFileHandler(maxBytes=10MB, backupCount=5)`.
+### ✅ 15. No log rotation — SHIPPED
+- **Status:** `auto_trader.log` (renamed from `spy_trader.log`) uses `RotatingFileHandler(maxBytes=10MB, backupCount=5)`; `errors.log` uses 5MB × 5.
 
-### 16. No emergency "kill switch" / flatten-all button
-- **Status:** To stop trading, user toggles auto-trade off + stops sessions. Open positions still ride.
-- **Fix:** Add a "FLATTEN ALL" socket event that (a) sets a global halt flag, (b) closes every open position at the ask immediately (no walk), (c) cancels every working order. Confirmation modal required.
+### ✅ 16. No emergency "kill switch" / flatten-all button — SHIPPED
+- **Status:** `flatten_all` socket event + confirmation modal. Closes every open position immediately. Bonus: `clear_emergency_halt` to resume after a flatten.
 
 ### 17. No process supervision / crash recovery
 - **Status:** Run via `nohup`. If process dies mid-session, no auto-restart, no alert.
 - **Fix:** Either a launchd plist (macOS) with `KeepAlive=true`, or a 5-line watchdog shell script + `kill -0 $PID` healthcheck.
 
-### 18. Silent failures only logged as WARNING
-- **Status:** e.g., `refresh_account failed: {e}` ([app.py:365](scripts/app.py:365)).
-- **Fix:** Add a Pushover / Discord / Slack webhook for any ERROR or repeated WARNINGs > 3 in 10 minutes.
+### ✅ 18. Silent failures only logged as WARNING — SHIPPED (partial)
+- **Status:** `_WebhookAlertHandler` posts ERROR-level events to `$ALERT_WEBHOOK_URL` (Slack/Discord compatible) with 60s rate-limit. Set the env var to enable.
+- **Still TODO:** repeated-WARNING aggregation ("3 same warnings in 10 min → alert").
 
-### 18b. Errors not isolated in their own log file
-- **Status:** Everything (INFO, WARNING, ERROR) goes to one stream → `spy_trader.log` + stdout. Today's 1,313 ERROR lines were buried in tens of thousands of INFO lines making the actual problem hard to spot.
-- **Fix:** Add a second `logging.handlers.RotatingFileHandler` writing to `errors.log` with `level=logging.ERROR`. INFO/WARNING continue to go to `spy_trader.log` as today. Bonus: a third handler for `signals.log` (entry decisions only) makes EOD parsing/journaling easier than regex over the full log.
-- **Bonus:** Add a deduper that suppresses repeated identical ERROR lines (1,313 copies of the same string is noise) — emit once + a counter like "(× 1,313 over 4h)".
+### ✅ 18b. Errors not isolated in their own log file — SHIPPED
+- **Status:** Dedicated `errors.log` (RotatingFileHandler, ERROR-only, 5MB × 5). Dedup filter suppresses repeated identical lines. Log timestamps now in ET (custom `_ETFormatter`).
+- **Still TODO:** separate `signals.log` for entry decisions only (would simplify EOD parsing).
 
 ### 18c. Werkzeug development server in production (**deferred**)
 - **Status:** [scripts/app.py:1060](scripts/app.py:1060) uses `socketio.run(app, ...)` with `allow_unsafe_werkzeug=True`. Flask logs a soft warning at startup.
@@ -230,10 +223,8 @@ Bold rows = highest leverage areas.
 ### 19. Stale docstring
 - **Where:** [scripts/spy_auto_trader.py:3151](scripts/spy_auto_trader.py:3151) — says "Called every 30 s", actual is 10s.
 
-### 20. Log timezone ambiguity
-- **Status:** Trader logic uses ET (`ZoneInfo("America/New_York")`). Log timestamps use system local time (CDT for this machine).
-- **Why it matters:** When reading logs, you have to constantly mentally convert. "09:15:00" in the log was actually 10:15 ET — easy to misread the timing of every trade.
-- **Fix:** Force logger formatter to emit ET (or UTC) timestamps explicitly. Append "ET" suffix.
+### ✅ 20. Log timezone ambiguity — SHIPPED
+- **Status:** `_ETFormatter` in spy_auto_trader.py emits all log timestamps in ET with explicit "ET" suffix. No more mental conversion.
 
 ### 21. `PDT_REMAINING = 3` is module-state, not per-account
 - **Status:** Comment says it doesn't apply ≥$25K margin accounts. Fine for now, but the constant is misleading if anyone ever runs a sub-$25K account.
