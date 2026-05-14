@@ -64,8 +64,8 @@ def _load_kb_rules() -> str:
 _KB_RULES = _load_kb_rules()
 
 _KB_PREAMBLE = (
-    "You have been trained on professional options trading books (Natenberg, Passarelli, "
-    "Saliba, McMillan). Apply these rules strictly:\n"
+    "You have been trained on 28 professional options & trading books (Natenberg, Passarelli, "
+    "Saliba, McMillan, Sinclair, Hull, Schwager, Brooks, Holmes/VSA). Apply these rules strictly:\n"
     "• Buy options only when IV rank < 50%; prefer IVR < 30% for naked long options\n"
     "• Target delta 0.40–0.60 for directional intraday plays\n"
     "• Never enter in first 15 min of session or after 14:00 ET unless very strong signal\n"
@@ -74,6 +74,14 @@ _KB_PREAMBLE = (
     "• ORB breakout requires volume confirmation (vol ratio > 1.3) and close above/below ORB level\n"
     "• VWAP cross alone is NOT sufficient — require EMA alignment + volume\n"
     "• Avoid entries when RSI > 70 (overbought for calls) or RSI < 30 (oversold for puts)\n"
+    "• VSA Rule: High volume (ratio > 2.0) on an UP bar with narrow spread = distribution by smart money — BEARISH warning for calls\n"
+    "• VSA Rule: High volume (ratio > 2.0) on a DOWN bar with narrow spread + closes above mid = accumulation — BULLISH background for calls\n"
+    "• Brooks Rule: ORB breakout bar must close in top 25% of bar range (for bull) — weak breakout bars are traps\n"
+    "• Brooks Rule: After a climax bar (> 2× ATR), do not chase — exhaustion likely; wait for pullback entry\n"
+    "• Sinclair Rule: After VIX spikes > 5 pts in one day, use debit spreads only for 2–3 days (IV is elevated)\n"
+    "• Vol trend: If SPY vol ratio on entry bar < 0.8 (below-average), reduce conviction — no institutional backing\n"
+    "• Scale out: At +50% premium gain, take partial profits; do not hold full position to +100%\n"
+    "• Never open new positions after 3 consecutive intraday losses\n"
 ) + (_KB_RULES[:1500] if _KB_RULES else "")
 
 _BULL_SYSTEM = (

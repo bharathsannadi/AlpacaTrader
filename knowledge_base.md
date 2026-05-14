@@ -1,16 +1,12 @@
 # Options Trading Knowledge Base
 
-> Distilled from 10 professional options trading books:
-> - Natenberg, *Option Volatility and Pricing* (2nd ed.)
-> - Passarelli, *Trading Option Greeks*
-> - Saliba, *Option Spread Strategies*
-> - Smith, *Option Strategies* (Wiley, 3rd ed.)
-> - Lowell, *Get Rich With Options*
-> - Benklifa, *Think Like an Option Trader*
-> - Thomsett, *Put Option Strategies for Smarter Trading*
-> - Optionetics, *Trading Options For Dummies*
-> - Toghraie, *Options Trading for the Conservative Investor*
-> - McMillan, *The Complete Guide to Option Strategies*
+> Distilled from 28 professional options & trading books:
+> **Options Foundations:** Natenberg, Passarelli, Saliba, Smith, Lowell, Benklifa, Thomsett, Optionetics, Toghraie, McMillan
+> **Options Strategy & Pricing:** Sinclair (*Option Trading: Pricing & Volatility*), Ward (*Options And Options Trading*), Haug (*Complete Guide to Option Pricing Formulas*), Danes (*Options Trading Strategies*), Fontanills (*The Options Course*, *Trade Options Online*)
+> **Price Action & Volume:** Holmes (*The Complete Volume Spread Analysis System* — VSA/Wyckoff), Brooks (*Trading Price Action Trends*)
+> **Risk & Volatility:** Hull (*Options, Futures and Other Derivatives*), Schwager (*Complete Guide to the Futures Market*)
+> **Conservative/Practical:** Thomsett (*Options Trading for the Conservative Investor*), Benklifa (*Think Like an Option Trader*), Cofnas (*Trading Binary Options*)
+> **Beginner/Quick Reference:** OIC (*Option Strategies Quick Guide*), Danes (*Options Trading QuickStart Guide*)
 >
 > **Purpose:** AI trading system reference for debate gate, signal evaluation, and trade approval.
 > **System trades:** SPY + AMZN, GOOG, MSFT, NVDA, META long calls/puts, 7-14 DTE, ORB/VWAP/EMA signals on 5-min bars.
@@ -415,6 +411,155 @@ Use this checklist before submitting any order. Each item should have a definiti
 
 ---
 
+---
+
+## 10. Volume Spread Analysis (VSA) — Smart Money Rules
+*Distilled from Holmes, "The Complete Volume Spread Analysis System" (Wyckoff/Tom Williams)*
+
+### Core VSA Principle
+- Every bar tells a story of Supply vs. Demand. Price + Spread (bar range) + Volume together reveal **smart money intent**.
+- Lagging indicators (MACD, RSI, stochastics) give buy signals as price rises — exactly when smart money is SELLING into strength. VSA reads the actual supply/demand imbalance.
+- Smart money (institutions, syndicates) **must act in the opposite direction of what they want**: to buy large quantities they must first create fear/selling (distribute noise); to sell large quantities they drive price up first (accumulation → mark-up → distribution).
+
+### The Two Master VSA Rules
+- **Rule 1 — Weakness appears on an Up Bar:** In a rising market, if a bar closes UP but has an ULTRA-HIGH VOLUME relative to recent bars AND a NARROW SPREAD (small bar range), smart money is selling into retail buying. This is distribution — bearish background.
+- **Rule 2 — Strength appears on a Down Bar:** In a falling market, if a bar closes DOWN but has ULTRA-HIGH VOLUME AND NARROW SPREAD (small bar range), smart money is buying into retail panic. This is accumulation — bullish background.
+
+### VSA Signal Types (actionable for our system)
+- **No Demand Up Bar:** Up bar on LOW volume with narrow spread. Weak hands buying; no institutional backing. Do NOT enter long — signal will likely fail.
+- **Selling Climax (SC):** Extremely wide spread DOWN bar on ULTRA-HIGH volume, closes near low. Marks end of panic selling. Potential long entry after confirmation.
+- **Upthrust (UT):** Price spikes above resistance on high volume but closes BELOW the resistance level (wide spread up, closes low). Smart money distributed into the breakout. FALSE breakout — bearish signal. Avoid calls; consider puts.
+- **Stopping Volume:** Very high volume DOWN bar that closes ABOVE mid-range (not at lows). Professionals absorbed selling. Bullish background beginning.
+- **Test Bar:** Up bar on LOW volume after a prior high-volume decline. Tests whether supply remains. If it closes near high = demand is present = bullish entry confirmation.
+- **Suckers Rally:** Price rises sharply on declining volume after a prior down trend. No institutional backing. Retail chasing. Do not enter calls.
+
+### VSA Rules for This System
+- **Volume spike on up bar (vol ratio > 2.0) + narrow bar (range < 0.3× ATR) = DISTRIBUTION WARNING.** Suppress bullish signal even if ORB fired.
+- **Volume spike on down bar (vol ratio > 2.0) + narrow bar + price closes above mid-bar = ACCUMULATION.** Bullish background; calls supported.
+- **ORB breakout on ultra-high volume that immediately stalls (next bar narrow) = UPTHRUST.** Exit longs immediately.
+- **Always check if breakout volume is genuine:** Vol ratio > 1.5× is minimum for ORB. Vol ratio < 1.0× on a breakout = "No Demand" — reject the signal.
+- Background matters: if the prior 5–10 bars show a pattern of high-volume down bars with narrow spreads (accumulation), bullish signals are higher quality. If prior bars show high-volume up bars with narrow spreads, bearish setup.
+
+---
+
+## 11. Price Action Rules — Al Brooks Framework
+*Distilled from Brooks, "Trading Price Action Trends"*
+
+### Core Price Action Principles
+- **The 5-minute chart is the optimal timeframe** for intraday scalping. The 1-minute chart creates illusions of opportunity and leads to over-trading and cherry-picking bad entries.
+- "If you cannot figure out what the chart is telling you, do not trade. Wait for clarity. It will always come."
+- **Every bar is a trade.** Bulls tried to push up; bears tried to push down. The result (close location, bar size, volume) tells you who won each 5-minute battle.
+- "Keep things simple and follow your simple rules. It is extremely difficult to consistently do something simple, but it is the best way to trade."
+
+### Trend vs. Trading Range (Critical Distinction)
+- **Trend day (strong):** Consecutive bars in one direction, EMA(s) consistently below (bull) or above (bear) price, pullbacks are shallow (< 3 bars) and immediately resume trend. In a strong trend, EVERY entry in the trend direction is valid.
+- **Trading range day:** Bars overlap heavily, price oscillates around EMAs, EMA fans are flat. In a trading range, ALL breakout entries have ~50% chance of failing. Wait for a breakout candle that closes well beyond the range boundary.
+- **Identifying trend vs. range:** If the last 10 bars have at least 6 trend bars (bars that close in their upper or lower third) in one direction = trend. If bars are mostly doji/overlap bars = range.
+
+### Key Price Action Signal Bars
+- **Bull signal bar:** Strong up bar (closes in upper 1/3), body takes up > 60% of bar range, small upper wick. Buy the break of the high of this bar.
+- **Bear signal bar:** Strong down bar (closes in lower 1/3), body > 60% range, small lower wick. Sell break of the low.
+- **Doji (inside bar) at resistance:** Indecision — price is testing resistance and failing to break cleanly. Do NOT enter; wait for resolution.
+- **Reversal bar (climax bar):** Very large bar (> 2× ATR) after an extended trend. Often marks exhaustion. Do not chase — the move may be over.
+
+### Brooks Rules for ORB / Intraday Breakouts
+- A breakout that closes BEYOND the level with a strong trend bar AND is followed by another trend bar in the same direction = high-probability continuation.
+- A breakout on a weak bar (small body, large wicks) is likely to fail. At minimum, wait for the next bar to confirm.
+- **Measured move targets:** After an ORB breakout, a reasonable target = ORB range added to breakout level (1× extension). For trending markets, 2× is achievable.
+- **Two legs of a move:** Many profitable intraday moves have two legs. After the initial ORB breakout (leg 1) and a shallow pullback, a second leg of similar size follows. This is the optimal entry for options (after leg 1 pullback to VWAP or EMA).
+
+### Brooks Rules for This System
+- **Strong ORB breakout + follow-through bar = high quality.** Both bars must close in the top (bull) or bottom (bear) 25% of the bar range.
+- **After a large climax bar (> 2× ATR), do not chase.** A reversal bar or doji following a climax bar is a WARNING — the trend may be exhausted.
+- **Pullback to EMA on low volume, then resumption bar = ideal entry.** This is better than chasing the initial breakout.
+- **In a trading range, fade breakouts:** If price breaks above a level on a weak bar and the prior 10 bars are in a range, the breakout is likely a trap (50/50 at best). Only enter on trend-day characteristics.
+
+---
+
+## 12. Volatility Trading — Sinclair & Hull Framework
+*Distilled from Sinclair, "Option Trading: Pricing and Volatility Strategies" and Hull, "Options, Futures and Other Derivatives"*
+
+### Statistical vs. Implied Volatility (Sinclair)
+- **Realized/Statistical Vol (HV):** What the underlying actually did. Calculated from historical returns.
+- **Implied Vol (IV):** What the options market implies future vol will be.
+- **The edge in options trading:** Buy when IV < expected HV; sell when IV > expected HV. This is the ONLY sustainable edge in options — everything else is directional speculation.
+- **IV tends to be systematically overpriced** vs. realized vol (the "variance risk premium"). This means net sellers of vol outperform net buyers over long periods — but only if they hedge gamma and manage risk properly.
+- **Short-term mean reversion in IV:** When IV spikes sharply (e.g., VIX jumps 5 points in a day), it tends to mean-revert within 2–5 trading days. This is the basis for selling vol after spikes.
+
+### Hull's Risk Management Framework
+- **Delta-neutral hedging:** Professionals constantly re-hedge delta to isolate vega/gamma exposure. For retail directional traders: this means understanding that when you hold a long call, your delta exposure GROWS as the underlying moves in your favor (gamma effect). This is when to TAKE PROFITS, not add more.
+- **Put-call parity:** C − P = S − Ke^(−rT). Any violation is an arbitrage. For practical trading: the put and call of the same strike/expiry must be priced consistently. If they're not (in paper trading or backtests), treat as data error.
+- **Binomial vs. Black-Scholes:** Black-Scholes assumes constant volatility — a fiction. Real vol is stochastic (varies). This means OTM options are systematically underpriced by B-S (volatility smile). For buyers: OTM puts on SPY are more expensive than B-S implies because institutions buy them for tail-risk insurance.
+- **Key insight for SPY options:** SPY has a persistent **negative skew** — OTM puts cost more than OTM calls at the same distance from ATM. This means: put buying is expensive (you pay the skew); call buying is relatively cheap (you receive the skew benefit).
+
+### Volatility Forecasting Rules (Sinclair)
+- Best simple forecast of near-term vol: blend of IV and recent HV. Neither alone is optimal.
+- **GARCH effect:** Volatility clusters — high vol follows high vol, low vol follows low vol. If SPY has had 3 days of > 1% moves, expect more high-vol days. If it has had 10 days of < 0.3% moves, the vol regime is low and likely stays low.
+- **Mean reversion speed:** SPY IV typically mean-reverts to its 30-day average within 10–15 trading days after a spike.
+- **Practical rule:** After VIX spikes above 25, expect a 3–7 day elevated vol regime before normalization. After VIX below 12–13, expect the low-vol regime to persist 2–6 weeks on average.
+
+### Rules for This System
+- **Negative skew = always compare call vs. put pricing.** When VIX is below 15, OTM calls are relatively cheap vs. their probability of profit. Calls have a vol-pricing tailwind.
+- **After a VIX spike > 5 points in 1 day:** IV is elevated. Do NOT buy naked options (you are buying at vol highs). Wait for IV to normalize (2–3 days) or use debit spreads.
+- **Vol clustering rule:** If SPY has moved > 1% per day for 3+ consecutive days, options premium is rich; switch to debit spreads. If SPY has moved < 0.4% per day for 5+ consecutive days, options are cheap; naked long options are favored.
+
+---
+
+## 13. Conservative & Risk-First Rules
+*Distilled from Thomsett, "Options Trading for the Conservative Investor"; Fontanills, "The Options Course" & "Trade Options Online"; McMillan, "Complete Guide to Option Strategies"*
+
+### Thomsett's Conservative Rules
+- **"Never trade options you don't understand."** Before entering any position, be able to explain: what the maximum loss is, what event would trigger the exit, and what the expected P&L is at expiration.
+- **Sell covered calls on underlying equity as a primary strategy.** For directional plays, use vertical spreads instead of naked long options to cap downside.
+- **The conservative test for an options trade:** Would you be willing to hold the underlying (stock/ETF) long-term if the option expired worthless? If no, the trade is speculation — size it accordingly (< 1% risk).
+- **Avoid selling naked puts on downtrending stocks.** The premium received does not justify the assignment risk when the underlying has weak technicals.
+- **Paper trading for 60 days minimum** before live trading any new strategy. (Relevant to new signal types we add to the system.)
+
+### Fontanills' Trade Entry Discipline
+- **"Plan your trade and trade your plan."** Options trading requires written plans because the P&L complexity (multiple greeks) makes in-the-moment decisions unreliable.
+- **The 5-step approach:** (1) Identify market direction (bullish/bearish/neutral). (2) Choose IV regime (buy or sell premium). (3) Select strategy matching both. (4) Choose strike/expiry. (5) Define exit rules BEFORE entering.
+- **Rolling options:** If the trade is working but time is running out, consider rolling to the next expiry rather than holding to expiration. This resets theta while capturing the existing P&L.
+- **Scaling out:** Take 50% of the position off at the first profit target (+50% of premium). Let the remaining 50% run to the second target (+100%). This locks in gains while maintaining exposure.
+- **Adjusting losing trades:** If an option has lost 30% of premium but thesis is intact, consider a "repair spread" — sell an OTM call (for calls) against the losing long call to reduce the break-even. Only do this if you have high conviction the underlying will recover.
+
+### McMillan's Strategy Selection Framework
+- **Market direction first, volatility second.** Never select a strategy based on premium levels alone — the underlying direction determines whether you are long or short options.
+- **Use the simplest strategy that accomplishes the goal.** A long call beats a complex spread if IV is low. A debit spread beats a naked call if IV is high. Don't over-engineer.
+- **For index options (SPY, SPX):** European exercise removes early assignment risk. Assignment can only happen at expiration. This simplifies management significantly.
+- **SPX vs. SPY:** SPX options are cash-settled, European-style, 10× the size. SPY options are American-style, share-settled. For this system (SPY), be aware that SPY options CAN be exercised early — monitor if deep ITM and near ex-dividend date.
+- **Synthetic positions:** A long call + short put (same strike/expiry) = synthetic long stock. For complex positions, decompose into synthetics to verify net greek exposure.
+
+### Rules for This System
+- **Scale out rule (Fontanills):** When a position hits +50% premium gain, close HALF the position. Let the other half run with a stop at breakeven. This is mandatory discipline, not optional.
+- **No new entries after 3 consecutive losses in one day.** Three losses = system or market misread. Take the rest of the day to diagnose, not to recover.
+- **Repair rule:** If position is −30% but underlying is consolidating and time remains, evaluate rolling. If position is −50% or more, exit with no exceptions (per Natenberg stop rule).
+
+---
+
+## 14. Futures & ETF-Specific Rules
+*Distilled from Schwager, "Complete Guide to the Futures Market"; McMillan ETF sections*
+
+### SPY ETF Options Specifics
+- **SPY tracks S&P 500 at 1/10th the index price** (approximately). SPX = S&P 500 index; SPY ≈ SPX / 10.
+- **SPY pays dividends quarterly** (March, June, September, December). Near ex-dividend dates, deep ITM calls may be exercised early to capture dividend. System should avoid holding deep ITM calls (delta > 0.85) within 3 days of ex-dividend.
+- **SPY options are highly liquid** — among the most liquid options in the world. Bid-ask spreads on ATM options are typically $0.01–0.03. This system should always trade at or better than the mid.
+- **SPY gamma is high on 0DTE and weekly options.** A $1 move in SPY on a 0DTE ATM option can move the option price by $0.40–0.70. This system uses 7–14 DTE but should be aware that as DTE shrinks, gamma accelerates.
+- **SPY vs. SPX choice:** For positions < $50,000 capital, SPY options are more size-flexible. SPX is 10× larger per contract — minimum risk is ~$500–1000+ per trade, too large for small accounts.
+
+### Schwager's Technical Analysis Rules for Trend Identification
+- **Volume confirms trend:** In a genuine uptrend, advancing days have higher volume than declining days. If SPY rallies on light volume (vol ratio < 0.8) and declines on heavy volume, the trend is suspect.
+- **Open interest as sentiment indicator (futures concept applied to options):** Rising open interest on call options while price rises = new money entering = genuine demand. Falling open interest while price rises = short covering, not new buying = weaker signal.
+- **Support/Resistance with volume:** A prior resistance level that was broken with high volume becomes stronger support on retest. A level broken on low volume (no-demand breakout) is a weak support.
+- **The 3% filter:** For weekly/daily charts, Schwager recommends a breakout beyond a prior high/low by > 3% before confirming a new trend. For 5-minute intraday: apply a 0.15–0.20% filter (SPY $0.80–$1.00) above the ORB level before entering to avoid false breakouts.
+- **Avoid trading against the weekly trend.** If SPY's weekly chart shows a downtrend (lower highs + lower lows), call options have a structural headwind. Only trade puts or use aggressive stops on calls.
+
+### Rules for This System
+- **Weekly trend alignment rule:** Before entering a call, check: is SPY making higher highs and higher lows on the 60-minute or daily chart? If no = use puts or reduce call position size 50%.
+- **Ex-dividend alert:** Do not hold deep ITM calls (delta > 0.85) within 3 calendar days of SPY's ex-dividend date (check quarterly calendar).
+- **Volume trend confirmation:** If vol ratio on the entry bar is < 0.8 (below-average volume), reduce position size by 50% regardless of other signals.
+
+---
+
 ## Appendix: Quick Rules Summary
 
 | Rule | Threshold | Action |
@@ -438,3 +583,12 @@ Use this checklist before submitting any order. Each item should have a definiti
 | Catalyst within | 24 hours | No naked options |
 | Open interest | < 500 | Reject (illiquid) |
 | Max simultaneous | > 3 correlated | Too much exposure |
+| Vol ratio on entry | < 0.8 | Reduce size 50% (no institutional backing) |
+| Vol spike on up bar | ratio > 2.0 + narrow range | VSA distribution warning — suppress bull signal |
+| Vol spike on down bar | ratio > 2.0 + closes above mid | VSA accumulation — bull background |
+| ORB breakout bar | closes in lower 50% of bar | Weak breakout (Brooks) — wait for confirmation |
+| After VIX spike | > 5 pts in 1 day | Use spreads only for next 2–3 days |
+| Weekly trend | Lower highs + lower lows | Suppress calls or reduce size 50% |
+| DTE and dividend | Delta > 0.85 within 3 days of ex-div | Do not hold long calls |
+| Scale out | +50% premium gain | Close half position unconditionally |
+| Consecutive losses | 3 in one day | No new entries rest of day |
