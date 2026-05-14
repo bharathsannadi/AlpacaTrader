@@ -1033,6 +1033,15 @@ def on_refresh():
 def on_sync_positions():
     """Force a two-way reconcile with Alpaca — picks up positions opened outside
     this session and drops stale local entries. No restart needed."""
+    # Debug: log raw Alpaca positions so we can see exactly what comes back
+    if trader.TRADING_CLIENT:
+        try:
+            raw = trader.TRADING_CLIENT.get_all_positions()
+            log.info(f"sync_positions DEBUG: Alpaca returned {len(raw)} position(s):")
+            for p in raw:
+                log.info(f"  symbol={p.symbol}  asset_class={p.asset_class}  qty={p.qty}  avg_entry={p.avg_entry_price}")
+        except Exception as e:
+            log.warning(f"sync_positions DEBUG: get_all_positions failed: {e}")
     added = trader.reconcile_positions()
     refresh_account()
     emit_state()
