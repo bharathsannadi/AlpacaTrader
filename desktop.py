@@ -82,7 +82,7 @@ def _spawn_flask() -> subprocess.Popen:
         sys.exit(1)
 
     # Log Flask stdout/stderr to a file so we don't lose it
-    log_path = REPO_ROOT / "desktop_flask.log"
+    log_path = REPO_ROOT / "auto_trader.log"
     log_fp = open(log_path, "a", buffering=1)  # line-buffered
     log_fp.write(f"\n\n--- desktop.py spawning Flask at {time.ctime()} ---\n")
 
@@ -130,7 +130,7 @@ def main() -> int:
         print(f"Waiting up to {STARTUP_TIMEOUT_S}s for Flask to come up…")
         if not _wait_for_health(STARTUP_TIMEOUT_S):
             print(f"ERROR: Flask did not respond on {HEALTH_URL} within "
-                  f"{STARTUP_TIMEOUT_S}s. Check desktop_flask.log.", file=sys.stderr)
+                  f"{STARTUP_TIMEOUT_S}s. Check auto_trader.log.", file=sys.stderr)
             _shutdown_flask(flask_proc)
             return 1
         print(f"Flask healthy at {HEALTH_URL}")

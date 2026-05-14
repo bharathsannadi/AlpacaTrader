@@ -516,31 +516,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Default to Settings view on load
   _setViewMode("settings");
 
-  // Settings column resize divider
-  (function() {
-    const divider = document.getElementById("settings-col-divider");
-    const col1    = document.getElementById("settings-col-1");
-    if (!divider || !col1) return;
-    let dragging = false, startX = 0, startW = 0;
-    divider.addEventListener("mousedown", e => {
-      dragging = true; startX = e.clientX; startW = col1.offsetWidth;
-      divider.classList.add("resizing");
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    });
-    document.addEventListener("mousemove", e => {
-      if (!dragging) return;
-      const newW = Math.max(180, Math.min(startW + e.clientX - startX, window.innerWidth * 0.6));
-      col1.style.flex = `0 0 ${newW}px`;
-    });
-    document.addEventListener("mouseup", () => {
-      if (!dragging) return;
-      dragging = false;
-      divider.classList.remove("resizing");
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    });
-  })();
 
   ["login-api-key", "login-api-secret"].forEach(id => {
     const el = document.getElementById(id);
@@ -996,9 +971,11 @@ function resetZoom() {
 function refreshChart() { _fetchChart(true); }
 
 function _setViewMode(mode) {
-  // mode: "chart" | "settings"
-  document.body.classList.remove("view-chart", "view-settings");
+  // mode: "chart" | "settings" | "log"
+  document.body.classList.remove("view-chart", "view-settings", "view-log");
   document.body.classList.add("view-" + mode);
+  // clear all special tab highlights
+  document.querySelectorAll("#tab-settings, #tab-log, .bt-tab").forEach(t => t.classList.remove("active"));
   // Trigger chart resize when switching to chart view
   if (mode === "chart") {
     setTimeout(() => { if (window._chart) window._chart.timeScale().fitContent(); }, 50);
@@ -1025,9 +1002,14 @@ function setActiveSymbol(symbol) {
 
 function showSettings() {
   _setViewMode("settings");
-  document.querySelectorAll(".symbol-tab[data-symbol], .bt-tab").forEach(t => t.classList.remove("active"));
-  const st = document.getElementById("tab-settings");
-  if (st) st.classList.add("active");
+  document.querySelectorAll(".symbol-tab[data-symbol]").forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-settings").classList.add("active");
+}
+
+function showLog() {
+  _setViewMode("log");
+  document.querySelectorAll(".symbol-tab[data-symbol]").forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-log").classList.add("active");
 }
 
 // ── Backtest UI ───────────────────────────────────────────────────────────────
