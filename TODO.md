@@ -6,6 +6,88 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ---
 
+## 🏆 Best-in-Class Roadmap — strategic direction
+
+**Mission:** *Build the most thoughtful, transparent, AI-native trading platform for one user to learn and trade options.* Not "beat Citadel" — that's not a realistic target. **"Be the platform that genuinely uses Claude as a co-pilot, not as a feature."**
+
+### The dimensions where we compete
+
+| Where incumbents win | Where we win (AI-native edge) |
+|---|---|
+| Speed, breadth of markets | **Explainability** — every decision documented in plain English |
+| Decades of quant talent | **Education** — actively teaches the user to be a better trader |
+| Massive backtest data | **Adaptation** — narrative reasoning about *why* regimes change |
+| Slick design teams | **Honesty** — surfaces uncertainty, refuses bad setups |
+| Sophisticated infrastructure | **Personality** — feels like a co-pilot, not a black box |
+
+### Scorecard — where we are vs. the target
+
+| Dimension | Now | Target |
+|---|---|---|
+| Engineering quality | 8/10 | 9.5 |
+| Risk discipline | 9/10 | 9.5 |
+| Strategy edge | **5/10** | 8 (proven via backtest) |
+| Explainability | **4/10** | 9 (narrative reasoning everywhere) |
+| Education for user | **3/10** | 9 (morning brief + EOD coach) |
+| Demo polish | 5/10 | 9 (one-screen exec view) |
+| AI integration | **4/10** | 9 (LLM in every decision loop) |
+
+Bold rows = highest leverage areas.
+
+---
+
+### Phase 1 — Prove the foundation (this week)
+- [ ] **Wire up Anthropic API key** in `.env` → debate gate + EOD review become real
+- [ ] **📝-S EOD journal** (~30 min) — see Journal sub-project below
+- [ ] **Backtest harness skeleton** (`backtest.py` standalone) — even a 2-week replay on 1m yfinance bars is infinitely better than zero backtest
+- [ ] **One-screen exec view** in dashboard — top of page shows today's narrative ("Bot took 3 SPY ORB trades, won 2, current state, what it's watching")
+- [ ] **Per-signal narrative** — every entry has 1-paragraph LLM-generated rationale stored on the position dict and shown in UI
+
+### Phase 2 — AI-native differentiation (week 2–3)
+- [ ] **Pre-market brief at 9:00 ET** — LLM reads: overnight futures move, macro calendar today, your open positions, IV environment, watchlist earnings — emits a 200-word morning brief. Pushed to dashboard + optionally Pushover/email.
+- [ ] **"Why this trade?" button** on every open position — instant Haiku explanation pulled from logs + ChromaDB memory
+- [ ] **Mistake catcher at EOD** — Claude scans the day's decisions and flags potential errors the rule-based system missed ("you sized AMZN at 5% but your max is 0.5% — intentional?")
+- [ ] **Weekly coach report** — rolling 30-day journal review: "what's working, what's bleeding, one parameter to change for next week"
+- [ ] **Confidence display** — every signal shows estimated edge ("similar setups historically: 14W / 8L / +0.7R avg") not just go/no-go
+- [ ] **Honest refuse-to-trade messaging** — when filters reject, the UI explains in plain English why ("Skipped MSFT bull: IVR=100% means options are at 1-year vol high. We won't pay that premium.")
+
+### Phase 3 — Polish for demo/competition (week 3–4)
+- [ ] **README that *sells* the platform** — screenshots, demo gifs, the philosophy ("AI co-pilot for options trading")
+- [ ] **One-minute screen-capture video** — record a live session with AI commentary narrating in real time
+- [ ] **Architecture diagram + design doc rewrite** — for sharing/judging
+- [ ] **Live demo mode** — pre-recorded session that plays back deterministically so judges can see the system in action without waiting for real market hours
+- [ ] **Public anonymized dashboard** (optional) — read-only equity curve + recent decision narratives, shareable URL
+- [ ] **Dark/light theme toggle** + clean typography pass on dashboard
+
+### Phase 4 — Quantitative deepening (month 2+)
+- [ ] **Multi-strategy engine** — at least one orthogonal strategy beyond ORB + VWAP-momentum:
+  - Earnings volatility crush short (IV-rich premium seller)
+  - Mean reversion at PDH/PDL when RSI extreme
+  - 0DTE momentum on SPY/QQQ
+- [ ] **Defined-risk option structures** — vertical debit spreads, iron condors, calendars. Theta-aware alternatives to naked long premium.
+- [ ] **Portfolio Greeks management** — replace "max 6 positions × 0.5%" with "max net delta-dollar $X, max gamma $Y, max vega $Z" cap
+- [ ] **Regime classifier** — HMM or rule-based detector for trend / chop / high-vol regimes; strategy weights adjust automatically
+- [ ] **Walk-forward parameter optimization** — auto-tune thresholds per-quarter on historical data, ratchet only when improvement statistically significant
+- [ ] **Live-money readiness gates** — codified checkpoints that must pass before flipping `PAPER_MODE = False` (60-day paper Sharpe > 0.5, weekly DD discipline drill passed, etc.)
+
+### What we're explicitly NOT doing (and why)
+| Skipped | Why |
+|---|---|
+| Hundreds of indicators | TradingView wins. We don't compete on raw indicator count. |
+| Crypto / forex / futures | Surface-area trap. Stay focused on US equity options. |
+| Multi-broker support | Alpaca paper is sufficient for one user. |
+| Mobile app | Desktop + browser cover 95% of single-user trading time. |
+| Social features | Different product entirely. Diff investment, diff thesis. |
+| In-house chart library | LightweightCharts is good enough — focus on what's *on* the chart. |
+
+### How we'll know we made it
+- A senior trader can sit down with the system and **understand every decision in 30 seconds** without reading source code.
+- The user (you) can demonstrate **measurable improvement** in trading skill after 30 days of daily journaling + coach reports.
+- The strategy has a **backtested Sharpe > 0.8 over 18 months** with realistic fee/slippage modeling.
+- Someone judging "best Claude-built trading platform" sees the demo and **doesn't need to ask "but does it work?"** — the live decision narration answers that.
+
+---
+
 ## 🔴 P0 — Real bugs / data-integrity gaps
 
 ### 1. Dry-run trades all share `order_id="DRY_RUN"` (collision)
@@ -197,6 +279,65 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 - [ ] **Bayesian parameter updating.** As ChromaDB accumulates closed trades, update prior beliefs about which indicator combinations work. (This is closer to what the LLM debate aspires to but isn't.)
 - [ ] **Regime detection.** Trend vs. chop vs. high-vol regimes call for different strategies. A regime classifier (HMM or simple range-rule) that switches strategy weights is what modern quant funds do.
 - [ ] **Reality check: is the LLM debate gate actually helping?** Compare 30 days of trades passed by debate vs. similar trades the gate rejected (use ChromaDB retrieval). If passed-rate isn't materially higher P&L → it's a $0.001-per-call placebo.
+
+---
+
+## 📝 End-of-Day Journal & Decision Tracking — separate sub-project
+
+> A serious daily review is the single highest-leverage habit most retail traders skip. Trading is one of the few domains where you can't tell if you're improving from outcomes alone (a win can be luck on bad process; a loss can be unlucky on good process). The journal separates *process* from *outcome*. We already have the raw data (trades, ChromaDB, logs, `eod_review`); we just need to capture it into a sustained per-day record with a place for human reflection.
+
+**What a serious daily review tracks:**
+
+| Layer | What | Why |
+|---|---|---|
+| **Math** | trades, win rate, R-multiples, expectancy, fees, slippage, max DD intraday | Did the system work today? |
+| **Decisions** | every signal (fired vs. skipped), manual overrides, toggle changes, manual closes | Where did I help vs. hurt the system? |
+| **Context** | market regime, VIX level, headlines, your mood/sleep | Why was today's tape what it was? |
+| **Mistakes** | trades you "should have"/"shouldn't have" taken, in hindsight | Discrete patterns to remove |
+| **Lessons** | one sentence: what would you do differently tomorrow? | Compounds into skill over months |
+
+### 📝-S — Minimal EOD journal (~30 min, ship first)
+- [ ] Create `journals/` directory in repo (track structure, gitignore content if private)
+- [ ] Create `eod.py` standalone script (separate file, no webapp changes) that:
+  - [ ] Reads account state from Alpaca (open/close equity, day P&L)
+  - [ ] Computes intraday max drawdown from equity history
+  - [ ] Lists every closed trade from `trades_today` with entry/exit/P&L/reason/R-multiple/fees
+  - [ ] Lists open positions carried over to next day
+  - [ ] Includes `eod_review()` summary (win rate, profit factor, expectancy, avg R)
+  - [ ] Generates `journals/YYYY-MM-DD.md` with sections: Account / Trades / Open Positions / System Stats / **Notes (manual)**
+- [ ] Run automatically at market close OR manually via `venv/bin/python3.11 eod.py`
+
+### 📝-M — Decision-log layer (~2 hours)
+Everything in S, plus:
+- [ ] Capture every meaningful decision to a structured `decisions.jsonl` file (append-only, one JSON per line):
+  - [ ] Signal evaluations: fired vs. skipped with reasons (parse from `spy_trader.log` "no-fire" lines)
+  - [ ] Manual approve/skip clicks (from socket events — already logged)
+  - [ ] Toggle flips: DRY_RUN, AUTO-TRADE, news filter, etc. (already logged)
+  - [ ] Manual position closes (distinguish from auto-stops)
+  - [ ] Daily-loss-halt / profit-lock fires
+- [ ] Per-symbol P&L attribution table (which symbols made/lost money today)
+- [ ] Per-signal-type attribution (ORB-call win rate vs. VWAP-momentum-bear etc.)
+- [ ] "Compared to last 5 days" snippet (was today an outlier? in what direction?)
+
+### 📝-L — Dashboard EOD analytics tab (~4-6 hours)
+Everything in M, plus:
+- [ ] New "Analytics" tab in dashboard, populated at market close (or any time on demand)
+- [ ] Rolling equity curve chart (last 30 / 90 days) with daily P&L bars below
+- [ ] R-multiple distribution histogram (visualizes win/loss skew)
+- [ ] Rolling win-rate trend (30-trade window)
+- [ ] Drawdown chart (peak-to-trough underwater plot)
+- [ ] "Outliers today" highlights — best/worst trades + biggest deviations from average behavior
+- [ ] Filter/group by: symbol, signal-type, time-of-day, debate-pass-vs-not, dry-vs-real
+
+### 📝-Stretch — Closed-loop learning
+Everything in L, plus:
+- [ ] **Auto-generated coaching report.** Claude (or Haiku) reads the last 30 days of `journals/*.md` and emits a weekly "what's working / what's bleeding / one parameter to change" report. The existing `eod_review()` does this on one day; extend to a rolling window.
+- [ ] **Side-by-side: real vs. ChromaDB prediction.** For each closed trade, show what the "similar past trades" memory predicted vs. what actually happened. Calibration check — is the memory's signal actually predictive?
+- [ ] **Tag-and-filter system.** Add human tags to past trades ("FOMO entry", "broke own rule", "perfect setup, broke even"). Lets you query "show me every FOMO trade I took this month" to spot repeating mistakes.
+- [ ] **Email/Pushover the daily summary.** Single-touch delivery so the journal lives in your inbox, not buried in the repo.
+
+### 📝-Why start with S
+Most trade journals fail because they're too elaborate to maintain. **Simple template + 5 minutes to fill in notes = sustainable. Elaborate dashboard = never updated.** Build S, use it 3-5 days, *then* upgrade to M.
 
 ---
 

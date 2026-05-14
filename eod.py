@@ -44,7 +44,7 @@ def _load_env(path: Path) -> None:
         key, _, val = line.partition("=")
         key = key.strip()
         val = val.strip().strip("'\"")
-        if key and key not in os.environ:
+        if key:
             os.environ[key] = val
 
 _load_env(_ENV_FILE)
