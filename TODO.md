@@ -130,6 +130,17 @@ Bold rows = highest leverage areas.
 
 ## 🟠 P1 — Risk-management gaps a pro trader would flag
 
+### 4b. Max account risk % is hard-coded — expose in Settings UI
+- **Status:** `MAX_PORTFOLIO_RISK = 0.03` (3%) is a hard constant in [spy_auto_trader.py](scripts/spy_auto_trader.py:130). Changing it requires a code edit + app restart.
+- **Why it matters:** The risk cap is the single most important user-facing dial in the system — controls how much capital is at risk across all open option positions at any moment. Different account sizes / risk tolerances need different caps (1% for $1M account, 5% for $10K speculation account). Right now the only way to tune it is via source edit.
+- **Fix:** Add a "Max Account Risk %" stepper in the Settings → Configuration card (next to "Risk per Trade %"). Wire it to a new `set_max_portfolio_risk` socket event. Persist in `state["max_portfolio_risk"]` and have `trader.MAX_PORTFOLIO_RISK` read from `state` (or expose a setter). Range: 0.5%–10%, step 0.5%. Default 3%.
+- **Wiring:**
+  1. HTML: stepper in Configuration card (templates/index.html, after risk-pct row).
+  2. JS: `setMaxPortfolioRisk(val)` emits `set_max_portfolio_risk`.
+  3. app.py: `@socketio.on("set_max_portfolio_risk")` updates state + sets `trader.MAX_PORTFOLIO_RISK`.
+  4. spy_auto_trader.py: change `MAX_PORTFOLIO_RISK` to a module-level var (already is) — just allow runtime override.
+  5. State persistence: include in saved state so it survives restart.
+
 ### 5. No macro event blackout (FOMC / CPI / NFP)
 - **Status:** Earnings filter exists ([check_earnings_risk](scripts/spy_auto_trader.py:650)). No equivalent for macro events.
 - **Why it matters:** A pre-Fed entry at 1:50 PM ET is a coin flip on the 2 PM statement. 7-DTE options through a CPI print = pure gamble. The system would happily fire.
