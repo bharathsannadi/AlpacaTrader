@@ -421,27 +421,59 @@
   }
 
   /* ── View modes ── */
-  /* Chart view: hide left panel, chart fills full width */
-  body.view-chart .left-panel   { display: none !important; }
-  body.view-chart .panel-divider{ display: none !important; }
-  body.view-chart .dashboard    { grid-template-columns: 0 0 1fr; padding-left: var(--s-4); padding-right: var(--s-4); }
-  body.view-chart .right-panel  { padding-left: 0; }
-
-  /* Settings view: hide right panel, settings fills full width */
-  body.view-settings .right-panel  { display: none !important; }
-  body.view-settings .panel-divider{ display: none !important; }
-  body.view-settings .dashboard    { grid-template-columns: 1fr 0 0; }
-  body.view-settings .left-panel   {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    grid-auto-rows: max-content;
-    gap: 12px;
-    overflow-y: auto;
-    padding-right: 0;
-    width: 100%;
-    align-content: start;
+  /* Chart view: dashboard is just the right panel, full width */
+  body.view-chart .dashboard {
+    display: flex; flex-direction: column;
+    padding: var(--s-3) var(--s-4);
+    height: calc(100vh - 56px - 36px - 38px);
+    overflow: hidden;
   }
-  body.view-settings .left-panel .card { flex: unset; }
+  body.view-chart .left-panel    { display: none !important; }
+  body.view-chart .panel-divider { display: none !important; }
+  body.view-chart .right-panel   { flex: 1; min-height: 0; padding-left: 0; display: flex; flex-direction: column; }
+  body.view-chart .chart-card    { flex: 1; min-height: 0; }
+  body.view-chart #chart-container { flex: 1; min-height: 0; }
+
+  /* Settings view: full-width two-column resizable pane layout */
+  body.view-settings .dashboard {
+    display: flex; flex-direction: row;
+    padding: var(--s-3) var(--s-4);
+    height: calc(100vh - 56px - 36px - 38px);
+    overflow: hidden; gap: 0;
+  }
+  body.view-settings .right-panel  { display: none !important; }
+  body.view-settings .panel-divider { display: none !important; }
+  body.view-settings .left-panel {
+    display: flex !important; flex-direction: row !important;
+    flex: 1; min-height: 0; overflow: hidden;
+    padding-right: 0; gap: 0;
+  }
+  /* Two resizable columns inside settings left panel */
+  .settings-col {
+    display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto; padding: 4px 6px;
+    min-width: 200px;
+  }
+  .settings-col:first-child { flex: 0 0 340px; }
+  .settings-col:last-child  { flex: 1; min-width: 0; }
+  .settings-col .card { resize: vertical; overflow: auto; min-height: 60px; }
+  /* Vertical resize divider between settings columns */
+  .settings-divider {
+    width: 5px; cursor: col-resize; background: transparent;
+    border-radius: 3px; transition: background .15s; flex-shrink: 0;
+    align-self: stretch; position: relative; z-index: 20;
+  }
+  .settings-divider::after { content: ""; position: absolute; inset: 0 -6px; }
+  .settings-divider:hover, .settings-divider.resizing { background: var(--purple); }
+
+  /* Log card spans full width at bottom of right settings column */
+  .settings-log-col {
+    display: flex; flex-direction: column; gap: 10px;
+    flex: 1; min-width: 0; overflow: hidden; padding: 4px 6px;
+    min-width: 200px;
+  }
+  .settings-log-col .terminal-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .settings-log-col .terminal-card #log-output { flex: 1; min-height: 0; overflow-y: auto; }
 
   /* Settings tab style */
   .settings-tab { color: var(--purple) !important; }
@@ -1020,18 +1052,18 @@
   </div>
 </header>
 
-<!-- ── Symbol tabs (chart-only switches — sessions run independently) ────── -->
+<!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
 <div class="tab-bar">
-  <button class="symbol-tab active" data-symbol="SPY"  onclick="setActiveSymbol('SPY')"><span class="tab-dot" id="tab-dot-SPY"></span>SPY</button>
-  <button class="symbol-tab"        data-symbol="AMZN" onclick="setActiveSymbol('AMZN')"><span class="tab-dot" id="tab-dot-AMZN"></span>AMZN</button>
-  <button class="symbol-tab"        data-symbol="GOOG" onclick="setActiveSymbol('GOOG')"><span class="tab-dot" id="tab-dot-GOOG"></span>GOOG</button>
-  <button class="symbol-tab"        data-symbol="MSFT" onclick="setActiveSymbol('MSFT')"><span class="tab-dot" id="tab-dot-MSFT"></span>MSFT</button>
-  <button class="symbol-tab"        data-symbol="NVDA" onclick="setActiveSymbol('NVDA')"><span class="tab-dot" id="tab-dot-NVDA"></span>NVDA</button>
-  <button class="symbol-tab"        data-symbol="META" onclick="setActiveSymbol('META')"><span class="tab-dot" id="tab-dot-META"></span>META</button>
+  <button class="symbol-tab settings-tab active" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
+  <div class="tab-divider"></div>
+  <button class="symbol-tab" data-symbol="SPY"  onclick="setActiveSymbol('SPY')"><span class="tab-dot" id="tab-dot-SPY"></span>SPY</button>
+  <button class="symbol-tab" data-symbol="AMZN" onclick="setActiveSymbol('AMZN')"><span class="tab-dot" id="tab-dot-AMZN"></span>AMZN</button>
+  <button class="symbol-tab" data-symbol="GOOG" onclick="setActiveSymbol('GOOG')"><span class="tab-dot" id="tab-dot-GOOG"></span>GOOG</button>
+  <button class="symbol-tab" data-symbol="MSFT" onclick="setActiveSymbol('MSFT')"><span class="tab-dot" id="tab-dot-MSFT"></span>MSFT</button>
+  <button class="symbol-tab" data-symbol="NVDA" onclick="setActiveSymbol('NVDA')"><span class="tab-dot" id="tab-dot-NVDA"></span>NVDA</button>
+  <button class="symbol-tab" data-symbol="META" onclick="setActiveSymbol('META')"><span class="tab-dot" id="tab-dot-META"></span>META</button>
   <div class="tab-divider"></div>
   <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
-  <div class="tab-divider"></div>
-  <button class="symbol-tab settings-tab" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
 </div>
 
 <!-- ── Exec Brief ─────────────────────────────────────────────────────────── -->
@@ -1047,8 +1079,11 @@
 <!-- ── Dashboard ─────────────────────────────────────────────────────────── -->
 <div class="dashboard">
 
-  <!-- Left panel -->
+  <!-- Left panel (contains two resizable columns in settings view) -->
   <div class="left-panel" id="left-panel">
+
+    <!-- Settings column 1: Config + Automation + Freshness -->
+    <div class="settings-col" id="settings-col-1">
 
     <!-- Config (top of panel) -->
     <div class="card" data-card-id="config">
@@ -1171,7 +1206,7 @@
       </div>
     </div>
 
-    <!-- Data Freshness — per-source ages with green/yellow/red dots -->
+    <!-- Data Freshness -->
     <div class="card freshness-card" data-card-id="freshness">
       <span class="drag-grip">⋮⋮</span>
       <div class="card-title">Data Freshness</div>
@@ -1183,6 +1218,14 @@
         <tbody id="freshness-body"></tbody>
       </table>
     </div>
+
+    </div><!-- /settings-col-1 -->
+
+    <!-- Resizable divider between settings columns -->
+    <div class="settings-divider" id="settings-col-divider"></div>
+
+    <!-- Settings column 2: Session + Positions + Log -->
+    <div class="settings-log-col" id="settings-col-2">
 
     <!-- All-day trading session -->
     <div class="card session-card" data-card-id="session">
@@ -1218,7 +1261,17 @@
       </div>
     </div>
 
-    <!-- Last signal (moved from right panel) -->
+    </div><!-- /settings-log-col -->
+
+  </div><!-- /left-panel -->
+
+  <!-- Panel resize handle (chart view only) -->
+  <div class="panel-divider" id="panel-divider" title="Drag to resize panels"></div>
+
+  <!-- Right panel (chart view) -->
+  <div class="right-panel" id="right-panel">
+
+    <!-- Last signal -->
     <div id="signal-banner" class="card" data-card-id="signal"
          style="background: var(--green-dim); border-color: var(--green); padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--green); display: none;">
       <div class="sig-label" style="font-size:9px">Last Signal</div>
@@ -1250,11 +1303,6 @@
 
   </div>
 
-  <!-- Panel resize handle -->
-  <div class="panel-divider" id="panel-divider" title="Drag to resize panels"></div>
-
-  <!-- Right panel -->
-  <div class="right-panel" id="right-panel">
     <!-- SPY chart -->
     <div class="card chart-card" data-card-id="chart">
       <span class="drag-grip">⋮⋮</span>
