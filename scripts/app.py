@@ -439,15 +439,20 @@ def _cached_prior_levels(symbol: str = "SPY") -> dict:
 
 
 def refresh_prices() -> None:
-    try:
-        price, chg_pct, session = trader.get_symbol_price(state["active_symbol"])
-        with _state_lock:
-            state["market_session"] = session
-            if price is not None:
-                state["spy_price"]      = price
-                state["spy_change_pct"] = chg_pct
-    except Exception as e:
-        log.warning(f"refresh_prices (price) failed: {e}")
+    # Refresh ALL symbols so the Data Freshness panel stays current for every tab,
+    # not just the active one. Each call also stamps price:SYM freshness.
+    active_sym = state["active_symbol"]
+    for sym in _SYMBOLS_ORDERED:
+        try:
+            price, chg_pct, session = trader.get_symbol_price(sym)
+            if sym == active_sym:
+                with _state_lock:
+                    state["market_session"] = session
+                    if price is not None:
+                        state["spy_price"]      = price
+                        state["spy_change_pct"] = chg_pct
+        except Exception as e:
+            log.warning(f"refresh_prices ({sym}) failed: {e}")
     try:
         vix = _cached_vix()
         if vix:
