@@ -616,6 +616,82 @@ Use this checklist before submitting any order. Each item should have a definiti
 
 ---
 
+## 17. Discipline & Systematic Trading (Smith, Dummies, Cofnas)
+
+*Distilled from a second-pass review of all 27 PDFs in `/Users/bsannadi/Desktop/books/Trading/Options Trading` — focused on chapters with highest rule/checklist density that weren't already captured.*
+
+### 17a. Self-Discipline as the Differentiator (Smith, *Option Strategies*, ch. 24)
+
+> "I can teach the intellectual knowledge necessary to trade options, but it is much more difficult to teach self-discipline." — Courtney Smith
+
+Smith's hiring filter for traders: looks for **Marines, military veterans, athletes, or STEM degrees** — proxies for discipline. The intellectual content is teachable; the discipline isn't.
+
+**Why it matters for an AI-assisted system:** the LLM debate gate substitutes some of the discipline burden. The system *enforces* discipline by:
+- Refusing entries that fail any of the 18 risk gates (mechanical, not discretionary)
+- Auto-trade ON eliminates the "I'll just take this one" override
+- Logged decision trail enables post-trade audit (what Smith calls the "bizarre twists of the mind" — minds that find creative ways to lose money)
+
+**Rule for this system:** every manual override (skip in modal, manual close, DRY_RUN flip mid-session) must be logged with a *reason field* so the EOD review can catch discipline drift.
+
+### 17b. What Makes a Good Trading System (*Trading Options For Dummies*, ch. 7)
+
+A system is fit to trade real money only if it has ALL of these properties:
+
+| # | Property | How we measure |
+|---|----------|----------------|
+| 1 | Average win > average loss | EOD review `expectancy` field |
+| 2 | Low standard deviation (system profit close to median) | Need to add: rolling 20-day Sharpe |
+| 3 | Manageable drawdowns | `WEEKLY_LOSS_HALT_PCT = 4%` + intraday max-DD tracking |
+| 4 | **Does NOT rely on a handful of trades** for profitability | New TODO: log "top-3 trade contribution %" — if > 50%, system has fat-tail risk masking lack of edge |
+| 5 | Wins on *more than one* market regime | New TODO: split EOD review by VIX regime (low/normal/high) |
+
+**Dummies' 9-step backtest framework** (already partly implemented in `scripts/backtest.py`):
+1. Identify strategy basis
+2. Identify entry/exit rules
+3. Identify market + period
+4. Identify account assumptions (system + trade allocations)
+5. Test, evaluate
+6. Identify reasonable filters to minimize losers
+7. Add filter, retest
+8. **Add risk-management component** ← this is where 95% of retail backtests skip
+9. Final test
+
+**Rule:** never trust a backtest result that hasn't been through step 8.
+
+### 17c. Cofnas's 11 Practice-Trade Categories (*Trading Binary Options*, ch. 11)
+
+Cofnas defines a self-assessment grid: every trader should run 10 trades in each of 11 distinct setup types to **find which they're actually good at**. We can map these to our system's signal types:
+
+| Cofnas Type | What it tests | Our system equivalent |
+|-------------|---------------|----------------------|
+| 10 ATM trades | Entry-timing skill on momentum | VWAP-momentum signals |
+| 10 ITM trades | Joining confirmed trends | Trend-continuation signals |
+| 10 OTM trades | Contrarian breakouts | ORB breakout (low-prob, high-payoff) |
+| 10 DOOM (deep OTM) trades | Mathematics of low-prob/high-payoff | We avoid these (Delta < 0.30 = reject) |
+| 10 DITM trades | High-probability spotting | We avoid these (Delta > 0.70 = reject — overpaying) |
+| 10 Gut trades | "Blink" intuition for paralysis-by-analysis | **System refuses** — no rule-less entries |
+| 10 Headline trades | News-sentiment skill | News filter (pre-veto, not entry signal) |
+| 10 Contrarian trades | When is the crowd wrong? | Mean-reversion signals at extremes |
+| 10 Bounce trades | Range/channel trading | Bollinger-band touch + RSI-extreme entries |
+| 10 Breakout trades | Range-break trading | ORB breakout |
+| 10 Data-release trades | FOMC/CPI/NFP | **Should be vetoed** (TODO #5 macro blackout) |
+
+**Edge implication:** the system covers 5–6 of Cofnas's 11 categories cleanly. If EOD attribution shows we lose money on, say, "10 Contrarian trades" cluster, we should temporarily disable mean-reversion signals while we tune.
+
+**Rule for this system:** persist signal-type per trade (`signal_class: orb_breakout | vwap_momentum | trend_cont | mean_rev | range_bounce`) and split EOD P&L by class. Currently aggregated.
+
+### 17d. Order-Type Discipline (Fontanills, *Trade Options Online*, App A)
+
+The 17 order types Fontanills enumerates collapse into 3 categories for our system:
+
+1. **Limit** — primary execution. Cap price at mid → walk to ask × 1.002 if unfilled.
+2. **Stop-limit** — for protective stops (avoid market-order slippage on illiquid options at the stop trigger).
+3. **Market-on-close** (15:50 ET) — hard-close branch uses this for the final flatten.
+
+**Rule:** never use plain `Market` orders on options. Spreads can be 5%+ on stocks during fast moves; on options, bid/ask collapse and you can pay 20%+ over fair value. Always limit, even on emergency closes.
+
+---
+
 ## Appendix: Quick Rules Summary
 
 | Rule | Threshold | Action |
@@ -655,3 +731,8 @@ Use this checklist before submitting any order. Each item should have a definiti
 | Thomsett put rule | Don't buy puts after 2%+ down day | IV already inflated; wait for relief bounce |
 | Thomsett put rule | Put RSI sweet spot | 40–55, NOT < 30 (oversold = bounce risk) |
 | Thomsett put rule | Put profit target | +75–100% (more aggressive than calls — bounded upside) |
+| Smith discipline | Mind plays tricks | Manual overrides must be logged with reason — catch discipline drift |
+| Dummies system rule | Top-3 trade share | If > 50% of P&L from 3 trades → no edge, fat-tail luck |
+| Cofnas no-go | Pure "gut" entries | System refuses — every entry must trace to rules |
+| Cofnas no-go | Data-release trades (NFP/CPI/FOMC) | Vetoed (overlaps with macro blackout TODO #5) |
+| Fontanills order rule | Never use Market orders on options | Always Limit (5–20% slippage risk on Market) |

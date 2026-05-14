@@ -111,6 +111,11 @@ _KB_PREAMBLE = (
     "• Thomsett Put Rule: Best put RSI window is 40–55 (NOT < 30, oversold means bounce coming)\n"
     "• Thomsett Put Rule: Put profit target is +75–100% (more aggressive than calls — puts have bounded upside)\n"
     "• Mechanic's Checklist (Levy): Every signal must pass ALL 18 risk gates with explicit pass/fail — no judgment calls\n"
+    "• Smith Discipline Rule: If a setup requires 'just this once' override, reject — the mind plays tricks\n"
+    "• Dummies System Rule: A good system has avg-win > avg-loss AND doesn't depend on a few outlier trades for P&L\n"
+    "• Cofnas Rule: Pure 'gut' / 'blink' entries are forbidden — every entry must trace to a specific signal class\n"
+    "• Cofnas Rule: Block all entries during scheduled data releases (NFP first Friday, CPI mid-month, FOMC days)\n"
+    "• Fontanills Order Rule: Never use Market orders on options — Limit only (5–20%% slippage risk on Market)\n"
 ) + (_KB_RULES[:1500] if _KB_RULES else "")
 
 _BULL_SYSTEM = (
