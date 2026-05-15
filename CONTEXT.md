@@ -12,7 +12,16 @@ Quick-resume doc for Claude (and humans). Keep it current. Read this first; deep
 - **CLI fallback:** `nohup /Users/bsannadi/Desktop/AlpacaTrader/venv/bin/python3.11 /Users/bsannadi/Desktop/AlpacaTrader/scripts/app.py > /dev/null 2>&1 &` → http://localhost:5000
 - ⚠️ **Use `python3.11`, not `python`** (the latter is 3.9 with missing deps)
 - ⚠️ **Redirect stdout to `/dev/null`** when launching — the FileHandler already writes to `auto_trader.log`. Capturing stdout into the same file causes duplicate lines.
-- **Three reference docs in repo root:** [ARCHITECTURE.md](ARCHITECTURE.md) (system design), [TODO.md](TODO.md) (prioritized work), [CONTEXT.md](CONTEXT.md) (this file).
+- **Four reference docs in repo root:** [ARCHITECTURE.md](ARCHITECTURE.md) (system design), [TODO.md](TODO.md) (prioritized work), [CONTEXT.md](CONTEXT.md) (this file), [ANALYSIS_LOG.md](ANALYSIS_LOG.md) (behavior-vs-KB cross-references).
+
+> 🔁 **STANDING CONVENTION — always do this:** Whenever you analyze live system
+> behavior (skip reasons, EOD review, why-no-trade, signal quality, etc.),
+> cross-reference it against [knowledge_base.md](knowledge_base.md) and append
+> an entry to [ANALYSIS_LOG.md](ANALYSIS_LOG.md) with: observed behavior, the
+> KB rule(s) it maps to (§ ref), and a verdict (✅ ENFORCED / ⚠️ DRIFT / ❓ GAP).
+> This is the loop that catches silent strategy drift. Never present an analysis
+> without the KB comparison — an analysis without a "is this correct per our
+> codified rules?" verdict is incomplete.
 
 ---
 
