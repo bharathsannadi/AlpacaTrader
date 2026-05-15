@@ -20,7 +20,7 @@ Pick from this list in order. Each item is independently shippable and committab
 | 1 | **Backtest harness v2** — Polygon Options + Stocks Starter (subscribed today), 3-yr lookback, real bid/ask fills, debate gate included, walk-forward validation. Output: MD report + dashboard tab. THIS IS THE GATING ITEM — go-live decision rides on the result. | ~16 | Blocked on user activating Polygon Stocks Starter ($29/mo). When ready, user says "stocks active". | §🆕-P0-A below |
 | 2 | **PDT counter for sub-25K accounts** — ✅ **SHIPPED 2026-05-15**. Self-enforced day-trade tracking (~/.spy_trader/day_trades.json), rolling 5-business-day count, hard-block at 3, SUB_PDT_MAX_DAILY_ENTRIES=2, UI badge. Also fixed pre-existing dead-code: daily_entries_ok/record_daily_entry were never called. | ~3 | ✅ DONE | §🆕-P0-B below |
 | 3 | **Account-size adapter** — ✅ **SHIPPED 2026-05-15**. eff_* accessors apply sub-$10K profile (risk 4%, daily-loss 20%, profit-lock 10%, portfolio 20%) when equity<$10K. MIN_TRADE_NOTIONAL=$300 friction floor. UI-override > profile > defaults. Startup banner. Unit-tested. | ~2 | ✅ DONE | §🆕-P0-C below |
-| 4 | **Correlation-adjusted delta cap** (existing P1 #7) — track signed delta-dollar across all open positions; cap net portfolio delta at ±5% of equity. Six high-beta tech bull signals must NOT stack into one directional bet. | ~3-4 | Specified, ready to implement. | §P1 #7 |
+| 4 | **Correlation-adjusted delta cap** (existing P1 #7) — ⚠️ **WAS SILENTLY DEAD → BUG-FIXED 2026-05-15**. Code existed + wired but 2 stacked bugs (tuple unpack + bs_delta sig) behind a bare except made net delta ALWAYS 0 → never fired. Fixed; gate now computes. **Threshold calibration (5% notional too tight for options leverage) is backtest-coupled — see §P1-I.** | ~3-4 | ✅ FIX DONE / calibration → item 1 | §P1 #7 + §🆕-P1-I |
 | 5 | **Macro blackout** (existing P1 #5) — ✅ **ALREADY SHIPPED** (found during entry audit). `macro_event_blackout_ok()` wired at line ~3501, full 2026 FOMC/CPI/NFP calendar, 30-min windows. Status was stale. | ~2 | ✅ DONE | §P1 #5 |
 | 6 | **Process supervision** (existing P2 #17) — launchd plist with `KeepAlive=true`. The `com.spy_auto_trader.plist` draft is already in repo. Add 5-line watchdog shell with `kill -0 $PID` healthcheck. | ~3-4 | Plist drafted, needs install instructions + watchdog wrapper. | §P2 #17 |
 | 7 | **Equity curve persistence** (existing P2 #14) — append day-end equity to `~/.spy_trader/equity_curve.json`. Display rolling 30-day equity + drawdown chart in dashboard. Without this you cannot tell if you're getting better or worse. | ~3-4 | Specified, ready to implement. | §P2 #14 |
@@ -62,6 +62,26 @@ Pick from this list in order. Each item is independently shippable and committab
 - **Gap H6 — VIX-spike / vol-cluster rules missing:** KB §12 Sinclair: *"After VIX spike > 5 pts in 1 day, use spreads only 2–3 days"* + *"SPY > 1%/day for 3+ consecutive days → switch to debit spreads."* Not implemented (partially overlaps TODO #11 VIX RoC). Without spread capability (H2), interim = **skip** new naked entries for 2–3 days after a >5pt VIX spike rather than spread.
 - **Priority within H:** H1 (IVR cutoff) + H3 (confluence) + H4 (deterministic VSA) are interim-fixable now without spread capability and are the highest-value. H2 (spreads) + H5 + H6 wait for backtest validation that the base naked strategy has edge.
 - **Hours:** H1 ~1 · H3 ~2 · H4 ~3 · H5 ~2 · H6 ~1.5 · H2 ~10+ (big). Interim trio (H1+H3+H4) ≈ 6 hr.
+
+### 🆕-P1-I. Correlation-cap threshold calibration (backtest-coupled)
+
+- **Status:** New 2026-05-15. The cap now *computes* (bugs fixed) but the
+  metric/threshold is mis-scaled: `delta×spot×100×qty` = equivalent-share
+  notional (huge options leverage). At `MAX_NET_PORTFOLIO_DELTA_PCT=0.05`
+  the cap is $250 on a $5K account — a single ATM option (~$11K delta-$)
+  blocks every trade.
+- **The KB intent** (§Maximum-Exposure, §15 Levy #10) is to stop *correlated
+  directional concentration*, NOT raw notional. Candidate fixes (backtest
+  item 1 sweeps these, don't hand-pick):
+  1. notional-delta cap at a realistic % (e.g. 100–300% of equity)
+  2. premium-weighted net delta (risk-based, not notional)
+  3. max same-direction open position count (simplest; e.g. ≤3 of 6 names)
+  4. beta-adjusted: sum (qty×|delta|×beta_to_SPY) capped
+- **Until calibrated:** the gate fires conservatively (blocks same-dir adds
+  once any real exposure exists). For a 3-trade/week sub-PDT account this is
+  acceptable interim behavior (errs toward fewer correlated bets) but will
+  over-block on bigger accounts. Document; don't loosen by guess.
+- **Hours:** ~1 (once backtest picks the variant).
 
 ### 🆕-P1-G. Dynamic stop-loss / profit-target (context-aware exits)
 

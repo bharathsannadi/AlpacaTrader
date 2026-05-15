@@ -156,3 +156,41 @@ cutoff) is 1 hr and doesn't need spread capability.
 makes money. H1/H3/H4 interim fixes are backtest-swept (item 1), not
 hand-set. ⚠️ DRIFT means "code diverged from documented strategy" — whether
 the documented strategy is the profitable one is still the backtest's call.
+
+---
+
+## 2026-05-15 — Item 4 build: correlation cap was silently DEAD (2 stacked bugs)
+
+**Observed:** `portfolio_delta_check` (KB §Maximum-Exposure / §15 Levy #10
+correlation control) was wired into the entry stack but `net_portfolio_delta_
+dollars()` had TWO bugs behind one bare `except: continue`:
+1. `spot = get_symbol_price(sym) or 0.0` — get_symbol_price returns a TUPLE
+   `(price,chg,session)`; `tuple <= 0` → TypeError → swallowed.
+2. `bs_delta(..., is_call=...)` — real sig is `(spot,strike,tte,iv,option_type)`;
+   bad kwarg + missing `iv` → TypeError → swallowed.
+Net effect: every position contributed 0 → net delta ALWAYS 0.0 → the cap
+NEVER fired. A key risk control for the user's exact profile (6 high-beta
+tech names) was decorative.
+
+| KB rule | Code state (before) | Verdict |
+|---|---|---|
+| §Max-Exposure / §15 #10 — cap correlated directional exposure | wired but silently always-0 | ❓ GAP (present-but-dead) → now ✅ ENFORCED (computes) |
+
+**Verdict:** Bug fix = ✅ correct, gate now computes real signed delta.
+BUT a calibration flaw remains: delta-dollars = delta×spot×100×qty is
+equivalent-share *notional* (massive options leverage). At 5% of equity the
+cap = $250 on a $5K acct = blocks EVERY trade (1 ATM option ≈ $11K delta-$).
+The KB rule is about directional *concentration*, not raw notional — the
+metric and/or threshold is mis-scaled for an options account.
+
+**Disciplined resolution:** ship the bug fix (unambiguously correct — a dead
+gate computing is strictly better). Do NOT hand-pick a new threshold —
+flag it as backtest-coupled (item 1 sweep): test (a) notional-delta cap at
+various %, (b) premium-weighted-delta cap, (c) max same-direction position
+count. Pick the variant that holds out-of-sample. Logged as TODO §P1-I.
+
+**Meta-pattern (3rd audit now):** exit (§P1-G), entry (§P1-H), and now this —
+the deterministic risk-gate *scaffolding* exists but pieces are silently
+inert or mis-scaled. The bare-except-swallows-everything anti-pattern is the
+common root. Worth a dedicated sweep for other `except Exception: continue`
+blocks hiding dead logic.

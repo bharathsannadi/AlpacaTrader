@@ -4110,17 +4110,28 @@ def net_portfolio_delta_dollars() -> float:
                 continue
             sym, ymd, cp, strike_str = m.group(1), m.group(2), m.group(3), m.group(4)
             strike = int(strike_str) / 1000.0
-            spot = get_symbol_price(sym) or 0.0
+            # get_symbol_price returns (price, chg_pct, session) — must unpack.
+            # The old `spot = get_symbol_price(sym) or 0.0` set spot to the
+            # whole tuple → `spot <= 0` raised TypeError → caught by the bare
+            # except → EVERY position contributed 0 → net delta always 0.0 →
+            # this entire correlation cap was silently dead. Fixed 2026-05-15.
+            _px = get_symbol_price(sym)
+            spot = float(_px[0]) if (_px and _px[0]) else 0.0
             if spot <= 0:
                 continue
             exp_date = datetime.strptime(ymd, "%y%m%d").date()
             tte_days = max(1, (exp_date - datetime.now(ET).date()).days)
-            d = bs_delta(spot, strike, tte_days, is_call=(cp == "C"))
-            # bs_delta returns positive for calls, negative-ish for puts via 1-d for puts
-            if cp == "P":
-                d = -abs(d)
-            else:
-                d = abs(d)
+            # bs_delta signature is (spot, strike, tte_days, iv, option_type).
+            # The old call `bs_delta(..., is_call=...)` raised TypeError (no
+            # such kwarg + missing required `iv`) → caught by the bare except
+            # → 0. Second silent bug stacked on the tuple bug. Fixed
+            # 2026-05-15. IV: a coarse 0.30 proxy is fine here — this is a
+            # risk *cap*, not a pricing engine; we need approximate signed
+            # delta, not exact. (Could refine to per-symbol IV later.)
+            d = bs_delta(spot, strike, tte_days, 0.30,
+                         option_type=("call" if cp == "C" else "put"))
+            # bs_delta returns + for calls, − for puts; normalize by direction
+            d = abs(d) if cp == "C" else -abs(d)
             total += d * spot * 100 * pos["remaining"]
         except Exception:
             continue
