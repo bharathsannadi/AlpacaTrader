@@ -491,123 +491,96 @@ def news_check_ok(symbol: str) -> bool:
 
 
 # ── Market data ───────────────────────────────────────────────────────────────
-# Sticky data source: once a symbol falls back to yfinance for the day, KEEP using
-# yfinance until the next trading day. Mixing Alpaca + yfinance bars within a
-# session causes silent VWAP/EMA/MACD drift — different timestamp conventions and
-# slightly different prices for the same minute. Map: symbol → trading-day date.
-_yf_sticky: dict[str, object] = {}     # symbol -> date when yfinance fallback was triggered
+# Data source (locked 2026-05-15): yfinance for full-day OHLCV history +
+# Alpaca free latest-trade endpoint to patch the forming bar to real-time.
+# The old sticky-yfinance pin was removed — it existed to prevent mixing
+# Alpaca-bars + yfinance-bars mid-day, but Alpaca's free tier has no
+# stock-bars entitlement at all, so there's only one bar source now and
+# nothing to drift against. See _alpaca_latest_price() docstring for the
+# full diagnosis.
 
-def _is_sticky_yfinance(symbol: str) -> bool:
-    today = datetime.now(ET).date()
-    pinned = _yf_sticky.get(symbol)
-    return pinned == today
 
-def _pin_yfinance(symbol: str) -> None:
-    _yf_sticky[symbol] = datetime.now(ET).date()
+def _alpaca_latest_price(symbol: str) -> Optional[float]:
+    """Real-time last trade price from Alpaca's free latest-trade endpoint.
+
+    DIAGNOSIS 2026-05-15: Alpaca's free "Basic" market-data plan has ZERO
+    entitlement to the historical stock-bars endpoint (get_stock_bars returns
+    0 bars for every symbol incl. SPY, today AND yesterday — not an embargo).
+    But get_stock_latest_trade WORKS in real-time on the same free tier (same
+    entitlement as option quotes). We use it to patch the forming bar's close
+    so a 5-min-bar swing system is effectively real-time on free data.
+    """
+    if DATA_CLIENT is None:
+        return None
+    try:
+        lt = DATA_CLIENT.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=[symbol], feed="iex")
+        )
+        if symbol in lt and lt[symbol].price > 0:
+            return float(lt[symbol].price)
+    except Exception as e:
+        log.debug(f"_alpaca_latest_price({symbol}): {type(e).__name__}: {e}")
+    return None
 
 
 def fetch_bars(symbol: str = "SPY", interval_min: int = 5):
     """Fetch intraday bars for `symbol` (today's session) with the indicator stack.
 
-    Tries Alpaca feeds in order (iex → sip → default) then falls back to yfinance
-    so sessions don't silently skip when IEX has no data for a symbol (e.g. SPY
-    is NYSE Arca-listed, not IEX-listed).
-
-    Once yfinance is used for a symbol on a given trading day, all subsequent
-    fetch_bars() calls for that symbol stay on yfinance — see _yf_sticky above.
+    Data source: yfinance for the full-day OHLCV history (Alpaca free tier has
+    no stock-bars entitlement — confirmed dead, see _alpaca_latest_price docstring).
+    The most recent (forming) bar's close is then patched with Alpaca's
+    real-time latest-trade price so signals fire on current price, not a
+    2-3 min-stale yfinance close.
     """
     symbol = symbol.upper()
-
-    # Fetch from market open today through now
-    now_et      = datetime.now(ET)
-    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-    if now_et < market_open:
-        market_open -= timedelta(days=1)
-
-    sym_bars = []
-    # Skip Alpaca entirely if we already pinned yfinance for this symbol today.
-    if DATA_CLIENT and not _is_sticky_yfinance(symbol):
-        tf    = TimeFrame(interval_min, TimeFrameUnit.Minute)
-        start = market_open.astimezone(timezone.utc)
-        for feed_attempt in ("iex", "sip", None):
-            try:
-                kwargs = dict(
-                    symbol_or_symbols=[symbol],
-                    timeframe=tf,
-                    start=start,
-                )
-                if feed_attempt is not None:
-                    kwargs["feed"] = feed_attempt
-                bars = DATA_CLIENT.get_stock_bars(StockBarsRequest(**kwargs))
-                sym_bars = bars[symbol] if symbol in bars else []
-                if sym_bars:
-                    break
-                log.info(
-                    f"fetch_bars({symbol}): feed={feed_attempt!r} returned 0 bars "
-                    f"— trying next feed"
-                )
-            except Exception as e:
-                log.info(
-                    f"fetch_bars({symbol}): feed={feed_attempt!r} "
-                    f"raised {type(e).__name__}: {e}"
-                )
-
-    # yfinance fallback — and pin for the rest of the day to avoid indicator drift.
-    if not sym_bars:
-        _pin_yfinance(symbol)
-        log.info(f"fetch_bars({symbol}): Alpaca returned 0 bars — falling back to yfinance")
-        try:
-            ticker = yf.Ticker(symbol)
-            yf_df  = ticker.history(period="1d", interval=f"{interval_min}m")
-            if yf_df.empty:
-                log.warning(f"fetch_bars({symbol}): yfinance also returned 0 bars")
-                return None
-            yf_df = yf_df.rename(columns={
-                "Open": "open_price", "High": "high_price",
-                "Low":  "low_price",  "Close": "close_price",
-                "Volume": "volume",
-            })
-            yf_df.index.name = "begins_at"
-            yf_df = yf_df.reset_index()[
-                ["begins_at", "open_price", "high_price", "low_price", "close_price", "volume"]
-            ]
-            if yf_df["begins_at"].dt.tz is None:
-                yf_df["begins_at"] = yf_df["begins_at"].dt.tz_localize("UTC")
-            yf_df["begins_at"] = yf_df["begins_at"].dt.tz_convert(ET)
-            yf_df = yf_df.sort_values("begins_at").reset_index(drop=True)
-            # Strip pre-market bars so VWAP anchors correctly at 9:30 ET.
-            # yfinance `period="1d"` can include pre-market rows; including them
-            # shifts the cumulative VWAP anchor before the regular session opens.
-            market_open_time = yf_df["begins_at"].iloc[0].replace(
-                hour=9, minute=30, second=0, microsecond=0
-            )
-            yf_df = yf_df[yf_df["begins_at"] >= market_open_time].reset_index(drop=True)
-            if yf_df.empty:
-                log.warning(f"fetch_bars({symbol}): no bars at or after 9:30 ET")
-                return None
-            log.info(f"fetch_bars({symbol}): yfinance fallback — {len(yf_df)} bars (from 9:30 ET)")
-            stamp_freshness(f"bars:{symbol}", source_tag="yfinance")
-            return _add_indicators(yf_df)
-        except Exception as e:
-            log.warning(f"fetch_bars({symbol}): yfinance fallback failed: {e}")
+    try:
+        ticker = yf.Ticker(symbol)
+        yf_df  = ticker.history(period="1d", interval=f"{interval_min}m")
+        if yf_df.empty:
+            log.warning(f"fetch_bars({symbol}): yfinance returned 0 bars")
+            return None
+        yf_df = yf_df.rename(columns={
+            "Open": "open_price", "High": "high_price",
+            "Low":  "low_price",  "Close": "close_price",
+            "Volume": "volume",
+        })
+        yf_df.index.name = "begins_at"
+        yf_df = yf_df.reset_index()[
+            ["begins_at", "open_price", "high_price", "low_price", "close_price", "volume"]
+        ]
+        if yf_df["begins_at"].dt.tz is None:
+            yf_df["begins_at"] = yf_df["begins_at"].dt.tz_localize("UTC")
+        yf_df["begins_at"] = yf_df["begins_at"].dt.tz_convert(ET)
+        yf_df = yf_df.sort_values("begins_at").reset_index(drop=True)
+        # Strip pre-market bars so VWAP anchors correctly at 9:30 ET.
+        market_open_time = yf_df["begins_at"].iloc[0].replace(
+            hour=9, minute=30, second=0, microsecond=0
+        )
+        yf_df = yf_df[yf_df["begins_at"] >= market_open_time].reset_index(drop=True)
+        if yf_df.empty:
+            log.warning(f"fetch_bars({symbol}): no bars at or after 9:30 ET")
             return None
 
-    rows = []
-    for bar in sym_bars:
-        rows.append({
-            "begins_at":   bar.timestamp,
-            "open_price":  float(bar.open),
-            "high_price":  float(bar.high),
-            "low_price":   float(bar.low),
-            "close_price": float(bar.close),
-            "volume":      float(bar.volume),
-        })
+        # ── Real-time patch: overwrite the forming bar's close with Alpaca's
+        #    live last-trade price. Eliminates yfinance's 2-3 min lag on the
+        #    exact bar signals evaluate. Also fix high/low if the live print
+        #    exceeds the stale bar's range. $0 — uses free latest-trade endpoint.
+        live_px = _alpaca_latest_price(symbol)
+        src     = "yfinance"
+        if live_px is not None:
+            i = yf_df.index[-1]
+            stale_close = yf_df.at[i, "close_price"]
+            yf_df.at[i, "close_price"] = live_px
+            yf_df.at[i, "high_price"]  = max(yf_df.at[i, "high_price"], live_px)
+            yf_df.at[i, "low_price"]   = min(yf_df.at[i, "low_price"],  live_px)
+            src = f"yfinance+live(${live_px:.2f} was ${stale_close:.2f})"
 
-    df = pd.DataFrame(rows)
-    df["begins_at"] = pd.to_datetime(df["begins_at"], utc=True).dt.tz_convert(ET)
-    df = df.sort_values("begins_at").reset_index(drop=True)
-    stamp_freshness(f"bars:{symbol}", source_tag="alpaca")
-    return _add_indicators(df)
+        log.info(f"fetch_bars({symbol}): {len(yf_df)} bars (from 9:30 ET) [{src}]")
+        stamp_freshness(f"bars:{symbol}", source_tag="yfinance+alpaca_live" if live_px else "yfinance")
+        return _add_indicators(yf_df)
+    except Exception as e:
+        log.warning(f"fetch_bars({symbol}): failed: {e}")
+        return None
 
 
 # Backward-compatible alias
