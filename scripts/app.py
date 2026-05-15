@@ -694,16 +694,29 @@ def on_login(data):
     session["login_time"]     = datetime.now(timezone.utc).isoformat()
     login_tracker.record_success(ip)
     security_log.info(f"Successful Alpaca login from {ip} (paper={paper})")
+
+    # Tell the client login succeeded IMMEDIATELY — before any slow data
+    # fetch. refresh_account()/refresh_prices() hit yfinance+Alpaca and can
+    # take 1-5s; if we block the emit behind them the UI spins, the user
+    # assumes failure and retries (→ duplicate logins in the log).
+    socketio.emit("login_result", {"success": True}, to=request.sid)
+
     trader.init_memory(enabled=state.get("trade_memory_enabled", True))
     trader.init_debate(enabled=state.get("debate_enabled", True))
     trader.init_news_filter(enabled=state.get("news_filter_enabled", True))
     trader.DRY_RUN = state.get("dry_run", False)
     trade_approval.auto_trade = state.get("auto_trade", True)
-    refresh_account()
-    refresh_prices()
-    socketio.emit("login_result", {"success": True})
-    emit_state()
     log.info(f"Connected to Alpaca {'PAPER' if paper else 'LIVE'} — equity ${float(account.equity):,.2f}")
+
+    # Slow path AFTER the client already knows it's in — populate header/state.
+    def _post_login_refresh():
+        try:
+            refresh_account()
+            refresh_prices()
+            emit_state()
+        except Exception as e:
+            log.warning(f"post-login refresh failed: {e}")
+    socketio.start_background_task(_post_login_refresh)
 
 
 @socketio.on("logout")
