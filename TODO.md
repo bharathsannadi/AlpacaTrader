@@ -20,10 +20,50 @@ Pick from this list in order. Each item is independently shippable and committab
 | 8 | **Max account risk % stepper in Settings** (existing P1 #4b) — make `MAX_PORTFOLIO_RISK` configurable from UI without code edit + restart. | ~1.5 | Specified with full wiring plan. | §P1 #4b |
 | 9 | **Tax / wash-sale awareness** (existing 🎯-P3) — options = short-term capital gains regardless of holding period. Add a quarterly P&L tax-impact report. Not blocking but material at scale. | ~3 | Wishlist, post-go-live. | §🎯-P3 |
 | 10 | **Slippage trend dashboard tile** (existing P1 #10) — `entry_slippage_bps` is captured but not visualized. Tile showing rolling 30-trade avg slippage + trendline. If drifting up, our fills are getting worse. | ~2 | Data captured, viz missing. | §P1 #10 |
+| 11 | **Per-symbol P&L attribution** (new P1 D) — companion to per-signal-class shipped today. Tells you which SYMBOLS make/lose money (vs which strategies). Add to EOD review. | ~1.5 | New — from rating gap. | §🆕-P1-D below |
+| 12 | **Time-of-day spread filter** (new P1 E) — first 5 min + last 5 min have 3-5× wider spreads. Either tighter MAX_SPREAD_PCT in those windows or hard-block them. | ~2 | New — from rating gap. | §🆕-P1-E below |
+| 13 | **Real-money go-live checklist** (new P1 F) — single `GO_LIVE_CHECKLIST.md` consolidating all readiness criteria + runtime gate that refuses live mode until all checked. | ~4 | New — from rating gap. | §🆕-P1-F below |
 
-**Recommendation:** Items 1 → 2 → 3 are the real-money gating chain. Items 4-7 are P1 risk gaps. Items 8-10 are nice-to-have polish. Don't skip ahead — the backtest result (item 1) may reveal that some risk gates need re-tuning, which would change the design of items 4-5.
+**Recommendation:** Items 1 → 2 → 3 are the real-money gating chain. Items 4-7 are P1 risk gaps. Items 8-10 are polish. Items 11-13 are observability + go-live discipline (do AFTER backtest item 1 produces real data to attribute and threshold against). Don't skip ahead — the backtest result (item 1) may reveal that some risk gates need re-tuning, which would change the design of items 4-5 and the thresholds in item 13.
 
 **Reality check first:** before starting item 1, confirm Polygon Stocks Starter is active. The smoke test from 2026-05-14 showed 403 on `/v2/aggs/...` — that endpoint must return 200 with bar data before backtest_v2 work begins.
+
+---
+
+## 🆕 P1 — Real-money readiness gaps (from 2026-05-14 rating)
+
+### 🆕-P1-D. Per-symbol P&L attribution (alongside per-signal-class)
+
+- **Status:** New — surfaced from rating's "Observability 8/10" gap.
+- **Why it matters:** Signal-class attribution (shipped today, commit `147dcb1`) tells us WHICH strategies make money. Per-symbol attribution tells us WHICH symbols make money. Both are needed — if `vwap_momentum` works on SPY but not NVDA, we want to keep the strategy and drop NVDA from the watchlist, not vice versa. Currently EOD aggregates all symbols together.
+- **Fix:**
+  1. Group `closed` trades in `eod_review()` by `symbol` (already in the close event dict).
+  2. Add a second summary block "Per-symbol P&L (best → worst)" with n / win% / total / avg, like the per-class block.
+  3. Bonus: 2-d cross-tab `{symbol × signal_class}` to find e.g. "NVDA orb_breakout has -8% expectancy."
+- **Hours:** ~1.5
+
+### 🆕-P1-E. Time-of-day spread filter (opening/closing minute degraded fills)
+
+- **Status:** New — surfaced from rating's "Execution quality 6/10" gap.
+- **Why it matters:** SPY ATM option spreads are typically 1-3¢ but in the first 5 min (9:30-9:35 ET) and last 5 min (15:55-16:00 ET) they widen to 5-15¢ — 3-5x normal. Current `MAX_SPREAD_PCT=5%` is a single global threshold. We're either accepting bad fills during these windows or rejecting good ones during normal hours.
+- **Fix:**
+  1. Time-bucketed spread limits: tighter `MAX_SPREAD_PCT=3%` during 9:30-9:35 and 15:55-16:00, normal `5%` otherwise.
+  2. Or simpler: hard-block new entries during these 10 cumulative minutes.
+  3. Track actual spread at fill time (`spread_at_fill_pct`) on each position to verify the filter is calibrated correctly.
+- **Hours:** ~2
+
+### 🆕-P1-F. Real-money go-live checklist (single auditable doc)
+
+- **Status:** New — readiness criteria are scattered across TODO sections, KB, ARCHITECTURE. Need ONE doc that's a hard pre-flight gate.
+- **Why it matters:** Going live should be an explicit deliberate decision, not a checkbox flip. The 60-day rule and 7 backtest thresholds and PDT readiness and correlation cap need to all be green AT THE SAME TIME. Currently scattered across 4 docs.
+- **Fix:** Create `GO_LIVE_CHECKLIST.md` — single page, 20-30 boxes covering:
+  - **Edge proven:** backtest profit factor > 1.5, Sharpe > 0.8, max DD < 12%, walk-forward decay < 25%, top-3 < 40%, beats SPY buy-and-hold (6 boxes)
+  - **Operational ready:** process supervision live, equity curve persisted, ERROR webhook firing, 24h stability run (4 boxes)
+  - **Risk controls live:** correlation delta cap, macro blackout, PDT counter, account-size adapter, max-risk slider in UI (5 boxes)
+  - **User ready:** 100+ paper trades on current params, weekly P&L tracking, written trading plan, max-DD threshold internalized, capital sized to 10-20% of intended initial (5 boxes)
+  - **External ready:** taxes considered, broker contact info, account beneficiary, paper-mode kept running in parallel for the first 30 days (4 boxes)
+- **The gate:** ALL boxes must be checked + dated + signed by the user before `PAPER_MODE` flips. Add a `_check_go_live_readiness()` function in `spy_auto_trader.py` that reads this file and refuses to start a live session if any unchecked.
+- **Hours:** ~2 to create the doc + ~2 to wire the runtime check
 
 ---
 
