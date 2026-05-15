@@ -48,3 +48,32 @@ KB rule. (If a future analysis finds a skip with no mapping KB rule, that's a
 rules are *applied*, not that the rules *make money*. That's the backtest's job
 (TODO item 1). An analysis can be ✅ ENFORCED and the strategy still net-negative
 if the rules are too strict and filter out winners. Keep this distinction.
+
+---
+
+## 2026-05-15 (11:48 ET) — Why-no-trade follow-up (sustained 0-trade day)
+
+**Observed:** Still 0 trades 2+ hours later. Market-wide low volume persists +
+lunch-hour lull (11:30–13:30 ET) active. Live vol ratios: SPY 0.68×, AMZN 0.99×,
+GOOG 0.42×, MSFT 0.85×, NVDA 0.53×, META 0.62× — all below institutional
+thresholds (0.8 floor / 1.3× ORB). META up to 24 suppressions.
+
+| Symbol | Block | KB rule | Verdict |
+|--------|-------|---------|---------|
+| SPY/NVDA/META | vol < 0.8 floor | §12 Sinclair vol-trend + §10 VSA | ✅ ENFORCED |
+| AMZN | vol < 1.3× ORB min | §6 ORB volume confirmation | ✅ ENFORCED |
+| GOOG | RSI 31 oversold-trap + dead vol | §16 Thomsett (put RSI 40–55, NOT <30) | ✅ ENFORCED |
+| MSFT | RSI 66.9 + vol gate | §3 RSI ceiling + vol gate | ✅ ENFORCED |
+
+**Verdict: ✅ ALL ENFORCED.** Consistent with the morning entry — same root
+cause (dead tape), zero drift, zero KB gaps. Two consecutive same-verdict
+analyses on the same day = the volume gate is the dominant filter on low-vol
+days.
+
+**Strategic flag (NOT drift — a backtest question):** 0 trades for a full
+session is correct *if* low-volume days are genuinely unprofitable. But this is
+now the central unanswered question — **does the volume gate filter out losers
+(good) or also filter out winners, leaving the strategy net break-even (bad)?**
+One quiet day can't answer it. This is precisely what backtest item 1 must
+measure: P&L of taken trades vs. the counterfactual P&L of the trades the volume
+gate *rejected*. Until then, ✅ ENFORCED stands but edge remains unproven.
