@@ -16,7 +16,7 @@ Pick from this list in order. Each item is independently shippable and committab
 
 | # | Item | Hours | Status | Section |
 |---|------|-------|--------|---------|
-| **0** | **Fix live data feed reliability** — Alpaca free stock-bars endpoint returns 0 bars for ALL symbols incl. SPY (option data works fine — different entitlement). Sticky-yfinance pin makes one early miss = stale all day. Dead `.env` keys compound it. FOUNDATIONAL — affects every trade decision. Fix: verify endpoint w/ fresh keys → remove sticky pin → skip dead sip/None feed attempts → real-time latest-trade aggregator if needed. | ~1-4 | 🟡 In progress — awaiting fresh paper keys for diagnosis | §🆕-P0-D below |
+| **0** | **Fix live data feed reliability** — ✅ **SHIPPED 2026-05-15** (commit `507a552`). Confirmed Alpaca free has zero stock-bars entitlement; switched to yfinance-primary + real-time latest-trade patch on the forming bar. Removed dead 3-call cascade + sticky pin. .env keys refreshed. | ~2 | ✅ DONE | §🆕-P0-D below |
 | 1 | **Backtest harness v2** — Polygon Options + Stocks Starter (subscribed today), 3-yr lookback, real bid/ask fills, debate gate included, walk-forward validation. Output: MD report + dashboard tab. THIS IS THE GATING ITEM — go-live decision rides on the result. | ~16 | Blocked on user activating Polygon Stocks Starter ($29/mo). When ready, user says "stocks active". | §🆕-P0-A below |
 | 2 | **PDT counter for sub-25K accounts** — track rolling 5-day day-trade count; hard-block 3rd day-trade. Adjust `MAX_DAILY_ENTRIES` from 8 → 2 in sub-25K mode. CRITICAL real-money blocker for the user's $5-25K target account. | ~3 | New — user is sub-PDT. | §🆕-P0-B below |
 | 3 | **Account-size adapter** — at $5-25K, current `MAX_RISK_PCT=0.005` (0.5%) yields only 1 contract max on most setups. Auto-tune sizing when account < $25K so a 0.5% risk actually deploys meaningful contracts (or accept the cap and document it). | ~2 | New — discovered during real-money readiness review. | §🆕-P0-C below |
@@ -76,7 +76,12 @@ Pick from this list in order. Each item is independently shippable and committab
 
 ## 🆕 P0 — Real-money gating items (added 2026-05-14)
 
-### 🆕-P0-D. Fix live data feed reliability (item 0 — foundational)
+### 🆕-P0-D. Fix live data feed reliability (item 0 — foundational) — ✅ SHIPPED 2026-05-15
+
+- **Status:** ✅ DONE — commit `507a552`. Diagnosis confirmed with fresh paper keys: Alpaca free Basic plan returns 0 stock bars for ALL symbols (SPY incl.), today + yesterday, all feeds — endpoint simply not in free plan. `get_stock_latest_trade` works real-time on same tier. Fix: yfinance primary for OHLCV + Alpaca latest-trade patches the forming bar to real-time. Dead 3-call cascade + sticky pin removed. .env keys refreshed. Verified live (e.g. `NVDA 13 bars [yfinance+live($226.99 was $226.90)]`).
+- **Follow-up (minor, separate):** duplicate log lines persist (every line written 2×). Single process confirmed (PID owns :5000 alone) → it's 2 root-logger handlers, not 2 processes. Cosmetic, doesn't affect trading. Tracked as new P3 item below.
+
+<details><summary>Original diagnosis/plan (for history)</summary>
 
 - **Status:** In progress 2026-05-15. Awaiting fresh Alpaca paper keys for endpoint diagnosis.
 - **Symptom:** Every `fetch_bars()` call for every symbol (including SPY) returns "Alpaca returned 0 bars — falling back to yfinance". yfinance works but is ~2-3 min delayed.
@@ -93,6 +98,14 @@ Pick from this list in order. Each item is independently shippable and committab
   5. **Fix `.env` keys** so backtest + standalone scripts authenticate.
 - **Why item 0:** every signal decision and every position-monitor cycle reads `fetch_bars`. Stale/missing data corrupts indicators (VWAP, EMA, RSI) → bad entries + missed exits. Nothing downstream (backtest, risk gates, go-live) is trustworthy until the live feed is.
 - **Hours:** 1 (Option B: pin removal + feed trim) to 4 (Option C: + real-time aggregator).
+
+</details>
+
+### 🆕-P3 — Duplicate log lines (cosmetic, from item 0 follow-up)
+
+- **Status:** New 2026-05-15. Every line in `auto_trader.log` is written twice. Confirmed single process owns :5000, so it's two handlers on the root logger, not two processes. Suspect: `spy_auto_trader.py` configures root handlers at import AND something re-adds (app.py SocketIOHandler, or a re-import path). Cosmetic — doubles log size, no trading impact.
+- **Fix:** audit `logging.getLogger().handlers` at runtime; ensure handler setup is idempotent (guard with a module-level `_LOGGING_CONFIGURED` flag, or `if not root.handlers`).
+- **Hours:** ~0.5
 
 ### 🆕-P0-A. Backtest harness v2 with real options data
 
