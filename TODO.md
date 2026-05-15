@@ -30,8 +30,9 @@ Pick from this list in order. Each item is independently shippable and committab
 | 11 | **Per-symbol P&L attribution** (new P1 D) — companion to per-signal-class shipped today. Tells you which SYMBOLS make/lose money (vs which strategies). Add to EOD review. | ~1.5 | New — from rating gap. | §🆕-P1-D below |
 | 12 | **Time-of-day spread filter** (new P1 E) — first 5 min + last 5 min have 3-5× wider spreads. Either tighter MAX_SPREAD_PCT in those windows or hard-block them. | ~2 | New — from rating gap. | §🆕-P1-E below |
 | 13 | **Real-money go-live checklist** (new P1 F) — single `GO_LIVE_CHECKLIST.md` consolidating all readiness criteria + runtime gate that refuses live mode until all checked. | ~4 | New — from rating gap. | §🆕-P1-F below |
+| 14 | **Dynamic stop/target** (new P1 G) — context-aware exits (ATR-stop + signal-class targets + IV-scale + put/call + time-decay). **Logic built generic; params chosen by backtest item 1's sweep, not hand-tuned.** Replaces flat -50%/+75% with `compute_exit_levels()`. | ~3 (+ folds into item 1 sweep) | New — user request 2026-05-15. **Coupled to item 1.** | §🆕-P1-G above |
 
-**Recommendation:** Items 1 → 2 → 3 are the real-money gating chain. Items 4-7 are P1 risk gaps. Items 8-10 are polish. Items 11-13 are observability + go-live discipline (do AFTER backtest item 1 produces real data to attribute and threshold against). Don't skip ahead — the backtest result (item 1) may reveal that some risk gates need re-tuning, which would change the design of items 4-5 and the thresholds in item 13.
+**Recommendation:** Items 1 → 2 → 3 are the real-money gating chain. **Item 14 is coupled to item 1** — its exit parameters come out of the backtest sweep, so it's designed now but finalized when the backtest runs (no separate backtest cost — it's a parameter axis). Items 4-7 are P1 risk gaps. Items 8-10 are polish. Items 11-13 are observability + go-live discipline (do AFTER backtest item 1 produces real data to attribute and threshold against). Don't skip ahead — the backtest result (item 1) may reveal that some risk gates need re-tuning, which would change the design of items 4-5 and the thresholds in item 13.
 
 **Reality check first:** before starting item 1, confirm Polygon Stocks Starter is active. The smoke test from 2026-05-14 showed 403 on `/v2/aggs/...` — that endpoint must return 200 with bar data before backtest_v2 work begins.
 
@@ -48,6 +49,25 @@ Pick from this list in order. Each item is independently shippable and committab
   2. Add a second summary block "Per-symbol P&L (best → worst)" with n / win% / total / avg, like the per-class block.
   3. Bonus: 2-d cross-tab `{symbol × signal_class}` to find e.g. "NVDA orb_breakout has -8% expectancy."
 - **Hours:** ~1.5
+
+### 🆕-P1-G. Dynamic stop-loss / profit-target (context-aware exits)
+
+- **Status:** New 2026-05-15 (user request). **Design now, parameters chosen by backtest item 1 — NOT hand-tuned live.**
+- **Why it matters:** Flat `STOP_LOSS_PCT=-50%` / `PROFIT_TARGET=+75%` on every trade ignores context. A high-IV ORB breakout and a low-vol mean-reversion bounce have completely different P&L distributions and deserve different exits. This is correct pro design — but adding context-dependent exit rules to a strategy whose base edge is **unproven** is textbook curve-fitting (KB §17b: "robust systems work in a *neighborhood* of params, fragile ones cliff-edge"). Therefore the logic is built generic; the **backtest selects the parameters**, the gut does not.
+- **Dynamic dimensions to implement (all parameterized, all backtest-swept):**
+  1. **ATR-based stop** — stop distance = `k × ATR` mapped to premium via option delta, not flat 50%. High-ATR → wider stop (avoids noise stop-outs); low-ATR → tighter. Sweep `k ∈ {1.0, 1.25, 1.5, 2.0}`. (KB §1; TODO 🎯-P1 "stop on underlying move not premium %".)
+  2. **Signal-class targets** — uses the `signal_class` field shipped in `147dcb1`:
+     - `mean_rev` → fast snap-back: T1 +30%, T2 +50%, no trail (reverts quick)
+     - `orb_breakout` / `trend_cont` → let it run: T1 +50%, T2 +100%, trail after T1
+     - `vwap_momentum` → middle: T1 +40%, T2 +75%
+     - `gap_fade` → +40% one-shot (fades are mean-reverting)
+     (KB §17c Cofnas — each setup has a distinct P&L profile.)
+  3. **IV-scaled** — multiply stop+target width by `f(IVR)`: high IVR → wider (bigger expected swings), low IVR → tighter. (KB §2.)
+  4. **Put vs call asymmetry** — puts target +75–100% (bounded upside, harvest faster); calls allow runners. (KB §16 Thomsett.)
+  5. **Time-of-day decay** — after 14:00 ET, scale target down (less runway) + tighten stop. (KB §3.)
+- **Backtest integration (folds into item 1 / §P0-A):** backtest_v2 runs a parameter matrix — **flat baseline vs each dynamic variant vs combined** — across 3 yr. Output: per-variant profit factor / Sharpe / max-DD / per-signal-class. Ship the variant + params that win out-of-sample, not the ones that fit best in-sample (walk-forward gate already in §P0-A).
+- **Implementation:** `register_trade()` already persists `signal_class`; add a `compute_exit_levels(signal_class, atr, ivr, is_put, entry_time)` helper that returns `(stop, t1, t2, trail_after_t1)` instead of the flat constants. UI Settings keeps the flat values as the *fallback/override* (UI > dynamic > defaults — same precedence as the account-size adapter).
+- **Hours:** ~3 (helper + wiring) + folds into item 1's backtest sweep (no extra backtest hours — it's a parameter axis, not a separate run).
 
 ### 🆕-P1-E. Time-of-day spread filter (opening/closing minute degraded fills)
 
@@ -120,7 +140,8 @@ Pick from this list in order. Each item is independently shippable and committab
   2. `scripts/backtest_v2.py` — replay engine. For each (date, symbol, 5-min bar), apply `_add_indicators` + all 5 `evaluate_*` signal functions, run through ALL 18 risk gates as live, simulate entry at real mid → walk-to-ask, simulate stop/T1/T2 with real bid/ask from chain.
   3. Include LLM debate gate at full fidelity.
   4. Walk-forward: train on 2023, test on 2024-Q1, retrain on 2023+24Q1, test on 24Q2, etc. Detects curve-fitting.
-  5. Output: `backtest_results/3yr_full_system_YYYY-MM-DD.md` with per-signal-class P&L (the new attribution from commit 147dcb1), equity curve, Sharpe / PF / max DD, walk-forward decay metric, top-3 trade share, comparison to SPY buy-and-hold.
+  5. **Exit-parameter sweep (couples item 14 — dynamic stop/target, §P1-G):** run a matrix — flat baseline (-50%/+75%) vs ATR-stop variants (k∈{1.0,1.25,1.5,2.0}) vs per-signal-class targets vs IV-scaled vs combined. Pick the variant that wins **out-of-sample** (walk-forward), not in-sample. This is how item 14's parameters get chosen — by data, not by gut. No extra backtest runs; it's an inner parameter axis.
+  6. Output: `backtest_results/3yr_full_system_YYYY-MM-DD.md` with per-signal-class P&L (commit 147dcb1), per-exit-variant comparison table, equity curve, Sharpe / PF / max DD, walk-forward decay metric, top-3 trade share, comparison to SPY buy-and-hold.
 - **Pass / fail thresholds** (must hit ≥4 of 7 to be considered for live):
   - Profit factor > 1.5
   - Sharpe > 0.8 annualized
