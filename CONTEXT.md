@@ -47,6 +47,22 @@ User's target real-money setup — **all strategy decisions must respect these c
 | `MAX_DAILY_ENTRIES` | 8 | **2** | PDT cap enforced (3-per-5-day window). 2/day average works out to 10/week — far too many. Hard-cap at 2/day. |
 | `DAILY_PROFIT_LOCK_PCT` | 0.02 (2%) | **0.10 (10%)** | $500 profit lock to scale for higher daily variance |
 
+### ⚠️ Sizing reality at $5K (discovered building item 3, 2026-05-15)
+
+With the **default 50% stop**, an option's risk/contract = `mid × 0.50 × 100`.
+At $5K with 4% per-trade ($200 budget):
+- $5.00 mid option → $250 risk/contract → **unaffordable** (0 contracts)
+- $4.00 mid option → $200 → exactly 1 contract
+- ≤ $3.50 mid option → fits with room
+
+**Implication:** at $5K the system can only trade **cheaper options (≤$4 mid)**
+unless item 14's dynamic exits land (a 30% stop in volatile conditions drops
+risk/contract to $150, making $5 options affordable). This is correct
+conservative behavior, not a bug — but it means the tradeable universe at $5K
+is narrower than at $100K. Don't "fix" it by loosening the stop; that's the
+curve-fit trap. It resolves naturally when item 14 ships backtest-proven
+context-aware stops.
+
 ### Honest assessment of these settings:
 
 - ⚠️ **20% daily DD is 4-7× higher than pro discipline.** This is the user's choice but worth re-confirming after each losing day. Most pros use 1-3%.

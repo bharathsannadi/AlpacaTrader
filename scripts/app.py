@@ -762,7 +762,8 @@ def on_set_risk(data):
         socketio.emit("log", {"message": f"Invalid risk: {e}", "level": "WARNING"})
         return
     trader.MAX_RISK_PCT = pct / 100.0
-    log.info(f"Risk per trade updated to {pct}%")
+    trader._ui_risk_override = pct / 100.0   # UI choice wins over sub-10K profile
+    log.info(f"Risk per trade updated to {pct}% (UI override — wins over account-size profile)")
 
 
 @socketio.on("set_param")

@@ -130,6 +130,21 @@ ENTRY_WALK_WAIT_SEC  = 10         # try mid for this long before walking up to a
 MAX_PORTFOLIO_RISK    = 0.03       # 3% max total deployed risk across all symbols
 DAILY_LOSS_LIMIT_PCT  = 0.015     # halt new entries if down ≥ 1.5% from day-start equity
 DAILY_PROFIT_LOCK_PCT = 0.02      # halt new entries when up ≥ 2% — protect the day's gains
+
+# ── Account-size adapter (sub-$10K profile) ──────────────────────────────────
+# At $5K, 0.5% per-trade = $25 risk — can't afford even 1 contract meaningfully,
+# and $0.65/contract round-trip fees become a huge % of risk. The defaults
+# above were tuned for a ~$100K paper account. When equity < $10K we apply the
+# user's locked profile (see CONTEXT.md "Trader profile" — 20% daily DD is the
+# user's explicit, aggressive choice, not a recommendation). Precedence:
+# UI override > sub-10K profile > module defaults.
+SUB10K_THRESHOLD             = 10000
+SUB10K_MAX_RISK_PCT          = 0.04    # 4% per trade  ($200 on $5K = 1 real SPY contract)
+SUB10K_MAX_PORTFOLIO_RISK    = 0.20    # 20% total deployed (fits the $1K daily budget)
+SUB10K_DAILY_LOSS_LIMIT_PCT  = 0.20    # $1,000 on $5K — user's stated max daily loss
+SUB10K_DAILY_PROFIT_LOCK_PCT = 0.10    # $500 daily profit lock (scaled for higher variance)
+MIN_TRADE_NOTIONAL           = 300     # skip entry if mid×100×contracts < this — below
+                                       # it, ~$1.30 round-trip friction eats >0.4% of notional
 MAX_SECTOR_POSITIONS  = 2         # max concurrent open positions in the same sector
 GLOBAL_COOLDOWN_SEC   = 60        # min seconds between ANY two entries (across all symbols)
 WHIPSAW_COOLDOWN_SEC  = 900       # 15min — block opposite-direction signals after a fired one
@@ -1817,7 +1832,7 @@ def option_mid_and_spread(option):
 def size_contracts(acct_val, mid_price):
     if mid_price <= 0:
         return 0
-    max_risk = acct_val * MAX_RISK_PCT
+    max_risk = acct_val * eff_max_risk_pct()   # sub-$10K → 4%, else 0.5%
     # Risk at stop = STOP_LOSS_PCT of premium (not full cost).
     # Sizing on full cost wastes half the risk budget since max loss is only 50%.
     risk_per_contract = mid_price * STOP_LOSS_PCT * 100
@@ -1827,11 +1842,24 @@ def size_contracts(acct_val, mid_price):
             f"size_contracts: stop-risk ${risk_per_contract:.0f}/contract exceeds "
             f"budget ${max_risk:.0f} — skipping"
         )
-    else:
-        log.info(
-            f"  Sizing: {n} contract(s)  entry=${mid_price:.2f}  "
-            f"risk/contract=${risk_per_contract:.0f}  total-risk=${risk_per_contract*n:.0f}"
-        )
+        return 0
+    # Friction floor: below MIN_TRADE_NOTIONAL the ~$1.30 round-trip fee +
+    # bid/ask is too large a fraction of the trade. Trim n until notional
+    # clears, or skip entirely if even 1 contract is below the floor.
+    notional = mid_price * 100 * n
+    if notional < MIN_TRADE_NOTIONAL:
+        one_contract = mid_price * 100
+        if one_contract < MIN_TRADE_NOTIONAL:
+            log.warning(
+                f"size_contracts: notional ${one_contract:.0f}/contract < "
+                f"MIN_TRADE_NOTIONAL ${MIN_TRADE_NOTIONAL} — fee drag too high, skipping"
+            )
+            return 0
+    log.info(
+        f"  Sizing: {n} contract(s)  entry=${mid_price:.2f}  "
+        f"risk/contract=${risk_per_contract:.0f}  total-risk=${risk_per_contract*n:.0f}  "
+        f"notional=${mid_price*100*n:,.0f}"
+    )
     return n
 
 
@@ -1985,6 +2013,74 @@ def _is_sub_pdt_account() -> bool:
 
 
 _sub_pdt_cache = {"ts": 0.0, "val": True}
+
+
+# ── Account-size adapter accessors ───────────────────────────────────────────
+_sub10k_cache = {"ts": 0.0, "val": False}
+
+
+def _is_sub10k_account() -> bool:
+    """True if live equity < $10K. 60s-cached. Fail-safe = False (use the
+    conservative module defaults if equity can't be read — never silently
+    apply the looser sub-10K risk caps without confirming the account size)."""
+    now = time.time()
+    if _sub10k_cache["ts"] and (now - _sub10k_cache["ts"]) < 60:
+        return _sub10k_cache["val"]
+    val = False
+    try:
+        av = account_value()
+        if av > 0:
+            val = av < SUB10K_THRESHOLD
+    except Exception:
+        pass
+    _sub10k_cache.update(ts=now, val=val)
+    return val
+
+
+# When the user explicitly sets risk in the Settings UI, that choice wins
+# over the sub-10K profile (precedence: UI override > sub-10K profile >
+# default). app.on_set_risk() sets this.
+_ui_risk_override: Optional[float] = None
+
+def eff_max_risk_pct() -> float:
+    if _ui_risk_override is not None:
+        return _ui_risk_override
+    return SUB10K_MAX_RISK_PCT if _is_sub10k_account() else MAX_RISK_PCT
+
+def eff_max_portfolio_risk() -> float:
+    return SUB10K_MAX_PORTFOLIO_RISK if _is_sub10k_account() else MAX_PORTFOLIO_RISK
+
+def eff_daily_loss_limit_pct() -> float:
+    return SUB10K_DAILY_LOSS_LIMIT_PCT if _is_sub10k_account() else DAILY_LOSS_LIMIT_PCT
+
+def eff_daily_profit_lock_pct() -> float:
+    return SUB10K_DAILY_PROFIT_LOCK_PCT if _is_sub10k_account() else DAILY_PROFIT_LOCK_PCT
+
+
+def log_account_profile() -> None:
+    """One-line profile banner at session start so it's unambiguous which
+    risk regime is active. Called from all_day_session startup."""
+    try:
+        av = account_value()
+    except Exception:
+        av = 0.0
+    if av and av < SUB10K_THRESHOLD:
+        log.warning(
+            f"  💰 SUB-$10K ACCOUNT (${av:,.2f}) — applying sub-10K profile: "
+            f"per-trade {SUB10K_MAX_RISK_PCT*100:.0f}% (${av*SUB10K_MAX_RISK_PCT:,.0f}) · "
+            f"daily-loss {SUB10K_DAILY_LOSS_LIMIT_PCT*100:.0f}% (${av*SUB10K_DAILY_LOSS_LIMIT_PCT:,.0f}) · "
+            f"profit-lock {SUB10K_DAILY_PROFIT_LOCK_PCT*100:.0f}% · "
+            f"portfolio-cap {SUB10K_MAX_PORTFOLIO_RISK*100:.0f}% · "
+            f"max {SUB_PDT_MAX_DAILY_ENTRIES} entries/day (PDT-aware) · "
+            f"min-notional ${MIN_TRADE_NOTIONAL} · "
+            f"⚠️ ~$1.30 round-trip fee drag (~0.65%/trade)"
+        )
+    else:
+        log.info(
+            f"  💰 Account ${av:,.2f} — standard profile: "
+            f"per-trade {MAX_RISK_PCT*100:.1f}% · daily-loss {DAILY_LOSS_LIMIT_PCT*100:.1f}% · "
+            f"portfolio-cap {MAX_PORTFOLIO_RISK*100:.0f}%"
+        )
 
 
 def pdt_day_trades_remaining() -> Optional[int]:
@@ -2310,11 +2406,12 @@ def daily_loss_check(acct_val: float) -> bool:
         if _day_start_equity <= 0:
             return True
         loss_pct = (_day_start_equity - acct_val) / _day_start_equity
-        if loss_pct >= DAILY_LOSS_LIMIT_PCT:
+        _loss_limit = eff_daily_loss_limit_pct()
+        if loss_pct >= _loss_limit:
             _daily_loss_halt = True
             log.warning(
                 f"  ⛔ Daily loss limit reached: down {loss_pct*100:.2f}% "
-                f"(limit {DAILY_LOSS_LIMIT_PCT*100:.1f}%). "
+                f"(limit {_loss_limit*100:.1f}%). "
                 f"ALL symbols halted for the rest of the day."
             )
             return False
@@ -2337,11 +2434,12 @@ def daily_profit_check(acct_val: float) -> bool:
         if _day_start_equity <= 0:
             return True
         gain_pct = (acct_val - _day_start_equity) / _day_start_equity
-        if gain_pct >= DAILY_PROFIT_LOCK_PCT:
+        _profit_lock = eff_daily_profit_lock_pct()
+        if gain_pct >= _profit_lock:
             _daily_profit_halt = True
             log.info(
                 f"  💰 Daily profit lock reached: up {gain_pct*100:.2f}% "
-                f"(target {DAILY_PROFIT_LOCK_PCT*100:.1f}%). "
+                f"(target {_profit_lock*100:.1f}%). "
                 f"No new entries — open positions still managed."
             )
             return False
@@ -2892,7 +2990,7 @@ def run_session(session_name, session_end_hour, session_end_min,
     acct_val = account_value()
     traded   = False
 
-    log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * MAX_RISK_PCT:,.2f}  |  Trading: {symbol}")
+    log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * eff_max_risk_pct():,.2f}  |  Trading: {symbol}")
     if prior_levels:
         log.info(
             f"Levels — Pivot={prior_levels.get('pivot')}  "
@@ -2995,9 +3093,10 @@ def run_session(session_name, session_end_hour, session_end_min,
             # Portfolio-level risk gate — refuse new entries when total deployed
             # premium already consumes the daily risk budget across all symbols.
             deployed = deployed_risk_pct(acct_val)
-            if deployed >= MAX_PORTFOLIO_RISK:
+            _port_cap = eff_max_portfolio_risk()
+            if deployed >= _port_cap:
                 log.warning(
-                    f"  Portfolio risk {deployed*100:.1f}% >= max {MAX_PORTFOLIO_RISK*100:.0f}% "
+                    f"  Portfolio risk {deployed*100:.1f}% >= max {_port_cap*100:.0f}% "
                     f"— no new entries until positions close."
                 )
             elif not sector_risk_check(symbol):
@@ -3155,6 +3254,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
     log.info("=" * 60)
     log.info(f"ALL-DAY SESSION ({symbol}) — ends at {end_hour:02d}:{end_minute:02d} ET")
     log.info("=" * 60)
+    log_account_profile()   # banner: which risk regime (sub-$10K vs standard) is active
 
     if not vix_check(vix):
         log.warning(f"VIX too high — {symbol} all-day session blocked.")
@@ -3171,7 +3271,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
     set_day_start_equity(acct_val)
     _load_positions()       # restore full position state (entry, stop, target, narrative)
     reconcile_positions()   # cross-check with Alpaca; add any positions missed by JSON
-    log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * MAX_RISK_PCT:,.2f}  |  {symbol}")
+    log.info(f"Account: ${acct_val:,.2f}  |  Max risk: ${acct_val * eff_max_risk_pct():,.2f}  |  {symbol}")
     if prior_levels:
         log.info(
             f"Levels — Pivot={prior_levels.get('pivot')}  "
@@ -3546,9 +3646,10 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 continue
 
             deployed = deployed_risk_pct(acct_val)
-            if deployed >= MAX_PORTFOLIO_RISK:
+            _port_cap = eff_max_portfolio_risk()
+            if deployed >= _port_cap:
                 log.warning(
-                    f"  Portfolio risk {deployed*100:.1f}% >= max {MAX_PORTFOLIO_RISK*100:.0f}% "
+                    f"  Portfolio risk {deployed*100:.1f}% >= max {_port_cap*100:.0f}% "
                     f"— no new entries until positions close."
                 )
             elif not sector_risk_check(symbol):
