@@ -2,6 +2,82 @@
 
 Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after market close so we don't restart the app while sessions are running.
 
+---
+
+## 🗓️ Tomorrow's plan — one-by-one queue (locked 2026-05-14 PM)
+
+Pick from this list in order. Each item is independently shippable and committable.
+
+| # | Item | Hours | Status | Section |
+|---|------|-------|--------|---------|
+| 1 | **Backtest harness v2** — Polygon Options + Stocks Starter (subscribed today), 3-yr lookback, real bid/ask fills, debate gate included, walk-forward validation. Output: MD report + dashboard tab. THIS IS THE GATING ITEM — go-live decision rides on the result. | ~16 | Blocked on user activating Polygon Stocks Starter ($29/mo). When ready, user says "stocks active". | §🆕-P0-A below |
+| 2 | **PDT counter for sub-25K accounts** — track rolling 5-day day-trade count; hard-block 3rd day-trade. Adjust `MAX_DAILY_ENTRIES` from 8 → 2 in sub-25K mode. CRITICAL real-money blocker for the user's $5-25K target account. | ~3 | New — user is sub-PDT. | §🆕-P0-B below |
+| 3 | **Account-size adapter** — at $5-25K, current `MAX_RISK_PCT=0.005` (0.5%) yields only 1 contract max on most setups. Auto-tune sizing when account < $25K so a 0.5% risk actually deploys meaningful contracts (or accept the cap and document it). | ~2 | New — discovered during real-money readiness review. | §🆕-P0-C below |
+| 4 | **Correlation-adjusted delta cap** (existing P1 #7) — track signed delta-dollar across all open positions; cap net portfolio delta at ±5% of equity. Six high-beta tech bull signals must NOT stack into one directional bet. | ~3-4 | Specified, ready to implement. | §P1 #7 |
+| 5 | **Macro blackout** (existing P1 #5) — hard-coded FOMC/CPI/NFP calendar; block new entries 30 min before/after. | ~2 | Specified, ready to implement. | §P1 #5 |
+| 6 | **Process supervision** (existing P2 #17) — launchd plist with `KeepAlive=true`. The `com.spy_auto_trader.plist` draft is already in repo. Add 5-line watchdog shell with `kill -0 $PID` healthcheck. | ~3-4 | Plist drafted, needs install instructions + watchdog wrapper. | §P2 #17 |
+| 7 | **Equity curve persistence** (existing P2 #14) — append day-end equity to `~/.spy_trader/equity_curve.json`. Display rolling 30-day equity + drawdown chart in dashboard. Without this you cannot tell if you're getting better or worse. | ~3-4 | Specified, ready to implement. | §P2 #14 |
+| 8 | **Max account risk % stepper in Settings** (existing P1 #4b) — make `MAX_PORTFOLIO_RISK` configurable from UI without code edit + restart. | ~1.5 | Specified with full wiring plan. | §P1 #4b |
+| 9 | **Tax / wash-sale awareness** (existing 🎯-P3) — options = short-term capital gains regardless of holding period. Add a quarterly P&L tax-impact report. Not blocking but material at scale. | ~3 | Wishlist, post-go-live. | §🎯-P3 |
+| 10 | **Slippage trend dashboard tile** (existing P1 #10) — `entry_slippage_bps` is captured but not visualized. Tile showing rolling 30-trade avg slippage + trendline. If drifting up, our fills are getting worse. | ~2 | Data captured, viz missing. | §P1 #10 |
+
+**Recommendation:** Items 1 → 2 → 3 are the real-money gating chain. Items 4-7 are P1 risk gaps. Items 8-10 are nice-to-have polish. Don't skip ahead — the backtest result (item 1) may reveal that some risk gates need re-tuning, which would change the design of items 4-5.
+
+**Reality check first:** before starting item 1, confirm Polygon Stocks Starter is active. The smoke test from 2026-05-14 showed 403 on `/v2/aggs/...` — that endpoint must return 200 with bar data before backtest_v2 work begins.
+
+---
+
+## 🆕 P0 — Real-money gating items (added 2026-05-14)
+
+### 🆕-P0-A. Backtest harness v2 with real options data
+
+- **Status:** Spec'd, blocked on Polygon Stocks Starter activation.
+- **Why it matters:** This is the single biggest leverage item in the entire codebase. We've added 18 risk gates without ever verifying the underlying signal has positive expectancy after fees + slippage. Without this, going live is gambling.
+- **Data sources:**
+  - Polygon **Options Starter** ($29/mo, already subscribed) — option chain reference + historical bid/ask + IV
+  - Polygon **Stocks Starter** ($29/mo, pending activation by user) — 5-min stock bars 2013–present, 100 calls/min
+  - Anthropic Haiku — debate gate (~$7 for full 3-yr backtest, ~6,750 calls)
+- **Architecture:**
+  1. `scripts/polygon_data.py` — historical bar + chain fetcher with disk cache. Chains are immutable history, cache forever in `~/.spy_trader/polygon_cache/`.
+  2. `scripts/backtest_v2.py` — replay engine. For each (date, symbol, 5-min bar), apply `_add_indicators` + all 5 `evaluate_*` signal functions, run through ALL 18 risk gates as live, simulate entry at real mid → walk-to-ask, simulate stop/T1/T2 with real bid/ask from chain.
+  3. Include LLM debate gate at full fidelity.
+  4. Walk-forward: train on 2023, test on 2024-Q1, retrain on 2023+24Q1, test on 24Q2, etc. Detects curve-fitting.
+  5. Output: `backtest_results/3yr_full_system_YYYY-MM-DD.md` with per-signal-class P&L (the new attribution from commit 147dcb1), equity curve, Sharpe / PF / max DD, walk-forward decay metric, top-3 trade share, comparison to SPY buy-and-hold.
+- **Pass / fail thresholds** (must hit ≥4 of 7 to be considered for live):
+  - Profit factor > 1.5
+  - Sharpe > 0.8 annualized
+  - Max DD < 12%
+  - Worst monthly P&L > −5%
+  - Walk-forward degradation < 25%
+  - Top-3 trades' share of P&L < 40%
+  - Beats SPY buy-and-hold with lower DD
+- **Time estimate:** 16 hours over 2–3 working days.
+
+### 🆕-P0-B. PDT counter for sub-$25K accounts
+
+- **Status:** New — surfaced during 2026-05-14 real-money readiness review.
+- **Why it matters:** User's target account is $5-25K, which is under the FINRA Pattern Day Trader threshold. 3+ day-trades in any rolling 5-day window → broker locks account for 90 days. Current system would breach this on day 1 with `MAX_DAILY_ENTRIES=8`.
+- **Critical observation:** Alpaca paper accounts **do not enforce PDT**, so the user has NEVER seen this fire. Live trading day 1 = account suspended.
+- **Fix:**
+  1. Persist day-trade events to `~/.spy_trader/day_trades.json` — each entry = open + close on same trading day.
+  2. New function `count_day_trades_5d()` — count entries from last 5 trading days.
+  3. New gate `pdt_check_sub25k()` called inside `all_day_session` before any new entry: if `count >= 3 and account_value < 25000`, return False with WARNING log.
+  4. New constant `SUB_PDT_MAX_DAILY_ENTRIES = 2` — when account < $25K, override `MAX_DAILY_ENTRIES` to 2.
+  5. Detect via `TRADING_CLIENT.get_account().equity` at session start, set flag, log it.
+  6. Add a "PDT remaining today: X" badge in the UI header.
+
+### 🆕-P0-C. Account-size adapter
+
+- **Status:** New — discovered during readiness review.
+- **Why it matters:** Current `MAX_RISK_PCT=0.005` (0.5%) means $25 risk on a $5K account. With a $5 SPY option, stop at 40% loss = $2 risk per contract = 12 contracts theoretically. But `MAX_PORTFOLIO_RISK=3%` caps total deployed at $150 = 30 contracts. Math works on paper.
+- **The real issue:** At $5K, the spread cost (1 cent on a $5 option = 0.2%) plus fees ($0.65/contract round-trip) makes small-contract trades unprofitable. **A 1-contract SPY trade at $5 entry, $2.50 stop, $7.50 target = $2.50 max loss but ~$1.30 round-trip cost = 52% of the risk goes to friction.** This is structural, not solvable by code.
+- **Fix:**
+  1. Add `MIN_TRADE_NOTIONAL = 500` — refuse to enter if `mid_price × 100 × contracts < $500`. Below that, friction eats the edge.
+  2. Auto-tune `MAX_RISK_PCT`: if account < $10K, raise to 1.0%; if < $5K, raise to 1.5% (accept more risk per trade since fewer trades fit).
+  3. Log a startup warning if account < $10K explaining the friction problem and recommending paper until account grows.
+
+---
+
 > **Overall verdict:** This is a genuinely well-built system. Daily loss/profit circuit breakers, sector caps, IV rank gates, earnings filter, Greeks-aware sizing, time stops, breakeven ratchet, position reconciliation on restart, walk-to-ask order execution, news filter, LLM debate gate — all already implemented. The items below are *the next tier* of pro-trader concerns, not "the system is broken."
 
 ---
