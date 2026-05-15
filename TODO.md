@@ -6,6 +6,12 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ## 🗓️ Tomorrow's plan — one-by-one queue (locked 2026-05-14 PM)
 
+**Trader profile** (see [CONTEXT.md](CONTEXT.md) for full math):
+- **Account:** $5,000 (sub-PDT — hard cap 3 day-trades / 5 rolling days)
+- **Max daily loss:** $1,000 (20% — aggressive by pro standards; user's choice)
+- **Per-trade budget:** ~$200-330 risk = 1 SPY ATM contract at typical pricing
+- **Implication:** all queue items below must be designed around these constraints. The current `MAX_RISK_PCT=0.5%`, `DAILY_LOSS_LIMIT_PCT=1.5%`, `MAX_DAILY_ENTRIES=8` defaults do NOT match this account and need explicit live-mode overrides (item 3 — account-size adapter).
+
 Pick from this list in order. Each item is independently shippable and committable.
 
 | # | Item | Hours | Status | Section |
@@ -106,15 +112,32 @@ Pick from this list in order. Each item is independently shippable and committab
   5. Detect via `TRADING_CLIENT.get_account().equity` at session start, set flag, log it.
   6. Add a "PDT remaining today: X" badge in the UI header.
 
-### 🆕-P0-C. Account-size adapter
+### 🆕-P0-C. Account-size adapter — TUNED FOR USER'S $5K / $1K-daily PROFILE
 
-- **Status:** New — discovered during readiness review.
-- **Why it matters:** Current `MAX_RISK_PCT=0.005` (0.5%) means $25 risk on a $5K account. With a $5 SPY option, stop at 40% loss = $2 risk per contract = 12 contracts theoretically. But `MAX_PORTFOLIO_RISK=3%` caps total deployed at $150 = 30 contracts. Math works on paper.
-- **The real issue:** At $5K, the spread cost (1 cent on a $5 option = 0.2%) plus fees ($0.65/contract round-trip) makes small-contract trades unprofitable. **A 1-contract SPY trade at $5 entry, $2.50 stop, $7.50 target = $2.50 max loss but ~$1.30 round-trip cost = 52% of the risk goes to friction.** This is structural, not solvable by code.
-- **Fix:**
-  1. Add `MIN_TRADE_NOTIONAL = 500` — refuse to enter if `mid_price × 100 × contracts < $500`. Below that, friction eats the edge.
-  2. Auto-tune `MAX_RISK_PCT`: if account < $10K, raise to 1.0%; if < $5K, raise to 1.5% (accept more risk per trade since fewer trades fit).
-  3. Log a startup warning if account < $10K explaining the friction problem and recommending paper until account grows.
+- **Status:** New — discovered during readiness review. **Specific values locked 2026-05-14 PM based on user's stated profile.**
+- **The constraints to honor:** $5K account · $1K max daily loss (20%) · PDT 3-trades/5-day cap.
+- **Required overrides** (apply when `account_value < 10000`):
+  ```python
+  # Live-mode profile for sub-$10K accounts (replaces module defaults at runtime)
+  SUB10K_DAILY_LOSS_LIMIT_PCT  = 0.20   # was 0.015 (1.5%) → 20% to match user's $1K daily ceiling
+  SUB10K_DAILY_PROFIT_LOCK_PCT = 0.10   # was 0.02 (2%)   → 10% = $500 daily profit target
+  SUB10K_MAX_RISK_PCT          = 0.04   # was 0.005 (0.5%) → 4% per-trade = $200 risk on $5K
+  SUB10K_MAX_PORTFOLIO_RISK    = 0.20   # was 0.03 (3%)   → 20% so daily budget fits
+  SUB10K_MAX_DAILY_ENTRIES     = 2      # was 8 → PDT-aware (2/day × 5 days = 10/week which is wrong)
+  SUB10K_MAX_WEEKLY_DAYTRADES  = 3      # PDT hard cap — see item 2 (PDT counter)
+  ```
+- **Friction warning** (already discussed): at $5K, $0.65/contract round-trip fees + 1-2¢ spread = **~$1.30 per round-trip on a $5 option**. With $200 risk, friction = 0.65% drag per trade. Not fatal, but every trade that breaks even at the bid/ask = a -0.65% loser after fees. The backtest (item 1) must include fees to be honest.
+- **`MIN_TRADE_NOTIONAL` gate:** refuse to enter if `mid_price × 100 × contracts < $300`. Below that, friction proportion is too high.
+- **Auto-detection:** check `TRADING_CLIENT.get_account().equity` at session start. If < $10K, log:
+  ```
+  SUB-$10K ACCOUNT DETECTED ($5,234.50) — applying sub-10K profile:
+    daily loss limit: $1,000 (20%)
+    per-trade risk:   $200 (4%)
+    max daily entries: 2 (PDT-aware)
+    fee drag warning: ~0.65% per round-trip
+  ```
+- **Fail-safe:** never let `_apply_subprofile()` raise the absolute risk caps if user has manually set tighter ones in the Settings UI. UI > profile > defaults.
+- **Hours:** ~2 (was 2; same)
 
 ---
 

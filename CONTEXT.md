@@ -16,6 +16,47 @@ Quick-resume doc for Claude (and humans). Keep it current. Read this first; deep
 
 ---
 
+## 👤 Trader profile (locked 2026-05-14)
+
+User's target real-money setup — **all strategy decisions must respect these constraints**:
+
+| Parameter | Value | Implication |
+|-----------|-------|-------------|
+| **Account size** | **$5,000** | Sub-PDT ($25K threshold). FINRA rule limits to **3 day-trades per rolling 5-day window**. |
+| **Max daily loss** | **$1,000 (20% of account)** | Aggressive by pro standards (most use 1-3%/day). 5 bad days = wiped account. The 20% comes from user's stated tolerance, not a recommendation. |
+| **Implied weekly capacity** | **3 day-trades / week** | PDT-bound. Cannot use 8-trade-per-day defaults; system must enforce. |
+| **Per-trade budget** | **~$200-330 risk** | $1000 daily / max 3 trades/week ÷ 5 trading days × 1 trade ≈ $300/trade. At 40% stop on a $5 option = $200 max loss = need 1 contract per trade. |
+| **Minimum trade notional** | ~$500 entry premium × 100 | Below that, $0.65/contract round-trip fees + 1-2¢ spread eats >40% of risk budget. **Friction is the silent killer at this account size.** |
+
+### Required parameter changes for live mode (not yet applied — go-live gated by backtest validation):
+
+| Constant | Current default | Live-mode target | Why |
+|----------|-----------------|------------------|-----|
+| `DAILY_LOSS_LIMIT_PCT` | 0.015 (1.5%) | **0.20 (20%)** | Match user's stated $1000 daily risk on $5K account |
+| `MAX_RISK_PCT` (per-trade) | 0.005 (0.5%) | **0.04 (4%)** | $200/trade so 1 SPY ATM contract actually fits within risk budget |
+| `MAX_PORTFOLIO_RISK` | 0.03 (3%) | **0.20 (20%)** | Allow all 3 weekly day-trades + 1 overnight to fit |
+| `MAX_DAILY_ENTRIES` | 8 | **2** | PDT cap enforced (3-per-5-day window). 2/day average works out to 10/week — far too many. Hard-cap at 2/day. |
+| `DAILY_PROFIT_LOCK_PCT` | 0.02 (2%) | **0.10 (10%)** | $500 profit lock to scale for higher daily variance |
+
+### Honest assessment of these settings:
+
+- ⚠️ **20% daily DD is 4-7× higher than pro discipline.** This is the user's choice but worth re-confirming after each losing day. Most pros use 1-3%.
+- ⚠️ **Bankruptcy math: 5 max-loss days in 1 week = $0.** At PDT 3 trades/week, that's 1.5 weeks to zero. Plan for this scenario.
+- ✅ Account size is honest about being a learning experiment, not retirement money.
+- ✅ User said "1000 risk on a given day" — meaning they accept losing $1K in a session. That's a real risk tolerance, not bravado.
+
+### Strategy adaptations needed for $5K + 3 trades/week:
+
+1. **Be picky.** With 3 trades/week, average expected entry-skip rate must be ~85-90% (current is ~70%). The signal stack needs to fire less, not more. The recent `mean_rev` and `trend_cont` evaluators may be too loose for this account size — backtest will tell us.
+2. **Take partials aggressively.** With $200/trade risk and $1K daily ceiling, a single $200 winner is real progress. Don't wait for T2 (+100%). Consider T1 at +30% on this account instead of +50%.
+3. **No correlated stacking.** With 3 trades/week and 6 symbols, if all 3 fire bullish on tech names = single bet. Item 4 in tomorrow's queue (correlation cap) becomes load-bearing.
+4. **Pre-FOMC/CPI = wait.** Losing all 3 weekly trades to a 2pm Fed announcement = whole week wasted. Item 5 (macro blackout) becomes load-bearing.
+5. **Friday gamma trap.** 7-DTE on Monday is 4-DTE on Friday. With only 3 trades/week, one Friday gamma blowup = the whole week.
+
+These are the constraints we'll design tomorrow's backtest and risk-gate work around.
+
+---
+
 ## 📌 Last session: 2026-05-14
 
 ### What we shipped
