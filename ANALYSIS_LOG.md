@@ -113,3 +113,46 @@ VIX cut points) still get backtest-swept (item 1) to avoid curve-fit, but the
 *rules themselves* are not speculative — they are quoted, codified KB content
 that production currently ignores. Priority of item 14 should rise accordingly
 once the backtest exists to set the parameters.
+
+---
+
+## 2026-05-15 — Entry-logic full audit vs KB (item 15 / §P1-H)
+
+**Observed:** Cross-referenced every entry gate in spy_auto_trader.py against
+all entry-relevant KB rules (§1,2,3,5,6,10,11,12,15,16,17 + Quick Rules).
+
+**Already enforced (✅ verified, not gaps):** macro blackout (line 3369),
+gap-day delay (3362), earnings filter, news filter, sector cap, PDT, global +
+whipsaw cooldowns, time-of-day windows, daily loss/profit breakers, ORB volume
+confirmation (MIN_VOL_RATIO 1.5), HTF 30-min trend filter, delta-band
+selection (0.40–0.65), OI floor, 5% spread gate.
+
+**Gaps found:**
+
+| # | KB rule | Code | Verdict |
+|---|---------|------|---------|
+| H1 | IVR<30 naked / 30-50 spread / >50 skip (§2,§5) | IV_RANK_MAX=70, warn@50 | ⚠️ MAJOR DRIFT |
+| H2 | IVR-based naked↔spread switching (§5) | naked-only, no spreads | ❓ GAP |
+| H3 | "≥2 of 3 (ORB+VWAP+EMA), never single signal" | no confluence gate | ❓ GAP |
+| H4 | VSA no-demand/upthrust/distribution = HARD rules (§10) | LLM-prompt only, no det. code | ⚠️ DRIFT (fragile) |
+| H5 | VIX-regime strategy adaptation (§2) | regime logged, never acted on | ⚠️ DRIFT |
+| H6 | VIX+5pt→spreads 2-3d; SPY>1%/3d→spreads (§12) | not implemented | ❓ GAP |
+
+**Verdict: ⚠️ MIXED — entry gates mostly ✅ ENFORCED but 2 serious drifts.**
+Consistent with the exit audit (§P1-G): the deterministic *risk gates* are
+faithfully enforced, but the *strategy-selection* layer (IVR→strategy, signal
+confluence, VSA, VIX-regime) has drifted from the KB. Pattern across both
+audits: **mechanical risk discipline = solid; volatility/strategy-selection
+intelligence = under-implemented vs the documented playbook.**
+
+**Most material:** H1. The system buys naked long premium across IVR 30–70%,
+the precise band the KB says is debit-spread-or-skip territory. This is a
+plausible standing money-leak (systematically overpaying for vega) — and it
+would be invisible in a backtest that doesn't tag IVR-at-entry. Backtest item
+1 MUST bucket results by entry-IVR to quantify this. Interim fix (lower the
+cutoff) is 1 hr and doesn't need spread capability.
+
+**Caveat (same as always):** these are drift findings, not proof the KB rule
+makes money. H1/H3/H4 interim fixes are backtest-swept (item 1), not
+hand-set. ⚠️ DRIFT means "code diverged from documented strategy" — whether
+the documented strategy is the profitable one is still the backtest's call.
