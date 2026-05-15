@@ -77,3 +77,39 @@ now the central unanswered question — **does the volume gate filter out losers
 One quiet day can't answer it. This is precisely what backtest item 1 must
 measure: P&L of taken trades vs. the counterfactual P&L of the trades the volume
 gate *rejected*. Until then, ✅ ENFORCED stands but edge remains unproven.
+
+---
+
+## 2026-05-15 — Design analysis: dynamic exits vs KB (item 14 / §P1-G)
+
+**Observed:** Reviewed the proposed dynamic stop/target design against
+knowledge_base.md to ground parameters in codified rules rather than gut.
+
+**Finding (the important one):** The KB §3 ("Entry & Exit Timing") *already
+prescribes* context-dependent exits. The live code's flat -50%/+75% constants
+**under-implement the knowledge base**, not the reverse.
+
+| KB rule (verbatim §3/§2/§10/§11/§1) | In code? | Verdict |
+|---|---|---|
+| 50% premium standard stop | ✅ baseline | ✅ ENFORCED |
+| 30% stop in trending/volatile/high-gamma/short-DTE | ❌ | ⚠️ DRIFT (code less strict than KB) |
+| Take 50% of max expected move (don't hold full) | partial | ⚠️ DRIFT |
+| Time-exit if not profitable by 2:30 PM | ❌ (diff rule) | ⚠️ DRIFT |
+| IV-spike vega-harvest (+50% even if flat underlying) | ❌ | ❓ GAP in code (rule exists in KB) |
+| VIX 25–40 → tighter stops | ❌ | ⚠️ DRIFT |
+| VSA upthrust → exit longs immediately | ❌ | ⚠️ DRIFT |
+| Brooks climax >2×ATR → don't chase / exit | ❌ in exit path | ⚠️ DRIFT |
+
+**Verdict: ⚠️ DRIFT — code is materially LESS adaptive than the KB prescribes.**
+This is the first ⚠️ DRIFT entry in the log. Unlike the entry-gate analyses
+(all ✅ ENFORCED), the EXIT logic has diverged from the documented strategy:
+the KB says "be dynamic, tighten in volatility, harvest IV spikes, respect
+2:30 PM" and the code does none of it — it just runs flat 50/75 then a
+generic 60-min time-stop.
+
+**Implication:** item 14 is reclassified from "nice-to-have enhancement" to
+**"close a real strategy-vs-KB drift gap."** The free parameters (ATR mult,
+VIX cut points) still get backtest-swept (item 1) to avoid curve-fit, but the
+*rules themselves* are not speculative — they are quoted, codified KB content
+that production currently ignores. Priority of item 14 should rise accordingly
+once the backtest exists to set the parameters.

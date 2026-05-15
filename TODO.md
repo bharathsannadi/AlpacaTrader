@@ -53,7 +53,15 @@ Pick from this list in order. Each item is independently shippable and committab
 ### 🆕-P1-G. Dynamic stop-loss / profit-target (context-aware exits)
 
 - **Status:** New 2026-05-15 (user request). **Design now, parameters chosen by backtest item 1 — NOT hand-tuned live.**
-- **Why it matters:** Flat `STOP_LOSS_PCT=-50%` / `PROFIT_TARGET=+75%` on every trade ignores context. A high-IV ORB breakout and a low-vol mean-reversion bounce have completely different P&L distributions and deserve different exits. This is correct pro design — but adding context-dependent exit rules to a strategy whose base edge is **unproven** is textbook curve-fitting (KB §17b: "robust systems work in a *neighborhood* of params, fragile ones cliff-edge"). Therefore the logic is built generic; the **backtest selects the parameters**, the gut does not.
+- **REFRAME (KB cross-ref 2026-05-15):** This is NOT speculative complexity. `knowledge_base.md` §3 *already prescribes* dynamic exits — the current flat `-50%/+75%` **under-implements the KB**. We're bringing code up to documented rules, not inventing knobs. The only free parameters (ATR multiplier, VIX cut points) get swept by the backtest. Verbatim KB rules the current code ignores:
+  - §3 Stop-Loss Philosophy: *"Aggressive stop: **30% of premium** in trending/volatile conditions where a losing trade can go to near-zero quickly (high gamma, short DTE)"* — code uses flat 50%, never tightens to 30%.
+  - §3 Profit Targets: *"Intraday long options: take **50% of max expected move**. Do not hold for the full move — theta and gamma reversal risk eats profits."*
+  - §3: *"Time-based exit: if position is **not profitable by 2:30 PM, exit**"* — code has a different 60-min time-stop, not the KB's 2:30 rule.
+  - §3: *"**IV-based exit:** if IV spikes sharply in your favor, take 50%+ of the gain even if the underlying hasn't moved"* — vega-harvest, not implemented at all.
+  - §2 High-vol regime (VIX 25–40): *"Use **tighter stops** (underlying can reverse sharply)"* — VIX-scaling of the stop, not implemented.
+  - §10 VSA: *"ORB breakout on ultra-high volume that immediately stalls = UPTHRUST. **Exit longs immediately**"* — event-based exit, not implemented.
+  - §11 Brooks: *"After a large climax bar (>2×ATR), do not chase"* — exhaustion-exit, not in exit logic.
+  - §1 theta table: 7 DTE ≈ −$0.20/day, 2 DTE ≈ −$0.50+/day → exit urgency must scale with DTE-to-expiry, not be constant.
 - **Dynamic dimensions to implement (all parameterized, all backtest-swept):**
   1. **ATR-based stop** — stop distance = `k × ATR` mapped to premium via option delta, not flat 50%. High-ATR → wider stop (avoids noise stop-outs); low-ATR → tighter. Sweep `k ∈ {1.0, 1.25, 1.5, 2.0}`. (KB §1; TODO 🎯-P1 "stop on underlying move not premium %".)
   2. **Signal-class targets** — uses the `signal_class` field shipped in `147dcb1`:
