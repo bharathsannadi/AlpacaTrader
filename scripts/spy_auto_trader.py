@@ -134,6 +134,15 @@ MAX_SECTOR_POSITIONS  = 2         # max concurrent open positions in the same se
 GLOBAL_COOLDOWN_SEC   = 60        # min seconds between ANY two entries (across all symbols)
 WHIPSAW_COOLDOWN_SEC  = 900       # 15min — block opposite-direction signals after a fired one
 MAX_DAILY_ENTRIES     = 8         # hard cap on new entries per day; after this, manage-only
+# ── PDT (Pattern Day Trader) — sub-$25K accounts ─────────────────────────────
+# FINRA: a sub-$25K margin account that does 4+ day-trades in 5 rolling
+# business days gets flagged + restricted for 90 days. We enforce our OWN
+# count because Alpaca PAPER accounts do NOT set pattern_day_trader / may not
+# honor daytrade_count — so the existing pdt_check() (which trusts Alpaca's
+# flag) silently never fires on paper. Live day 1 on a real $5K account = lock.
+PDT_ACCOUNT_THRESHOLD   = 25000   # accounts ≥ this are exempt from PDT
+PDT_MAX_DAY_TRADES_5D   = 3       # 3 allowed in any rolling 5-business-day window; 4th = flag
+SUB_PDT_MAX_DAILY_ENTRIES = 2     # when sub-$25K, override MAX_DAILY_ENTRIES (8 → 2)
 LAST_ENTRY_HOUR       = 14        # ET — no new entries after 14:00 ET (closing-imbalance flow)
 LAST_ENTRY_MINUTE     = 0
 CHOP_ATR_RATIO        = 0.5       # if today's 1H ATR < 0.5× of 5-day avg → CHOP → skip trend-cont
@@ -1889,6 +1898,126 @@ def pdt_check():
         return True
 
 
+# ── Self-enforced PDT day-trade tracking ─────────────────────────────────────
+# A "day trade" (FINRA) = open + close the SAME security on the SAME trading
+# day. We record one whenever a position opened today is fully closed today.
+# Persisted so the rolling 5-day count survives restarts. This is OUR
+# enforcement, independent of Alpaca's pattern_day_trader flag (which paper
+# never sets) — see PDT_* constants above.
+_DAY_TRADES_FILE = os.path.join(os.path.expanduser("~/.spy_trader"), "day_trades.json")
+_day_trades_lock = threading.Lock()
+
+
+def _load_day_trades() -> list:
+    try:
+        if os.path.exists(_DAY_TRADES_FILE):
+            with open(_DAY_TRADES_FILE) as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning(f"_load_day_trades failed: {e}")
+    return []
+
+
+def _record_day_trade(occ: str, opened_at: str) -> None:
+    """Called from _remove_position on a FULL close. Records a day-trade only
+    if the position was opened on the same trading day it closed."""
+    try:
+        opened_d = datetime.fromisoformat(opened_at).astimezone(ET).date()
+    except Exception:
+        return  # no/invalid opened_at → can't classify; skip (conservative: don't over-count)
+    today = datetime.now(ET).date()
+    if opened_d != today:
+        return  # overnight hold → NOT a day trade
+    with _day_trades_lock:
+        events = _load_day_trades()
+        events.append({"ts": datetime.now(ET).isoformat(), "occ": occ})
+        # Keep only the last ~30 days so the file doesn't grow unbounded.
+        cutoff = (datetime.now(ET) - timedelta(days=30)).isoformat()
+        events = [e for e in events if e.get("ts", "") >= cutoff]
+        try:
+            os.makedirs(os.path.dirname(_DAY_TRADES_FILE), exist_ok=True)
+            tmp = _DAY_TRADES_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(events, f)
+            os.replace(tmp, _DAY_TRADES_FILE)
+        except Exception as e:
+            log.warning(f"_record_day_trade persist failed: {e}")
+    log.info(f"  📋 Day-trade recorded: {occ} (opened+closed {today}). "
+             f"5-day count now {count_day_trades_5d()}.")
+
+
+def _business_days_ago(n: int) -> datetime:
+    """Datetime n business days back from now (skips weekends; ignores
+    holidays — that only makes the window LONGER = more conservative/safer
+    for PDT protection)."""
+    d = datetime.now(ET)
+    step = 0
+    while step < n:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:   # Mon–Fri
+            step += 1
+    return d.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def count_day_trades_5d() -> int:
+    """Day-trades within the last 5 business days (the PDT rolling window)."""
+    cutoff = _business_days_ago(5).isoformat()
+    with _day_trades_lock:
+        return sum(1 for e in _load_day_trades() if e.get("ts", "") >= cutoff)
+
+
+def _is_sub_pdt_account() -> bool:
+    """True if the live account equity is below the PDT threshold ($25K).
+    Cached for 60s to avoid hammering the Alpaca account endpoint."""
+    global _sub_pdt_cache
+    now = time.time()
+    if _sub_pdt_cache["ts"] and (now - _sub_pdt_cache["ts"]) < 60:
+        return _sub_pdt_cache["val"]
+    val = True  # fail-safe: if we can't tell, assume sub-PDT (stricter = safer)
+    try:
+        av = account_value()
+        if av > 0:
+            val = av < PDT_ACCOUNT_THRESHOLD
+    except Exception:
+        pass
+    _sub_pdt_cache.update(ts=now, val=val)
+    return val
+
+
+_sub_pdt_cache = {"ts": 0.0, "val": True}
+
+
+def pdt_day_trades_remaining() -> Optional[int]:
+    """For the UI badge. None if account is PDT-exempt (≥$25K); else
+    the number of day-trades left before the 5-day cap locks new entries."""
+    if not _is_sub_pdt_account():
+        return None
+    return max(0, PDT_MAX_DAY_TRADES_5D - count_day_trades_5d())
+
+
+def pdt_sub25k_ok() -> bool:
+    """Hard entry gate. Blocks a new entry that could become the 3rd+
+    day-trade in the rolling 5-day window on a sub-$25K account. Independent
+    of Alpaca's pattern_day_trader flag — we enforce it ourselves so paper
+    behaves like live.
+
+    Conservative: blocks at >= PDT_MAX_DAY_TRADES_5D (3) because the NEW
+    entry, if closed same-day, would be day-trade #4 = the one that triggers
+    the FINRA flag. We never want to take the trade that flags the account.
+    """
+    if not _is_sub_pdt_account():
+        return True  # ≥ $25K → PDT rule doesn't apply
+    used = count_day_trades_5d()
+    if used >= PDT_MAX_DAY_TRADES_5D:
+        log.warning(
+            f"  🚫 PDT block: {used} day-trades in last 5 business days "
+            f"(sub-$25K account). A 4th day-trade flags the account for 90 "
+            f"days. No new entries until the window clears."
+        )
+        return False
+    return True
+
+
 _vix_prev_close: Optional[float] = None
 VIX_SPIKE_PCT  = 0.15   # block new entries if VIX up >15% from yesterday's close
 
@@ -2273,14 +2402,17 @@ _daily_entries_date:  object = None  # datetime.date
 _daily_entries_lock = threading.Lock()
 
 def daily_entries_ok() -> bool:
-    """True if we haven't hit MAX_DAILY_ENTRIES yet today (resets at new date)."""
+    """True if we haven't hit the per-day entry cap (resets at new date).
+    Sub-$25K accounts use the tighter SUB_PDT_MAX_DAILY_ENTRIES (PDT-aware)
+    instead of the default MAX_DAILY_ENTRIES."""
     global _daily_entries_count, _daily_entries_date
     today = datetime.now(ET).date()
+    cap = SUB_PDT_MAX_DAILY_ENTRIES if _is_sub_pdt_account() else MAX_DAILY_ENTRIES
     with _daily_entries_lock:
         if _daily_entries_date != today:
             _daily_entries_count = 0
             _daily_entries_date  = today
-        return _daily_entries_count < MAX_DAILY_ENTRIES
+        return _daily_entries_count < cap
 
 def record_daily_entry() -> int:
     """Increment the daily-entry counter. Returns the new count."""
@@ -3373,6 +3505,15 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                     time.sleep(180)
                 continue
 
+            # PDT guard (self-enforced, sub-$25K accounts) — never take the
+            # trade that would become the 4th day-trade in 5 business days.
+            if not pdt_sub25k_ok():
+                if stop_event:
+                    stop_event.wait(timeout=300)
+                else:
+                    time.sleep(300)
+                continue
+
             # Global cross-symbol cooldown — prevent two symbols firing in the same second
             if not global_cooldown_ok():
                 log.info(f"  Global cooldown ({GLOBAL_COOLDOWN_SEC}s) active across symbols — waiting.")
@@ -3414,6 +3555,9 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 pass  # warning already logged inside sector_risk_check
             elif not portfolio_delta_check(acct_val, intended_direction=direction):
                 pass  # warning already logged
+            elif not daily_entries_ok():
+                _cap = SUB_PDT_MAX_DAILY_ENTRIES if _is_sub_pdt_account() else MAX_DAILY_ENTRIES
+                log.info(f"  Daily entry cap reached ({_cap}/day{' — sub-$25K PDT-aware' if _is_sub_pdt_account() else ''}) — manage-only for the rest of the day.")
             elif position_exists_for_symbol_direction(symbol, direction):
                 log.info(f"  Duplicate guard: {symbol} {direction.upper()} position already open — skipping.")
             else:
@@ -3443,6 +3587,8 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                                     order = None
                             last_trade_ts = now  # always stamp — prevents signal flood even on error
                             _record_global_trade()  # global cooldown across symbols
+                            if order:
+                                record_daily_entry()  # count toward MAX/SUB_PDT daily cap
                             if order and not DRY_RUN:
                                 filled_qty = wait_for_fill(str(order.id), stop_event=stop_event)
                                 if filled_qty > 0:
@@ -3970,6 +4116,10 @@ def _close_option_position(occ_symbol: str, qty: int, reason: str,
 
 
 def _remove_position(pos: dict) -> None:
+    # Record a PDT day-trade if this position opened AND fully closed on the
+    # same trading day. Real positions only — dry-runs aren't real day-trades.
+    if not pos.get("is_dry_run", False):
+        _record_day_trade(pos.get("occ_symbol", "?"), pos.get("opened_at", ""))
     with _positions_lock:
         try:
             _open_positions.remove(pos)
