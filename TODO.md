@@ -16,6 +16,7 @@ Pick from this list in order. Each item is independently shippable and committab
 
 | # | Item | Hours | Status | Section |
 |---|------|-------|--------|---------|
+| **0** | **Fix live data feed reliability** — Alpaca free stock-bars endpoint returns 0 bars for ALL symbols incl. SPY (option data works fine — different entitlement). Sticky-yfinance pin makes one early miss = stale all day. Dead `.env` keys compound it. FOUNDATIONAL — affects every trade decision. Fix: verify endpoint w/ fresh keys → remove sticky pin → skip dead sip/None feed attempts → real-time latest-trade aggregator if needed. | ~1-4 | 🟡 In progress — awaiting fresh paper keys for diagnosis | §🆕-P0-D below |
 | 1 | **Backtest harness v2** — Polygon Options + Stocks Starter (subscribed today), 3-yr lookback, real bid/ask fills, debate gate included, walk-forward validation. Output: MD report + dashboard tab. THIS IS THE GATING ITEM — go-live decision rides on the result. | ~16 | Blocked on user activating Polygon Stocks Starter ($29/mo). When ready, user says "stocks active". | §🆕-P0-A below |
 | 2 | **PDT counter for sub-25K accounts** — track rolling 5-day day-trade count; hard-block 3rd day-trade. Adjust `MAX_DAILY_ENTRIES` from 8 → 2 in sub-25K mode. CRITICAL real-money blocker for the user's $5-25K target account. | ~3 | New — user is sub-PDT. | §🆕-P0-B below |
 | 3 | **Account-size adapter** — at $5-25K, current `MAX_RISK_PCT=0.005` (0.5%) yields only 1 contract max on most setups. Auto-tune sizing when account < $25K so a 0.5% risk actually deploys meaningful contracts (or accept the cap and document it). | ~2 | New — discovered during real-money readiness review. | §🆕-P0-C below |
@@ -74,6 +75,24 @@ Pick from this list in order. Each item is independently shippable and committab
 ---
 
 ## 🆕 P0 — Real-money gating items (added 2026-05-14)
+
+### 🆕-P0-D. Fix live data feed reliability (item 0 — foundational)
+
+- **Status:** In progress 2026-05-15. Awaiting fresh Alpaca paper keys for endpoint diagnosis.
+- **Symptom:** Every `fetch_bars()` call for every symbol (including SPY) returns "Alpaca returned 0 bars — falling back to yfinance". yfinance works but is ~2-3 min delayed.
+- **Root cause (diagnosed, pending confirmation):**
+  1. Alpaca free "Basic" market-data plan appears to return empty for `StockHistoricalDataClient` bars even with valid creds. Option data (`OptionHistoricalDataClient`) works — different entitlement. SPY = 0 bars is conclusive (SPY trades millions of IEX shares/day; valid endpoint cannot return empty).
+  2. `_yf_sticky` pin (spy_auto_trader.py:505): one Alpaca miss for a symbol pins it to yfinance for the WHOLE trading day. A single 9:31 AM transient fail = stale-ish data until midnight.
+  3. `.env` Alpaca keys are dead (401) — separate issue; matters for backtest + direct scripts that read .env.
+  4. Feed cascade wastes budget: `iex → sip → None`. Free tier can't use `sip`/default — those two attempts always fail, adding latency + log spam.
+- **Fix plan:**
+  1. **Verify** with fresh paper keys: is `StockHistoricalDataClient.get_stock_bars(feed="iex")` genuinely dead on free tier, or a recoverable request-param issue (e.g. needs `end=now-16min` for free SIP embargo)?
+  2. **Remove/expire the sticky pin** — retry Alpaca each call; only fall back per-call. (VWAP-drift concern is moot: `_add_indicators` recomputes from the full day's df each call, and we pick ONE source per call.)
+  3. **Drop the `sip` and `None` feed attempts** on free tier — straight `iex → yfinance`. Less latency, less log noise.
+  4. **If IEX bars genuinely dead:** build a real-time 5-min bar aggregator from Alpaca's free latest-trade endpoint (the tier that demonstrably works — same one option quotes use). Rolling trade buffer → OHLCV bars. $0, true real-time.
+  5. **Fix `.env` keys** so backtest + standalone scripts authenticate.
+- **Why item 0:** every signal decision and every position-monitor cycle reads `fetch_bars`. Stale/missing data corrupts indicators (VWAP, EMA, RSI) → bad entries + missed exits. Nothing downstream (backtest, risk gates, go-live) is trustworthy until the live feed is.
+- **Hours:** 1 (Option B: pin removal + feed trim) to 4 (Option C: + real-time aggregator).
 
 ### 🆕-P0-A. Backtest harness v2 with real options data
 
