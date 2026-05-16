@@ -4898,6 +4898,34 @@ def eod_review(log_path: str, trades_today: list) -> str:
             f"  {cls:15} n={n:2}  win={wr:4.0f}%  total={total_pnl:+6.1f}%  avg={avg:+5.1f}%"
         )
 
+    # Per-symbol attribution (§P1-D) — which SYMBOLS make money (vs which
+    # strategies). If vwap_momentum works on SPY but bleeds on NVDA, you
+    # drop NVDA from the watchlist, not the strategy.
+    by_sym: dict[str, list[float]] = {}
+    for t in closed:
+        by_sym.setdefault(t.get("symbol", "?"), []).append(t.get("pnl_pct", 0))
+    sym_lines: list[str] = []
+    for sym, pnls in sorted(by_sym.items(), key=lambda kv: -sum(kv[1])):
+        n = len(pnls)
+        wr = (sum(1 for p in pnls if p > 0) / n * 100) if n else 0
+        tot = sum(pnls)
+        sym_lines.append(
+            f"  {sym:6} n={n:2}  win={wr:4.0f}%  total={tot:+6.1f}%  avg={tot/n if n else 0:+5.1f}%"
+        )
+
+    # 2-D cross-tab {symbol × signal_class} — surfaces e.g. "NVDA orb_breakout
+    # = -8% over 4 trades" that both 1-D views hide.
+    xtab: dict[tuple, list[float]] = {}
+    for t in closed:
+        xtab.setdefault((t.get("symbol", "?"), t.get("signal_class", "unknown")),
+                        []).append(t.get("pnl_pct", 0))
+    xtab_lines: list[str] = []
+    for (sym, cls), pnls in sorted(xtab.items(), key=lambda kv: sum(kv[1])):
+        if sum(pnls) < 0 and len(pnls) >= 2:   # only flag genuine losers
+            xtab_lines.append(
+                f"  ⚠ {sym} × {cls}: {sum(pnls):+.1f}% over {len(pnls)} trades — consider disabling"
+            )
+
     pf_str = "∞" if profit_factor == float("inf") else f"{profit_factor:.2f}"
     summary_lines = [
         f"Signals fired: {counts['signal']}",
@@ -4912,6 +4940,12 @@ def eod_review(log_path: str, trades_today: list) -> str:
     if class_lines:
         summary_lines.append("Per-signal-class P&L (best → worst):")
         summary_lines.extend(class_lines)
+    if sym_lines:
+        summary_lines.append("Per-symbol P&L (best → worst):")
+        summary_lines.extend(sym_lines)
+    if xtab_lines:
+        summary_lines.append("Losing symbol×strategy cells (≥2 trades):")
+        summary_lines.extend(xtab_lines)
     if trades_today:
         for t in trades_today:
             if not t.get("is_partial"):
