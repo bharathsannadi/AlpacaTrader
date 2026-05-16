@@ -432,13 +432,17 @@ _stream_handler.setLevel(logging.INFO)
 
 _root = logging.getLogger()
 _root.setLevel(logging.INFO)
-# Replace any handlers that basicConfig (or prior runs) may have left behind.
-for h in list(_root.handlers):
-    _root.removeHandler(h)
-_root.addHandler(_main_handler)
-_root.addHandler(_err_handler)
-_root.addHandler(_stream_handler)
-_root.addHandler(_webhook_handler)
+# Idempotent: a re-import / importlib.reload must NOT stack a second set of
+# handlers (that was the duplicate-log-line root cause — TODO §P3). The
+# sentinel attribute survives on the root logger object across re-imports.
+if not getattr(_root, "_spy_handlers_installed", False):
+    for h in list(_root.handlers):
+        _root.removeHandler(h)
+    _root.addHandler(_main_handler)
+    _root.addHandler(_err_handler)
+    _root.addHandler(_stream_handler)
+    _root.addHandler(_webhook_handler)
+    _root._spy_handlers_installed = True
 
 log = logging.getLogger(__name__)
 

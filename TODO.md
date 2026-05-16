@@ -162,7 +162,7 @@ Pick from this list in order. Each item is independently shippable and committab
 
 </details>
 
-### 🆕-P3 — Duplicate log lines (cosmetic, from item 0 follow-up)
+### ✅ 🆕-P3 — Duplicate log lines — SHIPPED 2026-05-16 (idempotent handler guard)
 
 - **Status:** New 2026-05-15. Every line in `auto_trader.log` is written twice. Confirmed single process owns :5000, so it's two handlers on the root logger, not two processes. Suspect: `spy_auto_trader.py` configures root handlers at import AND something re-adds (app.py SocketIOHandler, or a re-import path). Cosmetic — doubles log size, no trading impact.
 - **Fix:** audit `logging.getLogger().handlers` at runtime; ensure handler setup is idempotent (guard with a module-level `_LOGGING_CONFIGURED` flag, or `if not root.handlers`).
