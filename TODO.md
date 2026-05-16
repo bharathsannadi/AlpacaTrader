@@ -32,6 +32,7 @@ Pick from this list in order. Each item is independently shippable and committab
 | 13 | **Real-money go-live checklist** (new P1 F) — ✅ **SHIPPED 2026-05-16**. GO_LIVE_CHECKLIST.md (24 boxes, 5 sections) + check_go_live_readiness() hard runtime gate in init_clients: live login REFUSED until all [x] + signed; paper ungated. Fail-safe (missing file → not ready). | ~4 | ✅ DONE | §🆕-P1-F |
 | 14 | **Dynamic stop/target** (new P1 G) — context-aware exits (ATR-stop + signal-class targets + IV-scale + put/call + time-decay). **Logic built generic; params chosen by backtest item 1's sweep, not hand-tuned.** Replaces flat -50%/+75% with `compute_exit_levels()`. | ~3 (+ folds into item 1 sweep) | New — user request 2026-05-15. **Coupled to item 1.** | §🆕-P1-G above |
 | 15 | **Entry-logic KB-drift fixes** (new P1 H) — 6 gaps from 2026-05-15 entry audit. Interim trio (H1 IVR cutoff 70→~40, H3 2-of-3 confluence gate, H4 deterministic VSA rules) is the high-value subset, no spread capability needed. H2 (debit spreads) / H5 / H6 wait for backtest edge proof. | ~6 (trio) / ~10+ (H2) | New — entry audit. **Trio backtest-swept (item 1).** | §🆕-P1-H above |
+| 16 | **Candidate-factor backtest sweep** (new P1 J) — Force Index, Supertrend, momentum-fade soft-exit. Defined in KB §18 (reference only, NOT live-wired). Added as factor axes to item 1's sweep — kept iff they add OOS expectancy. **Pure backtest config, zero live code until proven.** | folds into item 1 | New — chart review 2026-05-16. **Coupled to item 1.** | §🆕-P1-J below |
 
 **Recommendation:** Items 1 → 2 → 3 are the real-money gating chain. **Item 14 is coupled to item 1** — its exit parameters come out of the backtest sweep, so it's designed now but finalized when the backtest runs (no separate backtest cost — it's a parameter axis). Items 4-7 are P1 risk gaps. Items 8-10 are polish. Items 11-13 are observability + go-live discipline (do AFTER backtest item 1 produces real data to attribute and threshold against). Don't skip ahead — the backtest result (item 1) may reveal that some risk gates need re-tuning, which would change the design of items 4-5 and the thresholds in item 13.
 
@@ -82,6 +83,39 @@ Pick from this list in order. Each item is independently shippable and committab
   acceptable interim behavior (errs toward fewer correlated bets) but will
   over-block on bigger accounts. Document; don't loosen by guess.
 - **Hours:** ~1 (once backtest picks the variant).
+
+### 🆕-P1-J. Candidate-factor backtest sweep (Force Index / Supertrend / momentum-fade)
+
+- **Status:** New 2026-05-16 (surfaced from a TSLA chart review + the
+  `alpaca_momentum_v20.py` Downloads bot). **Definitions captured in
+  knowledge_base.md §18 — reference only, ZERO live wiring.**
+- **Rationale:** all three are legit, well-defined, and conceptually
+  aligned with the existing KB (volume-confirms-move / ATR-trend / thesis-
+  broken exit). But adding any factor to live signals on an unproven base
+  is the curve-fit trap (KB §17b). They become **factor axes in item 1's
+  backtest sweep**, kept only if they add out-of-sample expectancy.
+- **Sweep design (folds into item 1 — no separate backtest cost):**
+  1. **Force Index** FI(N), N ∈ {2, 13, 18} — test as (a) an entry
+     confluence factor (FI>0 required for calls) and (b) a fade-exit
+     trigger (FI crosses zero against the open position). Compare vs
+     baseline (no FI).
+  2. **Supertrend** (period, mult) ∈ {(7,3),(10,3),(10,2)} — test as
+     (a) entry trend filter (only trade with Supertrend direction) and
+     (b) an exit-variant in §P1-G (Supertrend line = trailing stop).
+     MUST be evaluated only with the chop filter on (whipsaws naked).
+  3. **Momentum-fade soft exit** — `RSI<50 or close<EMA9` (mirror for
+     puts) as an additional exit lane in §P1-G's matrix, vs ATR-stop /
+     signal-class targets.
+- **Decision rule:** a factor ships to live ONLY if it improves the
+  out-of-sample (walk-forward) profit factor or max-DD without degrading
+  the other, on ≥2 signal classes. Otherwise it stays in §18 as
+  documented-but-unused. No factor is hand-added regardless of how good
+  the chart looks.
+- **Out-of-scope note:** the reference chart was TSLA — **not in the
+  watchlist** (SPY/AMZN/GOOG/MSFT/NVDA/META). Adding a 7th high-beta
+  name is a separate decision with correlation-cap (§P1-I) implications;
+  the backtest would weigh it, not a chart.
+- **Hours:** 0 standalone (pure sweep config inside item 1).
 
 ### 🆕-P1-G. Dynamic stop-loss / profit-target (context-aware exits)
 

@@ -692,6 +692,83 @@ The 17 order types Fontanills enumerates collapse into 3 categories for our syst
 
 ---
 
+## 18. Candidate / Experimental Indicators — NOT YET VALIDATED
+
+> ⚠️ **Reference only. None of these are wired into the live signal stack.**
+> They are captured here so the definitions exist and the debate gate can
+> *reason about* them, but per the project's standing discipline (KB §17b:
+> "robust systems work in a neighborhood of params; fragile ones cliff-edge")
+> a new factor is added to live trading **only after the backtest (TODO
+> item 1) proves it adds out-of-sample expectancy** — never hand-wired on
+> an unproven base. Tracked as TODO §🆕-P1-J.
+
+### 18a. Force Index (Elder)
+
+- **Definition:** `FI_raw = volume × (close − prev_close)`. Smoothed:
+  `FI(N) = EMA_N(FI_raw)`. Common: FI(2) short-term entry timing, FI(13)
+  trend confirmation, FI(18) (seen on the reference TSLA chart) a slightly
+  slower trend filter.
+- **Reads:** FI > 0 = buyers in control (price up *and* volume backing it);
+  FI < 0 = sellers. The magnitude scales with conviction (volume × move).
+- **Signals:**
+  - FI crossing zero with price = momentum regime shift.
+  - **Bullish divergence:** price makes a lower low, FI makes a higher low
+    → selling exhausting → reversal-up watch.
+  - **Bearish divergence:** price higher high, FI lower high → rally on
+    fading volume (Suckers Rally, ties to §10 VSA) → exit/avoid calls.
+- **Why it fits this system:** it is literally "volume confirms the move"
+  quantified — the same principle as the ORB `vol_ratio > 1.3` gate
+  (§6), Schwager's volume-confirms-trend (§14), and VSA (§10). Strong
+  candidate as a **confluence factor** (entry) and a **fade-exit trigger**
+  (FI rolling through zero against an open long).
+
+### 18b. Supertrend (ATR-banded trend flip)
+
+- **Definition:** `mid = (high+low)/2`; `upper = mid + m×ATR`,
+  `lower = mid − m×ATR` (typical `m`=3, ATR period 7–10). Final bands use
+  trailing logic; the indicator "flips": **long while close > Supertrend
+  line, short while close < it.** The flip bar is the signal.
+- **Reads:** a clean, volatility-adaptive trend direction + a built-in
+  trailing stop (the line itself).
+- **Strengths:** excellent in trends, the trailing band is a natural,
+  ATR-scaled exit (overlaps the post-T1 trailing stop already shipped).
+- **Weakness:** **whipsaws badly in chop** — must be paired with a
+  range/chop filter (we already have `is_chop_regime()` and the
+  Bollinger-width compression check, §6/§11 Brooks "in a trading range,
+  fade breakouts"). Never run Supertrend naked in a range.
+- **Why it fits:** the codebase + KB already lean heavily on ATR (Brooks
+  §11, `MIN_ORB_ATR_MULT`, the trailing stop). Supertrend is a coherent
+  ATR-trend candidate for **entry confluence** and an **exit-variant**
+  (use the Supertrend line as the dynamic stop in §P1-G's sweep).
+
+### 18c. Momentum-Fade Soft Exit
+
+- **Definition:** exit (or scale down) an open long *before* the hard
+  premium/ATR stop when the entry thesis quietly breaks: e.g.
+  `RSI < 50` **or** `close < EMA9` (mirror for shorts/puts).
+- **Origin:** observed in a separate stock-momentum bot
+  (`alpaca_momentum_v20.py`) and independently visible on the reference
+  TSLA chart (Force 18 rolled to zero + price snapped below EMA9 the same
+  day price fell −4.75%).
+- **Concept:** a "thesis-broken" exit distinct from the disaster stop.
+  Long-option math (theta) punishes round-trips to the hard stop; getting
+  out when momentum *first* fades preserves premium. Aligns with KB §3
+  ("take 50% of the move, don't hold for the full move; exit if not
+  profitable by 2:30") and §16 Thomsett (harvest faster on puts).
+- **Status:** candidate **exit variant** for §P1-G's backtest sweep,
+  alongside ATR-stop / signal-class targets.
+
+### 18d. SMA vs EMA note
+
+The reference chart used **SMA 20 / SMA 100**; this system uses **EMA21 /
+daily-EMA200**. EMA weights recent bars more (faster, more whipsaw); SMA
+is smoother/laggier. Not a gap — a deliberate parameterization choice.
+If the backtest sweep tests MA type, SMA variants can be included, but
+there is no a-priori reason to switch; EMA is the documented choice and
+both are valid (KB §6 EMA Signal Alignment).
+
+---
+
 ## Appendix: Quick Rules Summary
 
 | Rule | Threshold | Action |
