@@ -458,6 +458,18 @@ def init_clients(api_key: str, api_secret: str, paper: bool = True):
     Returns (account, success_bool, error_msg_or_None).
     """
     global TRADING_CLIENT, DATA_CLIENT, OPTION_CLIENT, PAPER_MODE
+    # ── Go-live gate (§P1-F) ── real money requires a fully-signed
+    # GO_LIVE_CHECKLIST.md. Paper mode is never gated.
+    if not paper:
+        ready, missing = check_go_live_readiness()
+        if not ready:
+            n = len(missing)
+            preview = "; ".join(missing[:5]) + (f" …(+{n-5} more)" if n > 5 else "")
+            msg = (f"LIVE login refused — GO_LIVE_CHECKLIST.md has {n} "
+                   f"unchecked item(s): {preview}")
+            log.warning(f"🚫 {msg}")
+            return None, False, msg
+        log.warning("✅ Go-live checklist fully signed — LIVE mode permitted.")
     try:
         PAPER_MODE      = paper
         TRADING_CLIENT  = TradingClient(api_key, api_secret, paper=paper)
@@ -469,6 +481,30 @@ def init_clients(api_key: str, api_secret: str, paper: bool = True):
     except Exception as e:
         TRADING_CLIENT = DATA_CLIENT = OPTION_CLIENT = None
         return None, False, str(e)
+
+
+_GO_LIVE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "GO_LIVE_CHECKLIST.md")
+
+def check_go_live_readiness() -> tuple[bool, list[str]]:
+    """Parse GO_LIVE_CHECKLIST.md. Returns (ready, unchecked_lines).
+
+    ready iff: every checkbox is [x] AND the 'Last reviewed' line is not
+    'never'. Fail-safe: if the file is missing/unreadable → NOT ready
+    (never let a parse error silently enable real money)."""
+    try:
+        with open(_GO_LIVE_FILE) as f:
+            text = f.read()
+    except Exception as e:
+        return False, [f"GO_LIVE_CHECKLIST.md unreadable ({e}) — refusing live"]
+    unchecked = []
+    for ln in text.splitlines():
+        st = ln.strip()
+        if st.startswith("- [ ]"):
+            unchecked.append(st[5:].split("—")[0].strip()[:70])
+    if "Last reviewed: _never_" in text or "Last reviewed: never" in text.lower():
+        unchecked.append("'Last reviewed' still says never — sign + date the file")
+    return (len(unchecked) == 0), unchecked
 
 
 def is_authenticated() -> bool:
