@@ -2047,7 +2047,11 @@ def eff_max_risk_pct() -> float:
         return _ui_risk_override
     return SUB10K_MAX_RISK_PCT if _is_sub10k_account() else MAX_RISK_PCT
 
+_ui_portfolio_risk_override: Optional[float] = None
+
 def eff_max_portfolio_risk() -> float:
+    if _ui_portfolio_risk_override is not None:
+        return _ui_portfolio_risk_override
     return SUB10K_MAX_PORTFOLIO_RISK if _is_sub10k_account() else MAX_PORTFOLIO_RISK
 
 def eff_daily_loss_limit_pct() -> float:

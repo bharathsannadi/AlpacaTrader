@@ -202,6 +202,12 @@ function updateUI(s) {
 
   if (s.equity_curve) renderEquityCurve(s.equity_curve);
 
+  // Sync max-portfolio-risk input to the active value (unless user is editing it)
+  if (s.max_portfolio_risk_pct != null) {
+    const mpr = document.getElementById("max-portfolio-risk");
+    if (mpr && document.activeElement !== mpr) mpr.value = s.max_portfolio_risk_pct;
+  }
+
   // Account
   if (s.account_value) {
     const fmt = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -550,6 +556,11 @@ function setDryRun() {
 function setRisk() {
   const val = parseFloat(document.getElementById("risk-pct").value);
   if (!isNaN(val) && val > 0) socket.emit("set_risk", { risk_pct: val });
+}
+
+function setMaxPortfolioRisk() {
+  const val = parseFloat(document.getElementById("max-portfolio-risk").value);
+  if (!isNaN(val) && val >= 0.5) socket.emit("set_max_portfolio_risk", { pct: val });
 }
 
 // ── Enter key on login ────────────────────────────────────────────────────────

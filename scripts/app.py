@@ -357,6 +357,7 @@ def _state_snapshot() -> dict:
             "auto_trade":           state["auto_trade"],
             "open_positions":       trader.open_positions_snapshot(),
             "deployed_risk_pct":    round(trader.deployed_risk_pct(state["account_value"]) * 100, 2),
+            "max_portfolio_risk_pct": round(trader.eff_max_portfolio_risk() * 100, 2),
             "pdt_remaining":        trader.pdt_day_trades_remaining(),  # None if ≥$25K (exempt)
             "equity_curve":         trader.equity_curve_snapshot(state["account_value"]),
             "data_freshness":       trader.get_freshness_snapshot(),
@@ -808,6 +809,22 @@ def on_set_risk(data):
     trader.MAX_RISK_PCT = pct / 100.0
     trader._ui_risk_override = pct / 100.0   # UI choice wins over sub-10K profile
     log.info(f"Risk per trade updated to {pct}% (UI override — wins over account-size profile)")
+
+
+@socketio.on("set_max_portfolio_risk")
+@require_auth
+def on_set_max_portfolio_risk(data):
+    try:
+        pct = float(data.get("pct", 3))
+        if not (0.5 <= pct <= 50):
+            raise ValueError("must be 0.5–50%")
+    except (TypeError, ValueError) as e:
+        socketio.emit("log", {"message": f"Invalid max portfolio risk: {e}", "level": "WARNING"})
+        return
+    trader.MAX_PORTFOLIO_RISK = pct / 100.0
+    trader._ui_portfolio_risk_override = pct / 100.0  # UI wins over sub-10K profile
+    log.info(f"Max portfolio risk updated to {pct}% (UI override — wins over account-size profile)")
+    emit_state()
 
 
 @socketio.on("set_param")

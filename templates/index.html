@@ -1083,6 +1083,16 @@
           <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
         </div>
       </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Max Portfolio Risk</div>
+          <div class="config-sub">% total deployed across all positions</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:var(--s-1)">
+          <input class="risk-input" type="number" id="max-portfolio-risk" value="3" min="0.5" max="50" step="0.5" onchange="setMaxPortfolioRisk()" aria-label="Max portfolio risk percent"/>
+          <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
+        </div>
+      </div>
 
       <!-- Filters -->
       <div class="config-section">Filters</div>
