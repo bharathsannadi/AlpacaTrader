@@ -1792,17 +1792,47 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY",
         return None, None
 
 
+# Time-of-day spread tightening (§P1-E). The first and last few minutes
+# have 3-5× normal option spreads (opening auction unwind / closing
+# imbalance). A fill there silently pays that spread as slippage. We
+# tighten the % gate during those windows so only genuinely-tight books
+# get through when spreads are structurally wide.
+OPEN_WIDE_UNTIL  = (9, 35)    # 9:30–9:35 ET
+CLOSE_WIDE_FROM  = (15, 55)   # 15:55–16:00 ET
+WIDE_WINDOW_SPREAD_PCT = 0.03 # 3% (vs normal 5%) during those windows
+
+def _in_wide_spread_window() -> bool:
+    now = datetime.now(ET)
+    hm = (now.hour, now.minute)
+    if (9, 30) <= hm < OPEN_WIDE_UNTIL:
+        return True
+    if CLOSE_WIDE_FROM <= hm <= (16, 0):
+        return True
+    return False
+
+
 def spread_acceptable(mid: float, spread: float) -> bool:
     """Spread gate: percent-relative with an absolute floor for cheap options.
 
     A $0.30 spread is fine on a $5 option (6%) but terrible on a $0.50 option (60%).
-    Reject when spread / mid exceeds MAX_SPREAD_PCT, but never reject for less than
+    Reject when spread / mid exceeds the % limit, but never reject for less than
     the MAX_SPREAD dollar floor (avoids over-rejecting cheap weeklies with $0.05 ticks).
+
+    During the open/close wide-spread windows (§P1-E) the % limit tightens
+    from 5% → 3% so we don't silently overpay the structurally-wide book.
     """
     if mid <= 0:
         return False
-    limit = max(MAX_SPREAD, mid * MAX_SPREAD_PCT)
-    return spread <= limit
+    pct = WIDE_WINDOW_SPREAD_PCT if _in_wide_spread_window() else MAX_SPREAD_PCT
+    limit = max(MAX_SPREAD, mid * pct)
+    ok = spread <= limit
+    if not ok and _in_wide_spread_window():
+        log.info(
+            f"  ⏰ Wide-window spread gate ({pct*100:.0f}%): "
+            f"spread ${spread:.2f} > ${limit:.2f} on ${mid:.2f} mid — "
+            f"skipping open/close illiquidity."
+        )
+    return ok
 
 
 def option_mid_and_spread(option):
