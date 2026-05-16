@@ -488,6 +488,25 @@ def refresh_all_prices() -> None:
         log.warning(f"refresh_all_prices (vix) failed: {e}")
 
 
+# ── Background-thread heartbeats (for a meaningful /health) ───────────────────
+# launchd KeepAlive restarts a DEAD process. It can't detect a HUNG one —
+# Flask still answering HTTP while the position_monitor thread is wedged
+# (deadlock, eventlet stall) = positions silently unmanaged, stops never
+# fire. We stamp a heartbeat at the top of each critical loop; /health turns
+# 503 if the position monitor goes stale so the watchdog can kill+restart.
+_heartbeats = {"position_monitor": 0.0, "price_ticker": 0.0, "scheduler": 0.0}
+_heartbeats_lock = threading.Lock()
+
+def _beat(name: str) -> None:
+    with _heartbeats_lock:
+        _heartbeats[name] = time.time()
+
+def heartbeat_age(name: str) -> float:
+    with _heartbeats_lock:
+        ts = _heartbeats.get(name, 0.0)
+    return float("inf") if ts == 0.0 else (time.time() - ts)
+
+
 def price_ticker() -> None:
     """Background thread: refresh prices on TICKER_INTERVAL_SEC.
     Gated on streaming + at least one authenticated client connected.
@@ -495,6 +514,7 @@ def price_ticker() -> None:
     so the header stays current without waiting for a fill."""
     tick = 0
     while True:
+        _beat("price_ticker")
         try:
             with _state_lock:
                 should_run = (state["logged_in"]
@@ -521,6 +541,7 @@ def position_monitor() -> None:
     Closes at stop-loss, profit target 1 (partial), profit target 2, or hard-close time."""
     while True:
         socketio.sleep(POSITION_MONITOR_SEC)
+        _beat("position_monitor")   # loop is alive (even if idle below)
         try:
             with _state_lock:
                 should_run = state["logged_in"] and bool(authenticated_sids)
@@ -617,7 +638,29 @@ def api_status():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"}), 200
+    """Meaningful liveness — not just 'Flask answers'. The watchdog hits this;
+    a 503 means a critical background loop is wedged so it should kill the
+    process (launchd KeepAlive then restarts a clean one).
+
+    position_monitor must tick every POSITION_MONITOR_SEC (10s). We allow
+    6× slack (60s) before declaring it stale — covers a slow check_positions
+    cycle without false-positiving. price_ticker/scheduler are reported but
+    not fatal (a stale ticker is cosmetic; a stale monitor = unmanaged
+    positions = dangerous)."""
+    pm_age  = heartbeat_age("position_monitor")
+    pt_age  = heartbeat_age("price_ticker")
+    sc_age  = heartbeat_age("scheduler")
+    pm_stale = pm_age > (POSITION_MONITOR_SEC * 6)
+    body = {
+        "status": "degraded" if pm_stale else "ok",
+        "position_monitor_age_s": None if pm_age == float("inf") else round(pm_age, 1),
+        "price_ticker_age_s":     None if pt_age == float("inf") else round(pt_age, 1),
+        "scheduler_age_s":        None if sc_age == float("inf") else round(sc_age, 1),
+    }
+    # inf age right after boot is normal (loop hasn't ticked yet) — don't 503
+    # on a cold start; only 503 once it has ticked then went stale.
+    fatal = pm_stale and pm_age != float("inf")
+    return jsonify(body), (503 if fatal else 200)
 
 
 # ── WebSocket events ──────────────────────────────────────────────────────────
@@ -899,6 +942,7 @@ def scheduler():
 
     while True:
         socketio.sleep(15)
+        _beat("scheduler")
         now = datetime.now(ET)
 
         if now.weekday() > 4:   # skip weekends

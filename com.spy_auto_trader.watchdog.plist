@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.spy_auto_trader.watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/bsannadi/Desktop/AlpacaTrader/scripts/watchdog.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/bsannadi/Desktop/AlpacaTrader</string>
+
+    <!-- Run every 60s. The watchdog itself requires 3 consecutive
+         failures (~3 min) before acting, so a single blip won't restart. -->
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/alpacatrader.watchdog.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/alpacatrader.watchdog.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- To activate:
+           cp com.spy_auto_trader.watchdog.plist ~/Library/LaunchAgents/
+           launchctl load ~/Library/LaunchAgents/com.spy_auto_trader.watchdog.plist
+         To deactivate:
+           launchctl unload ~/Library/LaunchAgents/com.spy_auto_trader.watchdog.plist
+         Tail the log:
+           tail -f /tmp/alpacatrader.watchdog.log -->
+</dict>
+</plist>
