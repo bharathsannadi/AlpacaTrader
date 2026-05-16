@@ -2350,6 +2350,39 @@ def rolling_drawdown_pct(window_days: int = 5) -> float:
     return max(0.0, (peak - current) / peak)
 
 
+def equity_curve_snapshot(live_equity: float = 0.0) -> dict:
+    """Compact equity-curve summary for the UI (Settings card).
+
+    Returns history points + headline metrics. `live_equity` (if >0) is
+    appended as a provisional 'today' point so the curve reflects intraday
+    state before the EOD snapshot lands.
+    """
+    hist = _load_equity_history()
+    pts = [{"date": h["date"], "equity": h["equity"]} for h in hist]
+    today = datetime.now(ET).date().isoformat()
+    if live_equity and live_equity > 0:
+        if pts and pts[-1]["date"] == today:
+            pts = pts[:-1]  # replace stale same-day point with live
+        pts.append({"date": today, "equity": round(live_equity, 2)})
+    if not pts:
+        return {"points": [], "n": 0}
+    equities = [p["equity"] for p in pts]
+    start, cur = equities[0], equities[-1]
+    peak = max(equities)
+    return {
+        "points":      pts[-30:],                       # last 30 for the sparkline
+        "n":           len(pts),
+        "current":     round(cur, 2),
+        "start":       round(start, 2),
+        "total_ret_pct": round((cur - start) / start * 100, 2) if start else 0.0,
+        "peak":        round(peak, 2),
+        "max_dd_pct":  round((peak - min(equities[equities.index(peak):] or [peak])) / peak * 100, 2) if peak else 0.0,
+        "dd5_pct":     round(rolling_drawdown_pct(5) * 100, 2),
+        "dd20_pct":    round(rolling_drawdown_pct(20) * 100, 2),
+        "dd30_pct":    round(rolling_drawdown_pct(30) * 100, 2),
+    }
+
+
 _weekly_halt: bool = False
 
 def weekly_drawdown_check(acct_val: float) -> bool:

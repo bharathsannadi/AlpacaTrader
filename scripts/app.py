@@ -358,6 +358,7 @@ def _state_snapshot() -> dict:
             "open_positions":       trader.open_positions_snapshot(),
             "deployed_risk_pct":    round(trader.deployed_risk_pct(state["account_value"]) * 100, 2),
             "pdt_remaining":        trader.pdt_day_trades_remaining(),  # None if ≥$25K (exempt)
+            "equity_curve":         trader.equity_curve_snapshot(state["account_value"]),
             "data_freshness":       trader.get_freshness_snapshot(),
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }

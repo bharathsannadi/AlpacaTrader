@@ -200,6 +200,8 @@ function updateUI(s) {
   // Data freshness panel — per-source age with green/yellow/red dots
   if (s.data_freshness) renderFreshness(s.data_freshness);
 
+  if (s.equity_curve) renderEquityCurve(s.equity_curve);
+
   // Account
   if (s.account_value) {
     const fmt = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -302,6 +304,45 @@ function syncToggleBtn(id, on) {
   if (!btn) return;
   btn.textContent = on ? "ON" : "OFF";
   btn.classList.toggle("off", !on);
+}
+
+// ── Equity Curve card ──────────────────────────────────────────────────────
+function renderEquityCurve(ec) {
+  const empty = document.getElementById("equity-empty");
+  const body  = document.getElementById("equity-body");
+  if (!empty || !body) return;
+  const pts = ec.points || [];
+  if (!pts.length) { empty.style.display = ""; body.style.display = "none"; return; }
+  empty.style.display = "none"; body.style.display = "";
+
+  const setTxt = (id, txt, cls) => {
+    const el = document.getElementById(id); if (!el) return;
+    el.textContent = txt;
+    el.style.color = cls === "g" ? "var(--green)" : cls === "r" ? "var(--red)" : "var(--text)";
+  };
+  setTxt("eq-current", "$" + (ec.current ?? 0).toLocaleString("en-US", {minimumFractionDigits:2}));
+  setTxt("eq-ret", (ec.total_ret_pct>=0?"+":"") + (ec.total_ret_pct ?? 0) + "%", (ec.total_ret_pct>=0)?"g":"r");
+  const ddCls = v => (v >= 8 ? "r" : "");
+  setTxt("eq-dd5",  (ec.dd5_pct ?? 0)  + "%", ddCls(ec.dd5_pct));
+  setTxt("eq-dd20", (ec.dd20_pct ?? 0) + "%", ddCls(ec.dd20_pct));
+  setTxt("eq-dd30", (ec.dd30_pct ?? 0) + "%", ddCls(ec.dd30_pct));
+  setTxt("eq-n", String(ec.n ?? pts.length));
+
+  // Sparkline (300x48 viewBox, padded)
+  const svg = document.getElementById("equity-spark");
+  if (svg) {
+    const eqs = pts.map(p => p.equity);
+    const lo = Math.min(...eqs), hi = Math.max(...eqs), span = (hi - lo) || 1;
+    const W = 300, H = 48, pad = 3;
+    const xs = i => pad + (i / Math.max(1, pts.length - 1)) * (W - 2*pad);
+    const ys = v => H - pad - ((v - lo) / span) * (H - 2*pad);
+    const d = eqs.map((v,i) => (i?"L":"M") + xs(i).toFixed(1) + " " + ys(v).toFixed(1)).join(" ");
+    const up = eqs[eqs.length-1] >= eqs[0];
+    const col = up ? "#00e5a0" : "#ff3d68";
+    svg.innerHTML =
+      `<path d="${d}" fill="none" stroke="${col}" stroke-width="1.5"/>` +
+      `<path d="${d} L ${xs(pts.length-1).toFixed(1)} ${H-pad} L ${pad} ${H-pad} Z" fill="${col}" opacity="0.10"/>`;
+  }
 }
 
 // ── Data Freshness panel ───────────────────────────────────────────────────
