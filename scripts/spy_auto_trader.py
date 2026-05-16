@@ -3933,6 +3933,64 @@ def register_trade(occ_symbol: str, entry_price: float, contracts: int,
     )
 
 
+_SLIPPAGE_FILE = os.path.expanduser("~/.spy_trader/slippage_history.json")
+_slippage_lock = threading.Lock()
+
+
+def _record_slippage(order_id: str, bps: float) -> None:
+    """Append a realized-slippage observation. Persistent (per-position
+    entry_slippage_bps is lost when the position closes) so the UI can show
+    a rolling trend — a silently worsening fill quality is an invisible tax."""
+    with _slippage_lock:
+        try:
+            hist = []
+            if os.path.exists(_SLIPPAGE_FILE):
+                with open(_SLIPPAGE_FILE) as f:
+                    hist = json.load(f)
+            hist.append({"ts": datetime.now(ET).isoformat(), "order": order_id, "bps": bps})
+            hist = hist[-200:]   # keep last 200 fills
+            os.makedirs(os.path.dirname(_SLIPPAGE_FILE), exist_ok=True)
+            tmp = _SLIPPAGE_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(hist, f)
+            os.replace(tmp, _SLIPPAGE_FILE)
+        except Exception as e:
+            log.warning(f"_record_slippage failed: {e}")
+
+
+def slippage_snapshot() -> dict:
+    """Rolling slippage stats for the UI. Trend = recent-half avg vs
+    prior-half avg over the last 30 fills (rising = fills getting worse)."""
+    try:
+        with _slippage_lock:
+            if not os.path.exists(_SLIPPAGE_FILE):
+                return {"n": 0}
+            with open(_SLIPPAGE_FILE) as f:
+                hist = json.load(f)
+    except Exception:
+        return {"n": 0}
+    if not hist:
+        return {"n": 0}
+    last = [h["bps"] for h in hist[-30:]]
+    n = len(last)
+    avg = round(sum(last) / n, 1)
+    trend = "flat"
+    if n >= 6:
+        half = n // 2
+        prior = sum(last[:half]) / half
+        recent = sum(last[half:]) / (n - half)
+        if recent > prior + 2:   trend = "worsening"
+        elif recent < prior - 2: trend = "improving"
+    return {
+        "n": n,
+        "avg_bps": avg,
+        "last_bps": round(last[-1], 1),
+        "worst_bps": round(max(last), 1),
+        "trend": trend,
+        "spark": [round(x, 1) for x in last],
+    }
+
+
 def update_slippage_for_order(order_id: str, target_mid: float) -> None:
     """Look up the actual fill price for a recently-submitted order and compute
     realized slippage in basis points vs the target mid we aimed for.
@@ -3948,6 +4006,7 @@ def update_slippage_for_order(order_id: str, target_mid: float) -> None:
         if fill <= 0:
             return
         slip_bps = round((fill - target_mid) / target_mid * 10000, 1)
+        _record_slippage(order_id, slip_bps)   # persist for the trend tile
         with _positions_lock:
             for p in _open_positions:
                 if p.get("order_id") == order_id:

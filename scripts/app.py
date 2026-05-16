@@ -360,6 +360,7 @@ def _state_snapshot() -> dict:
             "max_portfolio_risk_pct": round(trader.eff_max_portfolio_risk() * 100, 2),
             "pdt_remaining":        trader.pdt_day_trades_remaining(),  # None if ≥$25K (exempt)
             "equity_curve":         trader.equity_curve_snapshot(state["account_value"]),
+            "slippage":             trader.slippage_snapshot(),
             "data_freshness":       trader.get_freshness_snapshot(),
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }

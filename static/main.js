@@ -201,6 +201,7 @@ function updateUI(s) {
   if (s.data_freshness) renderFreshness(s.data_freshness);
 
   if (s.equity_curve) renderEquityCurve(s.equity_curve);
+  if (s.slippage) renderSlippage(s.slippage);
 
   // Sync max-portfolio-risk input to the active value (unless user is editing it)
   if (s.max_portfolio_risk_pct != null) {
@@ -349,6 +350,23 @@ function renderEquityCurve(ec) {
       `<path d="${d}" fill="none" stroke="${col}" stroke-width="1.5"/>` +
       `<path d="${d} L ${xs(pts.length-1).toFixed(1)} ${H-pad} L ${pad} ${H-pad} Z" fill="${col}" opacity="0.10"/>`;
   }
+}
+
+// ── Fill Slippage card ─────────────────────────────────────────────────────
+function renderSlippage(sl) {
+  const empty = document.getElementById("slip-empty");
+  const body  = document.getElementById("slip-body");
+  if (!empty || !body) return;
+  if (!sl || !sl.n) { empty.style.display = ""; body.style.display = "none"; return; }
+  empty.style.display = "none"; body.style.display = "";
+  const sign = v => (v >= 0 ? "+" : "") + v + " bps";
+  const col  = v => (v > 10 ? "var(--red)" : v > 3 ? "var(--yellow)" : "var(--green)");
+  const set  = (id, v, c) => { const e=document.getElementById(id); if(e){e.textContent=v; if(c)e.style.color=c;} };
+  set("slip-avg",  sign(sl.avg_bps),  col(sl.avg_bps));
+  set("slip-last", sign(sl.last_bps), col(sl.last_bps));
+  set("slip-worst",sign(sl.worst_bps),col(sl.worst_bps));
+  const tcol = sl.trend === "worsening" ? "var(--red)" : sl.trend === "improving" ? "var(--green)" : "var(--muted)";
+  set("slip-trend", sl.trend + (sl.trend==="worsening"?" ▲":sl.trend==="improving"?" ▼":" —"), tcol);
 }
 
 // ── Data Freshness panel ───────────────────────────────────────────────────
