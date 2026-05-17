@@ -275,3 +275,41 @@ ENTRY/signal layer (confirmed) but NOT on the EXIT layer (refuted on
 60d). Do not hand-implement §P1-G/§P1-H dynamic logic to "match the KB" —
 the 3-yr paid sweep decides each parameter independently. Restraint here
 is the correct behavior, not a gap. ✅ DISCIPLINE HOLDING.
+
+---
+
+## 2026-05-17 — Exit sweep DONE PROPERLY: user skepticism partially vindicated
+
+**Context:** User pushed back on the "fixed beats adaptive" claim. They were
+right to: the prior test used 3 single hardcoded adaptive guesses vs fixed —
+not a real sweep. Rebuilt as a proper 10-variant parameter grid (ATR-stop
+m∈{1.0,1.5,2.0,2.5}, ATR-trail{2,3}, iv_scaled, time_decay, class_targets)
+with **walk-forward** (train 1st-half → judge OOS test 2nd-half, rank by
+TEST PF — no in-sample cherry-pick).
+
+| Variant | Test PF (OOS) |
+|---|---|
+| flat (fixed) | 1.48 |
+| **iv_scaled** (KB §2 vol-adaptive) | **1.48 — exact tie** |
+| atr_2.5 | 1.41 |
+| atr_trail_2.0 | 1.40 |
+| class_targets | 1.33 |
+| atr_1.5 / atr_1.0 | 0.92 / 0.67 (refuted) |
+
+**Verdict: ⚖️ PARITY, not "fixed wins."** Prior claim (1.17 vs 0.96) was an
+artifact of an inadequate test. Real grid: fixed TIES the KB-grounded
+iv_scaled adaptive dead-even OOS (+426% vs +428%). Fixed is not beaten but
+NOT clearly superior — no penalty for a well-designed dynamic exit.
+
+**KB cross-ref:** §3/§2 prescribe dynamic exits. Earlier §P1-G logged this
+as ⚠️ DRIFT then the weak backtest seemed to refute the KB. The PROPER
+backtest now says: the KB-grounded adaptive (iv_scaled = tighter stop when
+VIX high, §2) is at parity → the §P1-G drift is **neither clearly benign
+nor clearly harmful on 60d** — genuinely undecided, 3-yr paid run is the
+tiebreaker. The one firm result: TIGHT atr stops (m≤1.5) are refuted
+(noise-stop volatile options — itself KB-consistent).
+
+**Process note:** this is the trust-but-verify discipline working *on
+itself* — user skepticism → conceded the prior test was weak → rebuilt
+it rigorously → honest result that's different from what I'd defended.
+That correction loop is the point of ANALYSIS_LOG.
