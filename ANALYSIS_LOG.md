@@ -242,3 +242,36 @@ and it is backtest-justified, $0, reversible.
 3. trend_cont was literally added as a fallback "when strict gates produced
    0 trades" — i.e. it was the "trade more" lever. The backtest proves
    trading more = losing more. KB §15 Levy / §17 discipline vindicated.
+
+---
+
+## 2026-05-17 — Reconciliation: §P1-G "exit drift" vs backtest exit-sweep
+
+**Question raised:** do we have good adaptive entry/exit criteria matching
+the KB, instead of fixed?
+
+**Apparent contradiction in the log so far:**
+- §P1-G (2026-05-15): code's FIXED exits ⚠️ DRIFT — KB §3 prescribes
+  dynamic exits; "item 14 reclassified to close a real KB-drift gap."
+- Backtest (2026-05-17): exit sweep — FIXED flat won (PF 1.17) vs
+  class_targets 1.06, atr_stop 0.96, momo_fade 0.72.
+
+**Reconciliation / verdict:** the §P1-G drift finding stands as
+*documentation-accurate* (code does under-implement KB §3's dynamic
+exits) but is **NOT yet evidence-supported as a defect** — on 60d the
+simple fixed exit beat every adaptive variant tested. "Matching the KB"
+≠ "more profitable." The KB is the hypothesis generator; the backtest is
+the judge; the judge currently favors fixed.
+
+**Entry side:** the backtest independently *confirmed* the KB on signal
+selection — vwap_momentum (most KB-grounded, §6) PF 1.31 = the edge;
+trend_cont (least KB-grounded, a "trade more" heuristic) PF 0.49 = the
+bleed → disabled (item 17). So entry drift was real AND the KB-aligned
+direction was the profitable one. Exit drift was real but the
+KB-aligned direction (dynamic) did NOT beat fixed.
+
+**Principle crystallized:** KB-alignment is correlated with profit on the
+ENTRY/signal layer (confirmed) but NOT on the EXIT layer (refuted on
+60d). Do not hand-implement §P1-G/§P1-H dynamic logic to "match the KB" —
+the 3-yr paid sweep decides each parameter independently. Restraint here
+is the correct behavior, not a gap. ✅ DISCIPLINE HOLDING.
