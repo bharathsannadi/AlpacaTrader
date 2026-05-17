@@ -2975,6 +2975,16 @@ def evaluate_vwap_momentum(bar, prev_bar, df):
 
 
 # ── Trend-continuation + mean-reversion (added when strict gates produced 0 trades) ──
+# ⚠️ DISABLED BY DEFAULT 2026-05-17 (TODO item 17, commit-justified by
+# backtest_v2 / 57bac3e). This evaluator was the "trade more" fallback —
+# and the 60d/6-symbol backtest proved trading more = losing more:
+#   trend_cont: PF 0.49, −4.19%/trade, −1692% over 404 trades (75% of book)
+#   vwap_momentum: PF 1.75, +3.68%/trade (the actual edge)
+# The aggregate was net-negative ONLY because trend_cont drowned the good
+# signal. Gated behind a flag (not deleted) so the paid 3-yr backtest can
+# re-confirm and flip it back if 3-yr data disagrees with the 60d result.
+# Includes the mean_rev lane (PF 0.50, n=6) — also negative, also gated.
+TREND_CONT_ENABLED         = False  # set True only with 3-yr backtest proof
 TREND_CONT_SCORE_THRESHOLD = 5   # 5 of 6 conditions agree on direction
 TREND_CONT_VOL_MIN         = 0.5 # mid-day volume gate (looser than VWAP momentum)
 MEAN_REV_RSI_OVERSOLD      = 28  # RSI ≤ this + MACD turning green = bounce setup
@@ -3554,7 +3564,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
         # Catches the setups the strict gates above filter out (mid-day flow,
         # established trends, oversold bounces). Looser by design — relies on
         # the downstream gate stack (cooldown, IV rank, sector cap, etc).
-        if not direction:
+        if not direction and TREND_CONT_ENABLED:   # item 17: gated off — the bleed
             direction, reason = evaluate_trend_continuation(bar, prev_bar, df)
             if direction:
                 # Same evaluator returns both lanes — distinguish by reason prefix
