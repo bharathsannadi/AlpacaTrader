@@ -194,3 +194,51 @@ the deterministic risk-gate *scaffolding* exists but pieces are silently
 inert or mis-scaled. The bare-except-swallows-everything anti-pattern is the
 common root. Worth a dedicated sweep for other `except Exception: continue`
 blocks hiding dead logic.
+
+---
+
+## 2026-05-17 — 🎯 BACKTEST v2 DELIVERED (free BS path) — the gating answer
+
+**Observed:** Built `scripts/backtest_v2.py` (real evaluators imported from
+spy_auto_trader, Black-Scholes pricing, VIX-IV proxy, fees+spread, exit
+sweep, IVR buckets, walk-forward). 542 trades, 6 symbols, 60d 5-min.
+
+**RESULT — the answer this whole project was gated on:**
+
+| Layer | Verdict |
+|---|---|
+| **Aggregate** | PF **0.63**, exp **−3.06%/trade** → net NEGATIVE after costs |
+| **vwap_momentum** | PF **1.75**, +3.68%/trade, +173% (47 trades) → ✅ REAL EDGE |
+| **trend_cont** | PF **0.49**, −4.19%/trade, −1692% (404 trades = 75% of book) → 🔴 THE BLEED |
+| gap_fade | PF 0.90, −0.86% → near-flat |
+| Exit sweep | flat 0.63 ≈ atr_stop 0.64; momo_fade 0.47 (WORSE) |
+| IVR H1 | 30-50 (0.52) worse than 20-30 (0.68) — drift direction confirmed |
+
+**Verdict: ⚠️ DRIFT RESOLVED → strategy is net-negative BUT has a
+profitable core.** This retires the caveat carried in EVERY prior
+analysis-log entry ("✅ ENFORCED ≠ profitable"). Answer: the faithfully-
+enforced discipline was applied to a signal mix that is net-negative —
+specifically `trend_cont` (the loosest evaluator, added "when strict gates
+produced 0 trades") is a money incinerator at scale, while `vwap_momentum`
+genuinely works (KB §6 VWAP-momentum — the one signal with verbatim KB
+grounding — is also the one with edge; the score-based trend_cont, the
+least KB-grounded, is the bleed. The KB was right.)
+
+**Evidence-based action (NOT a guess — 404-sample, 6-sym, OOS-consistent):**
+disable or hard-gate `trend_cont`; restrict live to `vwap_momentum`
+(+ gap_fade marginal). This is the highest-value change in the codebase
+and it is backtest-justified, $0, reversible.
+
+**Honest caveats (stated, not hidden):**
+1. Backtest runs the RAW evaluator chain — NO debate gate / IVR-hard-gate /
+   news. Live, debate suppresses ~all trades (ANALYSIS_LOG 0-trade days).
+   So this measures the SIGNAL layer's raw expectancy, not the live gated
+   system. The robust, gating-independent conclusion: trend_cont's raw
+   expectancy is strongly negative across 404 samples — that holds
+   regardless of what the debate gate does on top.
+2. 60d only (free yfinance limit), BS pricing, flat VIX-IV. Directionally
+   decisive at PF 0.49 vs 1.75 (a 3.5× spread won't invert under modeling
+   slop), but the 3-yr paid path is still required for go-live magnitudes.
+3. trend_cont was literally added as a fallback "when strict gates produced
+   0 trades" — i.e. it was the "trade more" lever. The backtest proves
+   trading more = losing more. KB §15 Levy / §17 discipline vindicated.
