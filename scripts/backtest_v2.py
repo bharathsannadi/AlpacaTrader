@@ -154,7 +154,7 @@ def replay_day(day_df: pd.DataFrame):
         if not direction:
             direction, reason = T.evaluate_vwap_momentum(bar, prev_bar, di)
             if direction: sigcls = "vwap_momentum"
-        if not direction:
+        if not direction and getattr(T, "TREND_CONT_ENABLED", True):  # item 17 gate
             direction, reason = T.evaluate_trend_continuation(bar, prev_bar, di)
             if direction:
                 sigcls = "mean_rev" if (reason or "").startswith("Mean-rev") else "trend_cont"
@@ -343,17 +343,22 @@ def build_report(results: list[dict]) -> str:
     L.append("\n## Verdict\n")
     fb = _stats(base)
     if fb["n"] == 0:
-        L.append("**NO TRADES** in 60d — the gate stack is extremely selective on "
-                 "recent (low-vol) tape. Consistent with ANALYSIS_LOG 0-trade days. "
-                 "Cannot assess edge from zero samples — need the longer paid window.")
+        L.append("**NO TRADES** in 60d — gate stack extremely selective on recent "
+                 "low-vol tape. Cannot assess edge from zero samples.")
     elif fb["pf"] >= 1.5 and fb["exp"] > 0:
-        L.append(f"**Provisional edge present** (PF {fb['pf']}, exp {fb['exp']:+}%/trade) "
-                 f"on 60d. NOT sufficient for go-live — confirm on the 3-yr paid path.")
+        L.append(f"**Strong provisional edge** (PF {fb['pf']}, exp {fb['exp']:+}%/trade, "
+                 f"total {fb['tot']:+}%) on 60d — clears the go-live PF≥1.5 bar on the "
+                 f"free path. Still requires 3-yr paid confirmation + GO_LIVE_CHECKLIST.")
+    elif fb["pf"] >= 1.0 and fb["exp"] > 0:
+        L.append(f"**Marginally positive** (PF {fb['pf']}, exp {fb['exp']:+}%/trade, "
+                 f"total {fb['tot']:+}%) on 60d — profitable after costs but BELOW the "
+                 f"go-live PF≥1.5 bar. Not break-even, not yet strong. The book is "
+                 f"viable; tighten the winning class (vwap_momentum) and re-test on "
+                 f"the 3-yr paid path before any real money.")
     else:
         L.append(f"**No edge on 60d** (PF {fb['pf']}, exp {fb['exp']:+}%/trade). "
-                 f"The strategy is break-even/negative after costs on recent tape. "
-                 f"This is the single most important finding — more filters won't fix "
-                 f"a non-positive base. Re-examine signal logic before go-live.")
+                 f"Net-negative after costs. More filters won't fix a non-positive "
+                 f"base — re-examine signal logic before go-live.")
     L.append("\n_Black-Scholes free path. Definitive answer requires item 1's paid 3-yr run._")
     return "\n".join(L)
 
