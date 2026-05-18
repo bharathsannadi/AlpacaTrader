@@ -360,3 +360,42 @@ produce exactly this moment. It worked.
   first diagnose whether the signal has ANY underlying-direction
   predictive power (→ structure/theta problem, fixable) or none
   (→ signal is noise, must be replaced). See next entry.
+
+---
+
+## 2026-05-18 — 🎯 FORK A: signal HAS edge — option STRUCTURE is the bug
+
+**signal_diagnostic.py** (real 3yr cached data, underlying-direction only,
+decoupled from option P&L / theta / exits):
+
+| signal | 15m hit | 30m hit | 60m hit | mean@60m | verdict |
+|---|---|---|---|---|---|
+| **vwap_momentum** | 55.2% | 57.7% | **60.5%** | **+0.62 ATR** | ✅ EDGE |
+| gap_fade | 46.7% | 48.7% | 48.2% | +0.06 ATR | ⛔ NOISE |
+
+Per-symbol @30m (NOT a SPY fluke): SPY 59.7 · AMZN 60.1 · GOOG 56.3 ·
+MSFT 55.6 · NVDA 57.8 · META 55.9 — all six 55-60%.
+
+**Reconciles the paradox.** Full backtest: vwap_momentum PF 0.88
+(net-negative). Diagnostic: it predicts direction ~58%, move +0.34→+0.62
+ATR, edge GROWS with horizon. Both true → exactly KB §1: "directionally
+right, still lose money — move too slow, theta kills you." The 7-14 DTE
+naked long option + 50%-premium-stop exit destroys a signal that works.
+
+**Verdict: ✅ FORK A. The signal is good; the OPTION STRUCTURE is the
+fixable bug.** Conclusion flips from "no edge, give up" to "proven signal,
+wrong vehicle." This is the project's most actionable finding.
+
+**Evidence-based live change:** gap_fade disabled (GAP_FADE_ENABLED=False)
+— confirmed NOISE by TWO independent methods (backtest PF 0.46 +
+diagnostic ~48%/~0ATR). Same justified+reversible pattern as item 17.
+Live signal set is now vwap_momentum-only (the one with proven edge).
+
+**Next (data-driven, NOT gut):** redesign STRUCTURE around the proven
+vwap_momentum signal, backtest each on cached data:
+  • DTE sweep {0,1,2 vs 30,45} — 7-14 is peak theta for a 30-60min move
+  • underlying-ATR stop sized to the measured excursion (+0.34@30m /
+    +0.62@60m), holding ≈60min not multi-day — replaces premium-% stop
+  • debit spreads (KB §5) — cut theta+vega drag directly
+NOT go-live. This is "is there a structure that monetizes the proven
+directional edge after costs" — the next backtest answers it.

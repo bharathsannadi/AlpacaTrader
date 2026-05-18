@@ -2985,6 +2985,11 @@ def evaluate_vwap_momentum(bar, prev_bar, df):
 # re-confirm and flip it back if 3-yr data disagrees with the 60d result.
 # Includes the mean_rev lane (PF 0.50, n=6) — also negative, also gated.
 TREND_CONT_ENABLED         = False  # set True only with 3-yr backtest proof
+# gap_fade disabled 2026-05-18 — confirmed NOISE by two independent methods:
+# real-3yr backtest PF 0.46 (catastrophic) AND signal_diagnostic.py shows
+# ~48% underlying-direction hit-rate / ~0 ATR excursion (no predictive
+# power at any horizon). Same justified+reversible pattern as item 17.
+GAP_FADE_ENABLED           = False  # set True only with backtest proof
 TREND_CONT_SCORE_THRESHOLD = 5   # 5 of 6 conditions agree on direction
 TREND_CONT_VOL_MIN         = 0.5 # mid-day volume gate (looser than VWAP momentum)
 MEAN_REV_RSI_OVERSOLD      = 28  # RSI ≤ this + MACD turning green = bounce setup
@@ -3552,7 +3557,7 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 direction, reason = evaluate_orb(bar, prev_bar, or_high, or_low, df)
                 if direction: signal_class = "orb_breakout"
 
-        if not direction and gap_pct and gap_dir:
+        if not direction and GAP_FADE_ENABLED and gap_pct and gap_dir:
             direction, reason = evaluate_gap_fade(bar, gap_pct, gap_dir, df)
             if direction: signal_class = "gap_fade"
 

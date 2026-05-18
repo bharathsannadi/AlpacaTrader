@@ -4,7 +4,8 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ---
 
-## ⛔ STRATEGY STATUS (2026-05-18): NO EDGE per REAL 3yr/6-sym backtest (PF 0.74). Real-money go-live OFF. Items 14/15/16/§P1-I/§P1-J = MOOT (no entry edge to optimize). Item 17 (trend_cont off) correct-but-insufficient. NEXT: data-driven ENTRY-SIGNAL redesign (user decision) — diagnose underlying-direction predictive power first, then hypothesize+backtest. NOT gut-invention, NOT exit tuning, NOT LLM-in-exits.
+## 🎯 STRATEGY STATUS (2026-05-18, updated): SIGNAL HAS EDGE — STRUCTURE IS THE BUG.
+signal_diagnostic.py: vwap_momentum predicts underlying direction 55-60% across ALL 6 symbols (✅ EDGE, grows with horizon, +0.62 ATR @60m). gap_fade = ⛔ NOISE (disabled, GAP_FADE_ENABLED=False — 2nd signal gated after trend_cont). The real-3yr backtest PF 0.74 is NOT 'no edge' — it's a PROVEN signal killed by the 7-14 DTE naked-option STRUCTURE + premium-% exit (KB §1: directionally right, theta kills you). Real-money still OFF. NEXT (FORK A, data-driven): backtest STRUCTURE variants around the proven signal — DTE {0,1,2,30,45}, underlying-ATR stop sized to measured excursion (~60min hold), debit spreads (KB §5). Items 14/15/§P1-I/J still moot until a structure monetizes the edge after costs.
 
 ## 🗓️ Tomorrow's plan — one-by-one queue (locked 2026-05-14 PM)
 
