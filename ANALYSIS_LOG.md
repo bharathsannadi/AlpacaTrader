@@ -399,3 +399,31 @@ vwap_momentum signal, backtest each on cached data:
   • debit spreads (KB §5) — cut theta+vega drag directly
 NOT go-live. This is "is there a structure that monetizes the proven
 directional edge after costs" — the next backtest answers it.
+
+---
+## 2026-05-18 — "Are we too restricted in taking trades?"
+**Live gate stack on the user's $5K (sub-10K, sub-PDT) account:**
+- SUB_PDT_MAX_DAILY_ENTRIES = 2 / day  (overrides MAX_DAILY_ENTRIES 8)
+- PDT_MAX_DAY_TRADES_5D = 3  (FINRA law for <$25K margin — ~3 round-trips/WEEK, not a setting)
+- GLOBAL_COOLDOWN 60s · WHIPSAW 900s · MAX_SECTOR_POSITIONS 2
+- TREND_CONT + GAP_FADE disabled (proven NOISE — correct)
+- liquidity gates: spread 5% / OI / MIN_NOTIONAL $300 · VIX-spike 15% · Friday DTE≥10 · daily-loss 20% halt · debate-confidence
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB L451/L588: selectivity is a feature, not a bug; the 18-gate
+  checklist is doctrine. Cooldowns/sector cap/whipsaw all map to KB.
+- ✅ ENFORCED — PDT cap is legal reality, bot is correctly PDT-aware (prevents
+  account lock), not "over-restricting" by choice.
+- ⚠️ DRIFT (the real finding) — "too restricted" is the wrong question. Real
+  3yr/6-sym backtest = PF 0.74 net-NEGATIVE → strategy has NO edge. Loosening
+  gates on a no-edge strategy loses FASTER; the restriction is the only thing
+  slowing the bleed. Bottleneck = lack of edge, not gate count.
+- ❓ GAP — the one place restriction genuinely wastes value: signal_diagnostic
+  proved vwap_momentum HAS directional edge on the UNDERLYING, but PDT
+  (3 day-trades/wk) + 7-14 DTE option theta jointly throw it away. A shares/ETF
+  SWING version (hold >1 day) escapes BOTH PDT and theta — the actionable path.
+
+**Verdict:** Not over-restricted as an options day-trader (gates are correct &
+mostly legally mandated). The restriction isn't the problem — the no-edge
+options structure is. Don't relax gates. Test the proven directional edge as a
+multi-day shares/ETF strategy instead.

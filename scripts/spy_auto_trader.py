@@ -161,6 +161,14 @@ MAX_DAILY_ENTRIES     = 8         # hard cap on new entries per day; after this,
 # count because Alpaca PAPER accounts do NOT set pattern_day_trader / may not
 # honor daytrade_count — so the existing pdt_check() (which trusts Alpaca's
 # flag) silently never fires on paper. Live day 1 on a real $5K account = lock.
+# PDT_RULE_ENABLED — operator switch, NOT a hardcoded "the law changed".
+# Set False = stop self-enforcing the FINRA sub-$25K pattern-day-trader cap
+# (per operator's call that the rule is being eliminated mid-2026). When False:
+#   • pdt_sub25k_ok() never blocks  • badge shows exempt
+#   • sub-$25K accounts use the DEFAULT MAX_DAILY_ENTRIES (8), not the 2 throttle
+# Flip back to True to instantly restore full PDT protection if the date slips.
+# NOTE: paper accounts are never PDT-flagged regardless; this matters for live.
+PDT_RULE_ENABLED        = False   # operator decision 2026-05-18 (was self-enforced)
 PDT_ACCOUNT_THRESHOLD   = 25000   # accounts ≥ this are exempt from PDT
 PDT_MAX_DAY_TRADES_5D   = 3       # 3 allowed in any rolling 5-business-day window; 4th = flag
 SUB_PDT_MAX_DAILY_ENTRIES = 2     # when sub-$25K, override MAX_DAILY_ENTRIES (8 → 2)
@@ -2073,6 +2081,8 @@ def count_day_trades_5d() -> int:
 def _is_sub_pdt_account() -> bool:
     """True if the live account equity is below the PDT threshold ($25K).
     Cached for 60s to avoid hammering the Alpaca account endpoint."""
+    if not PDT_RULE_ENABLED:
+        return False  # operator disabled PDT self-enforcement → treat as exempt
     global _sub_pdt_cache
     now = time.time()
     if _sub_pdt_cache["ts"] and (now - _sub_pdt_cache["ts"]) < 60:
