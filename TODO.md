@@ -4,6 +4,8 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ---
 
+## ⛔ STRATEGY STATUS (2026-05-18): NO EDGE per REAL 3yr/6-sym backtest (PF 0.74). Real-money go-live OFF. Items 14/15/16/§P1-I/§P1-J = MOOT (no entry edge to optimize). Item 17 (trend_cont off) correct-but-insufficient. NEXT: data-driven ENTRY-SIGNAL redesign (user decision) — diagnose underlying-direction predictive power first, then hypothesize+backtest. NOT gut-invention, NOT exit tuning, NOT LLM-in-exits.
+
 ## 🗓️ Tomorrow's plan — one-by-one queue (locked 2026-05-14 PM)
 
 **Trader profile** (see [CONTEXT.md](CONTEXT.md) for full math):
@@ -17,7 +19,7 @@ Pick from this list in order. Each item is independently shippable and committab
 | # | Item | Hours | Status | Section |
 |---|------|-------|--------|---------|
 | **0** | **Fix live data feed reliability** — ✅ **SHIPPED 2026-05-15** (commit `507a552`). Confirmed Alpaca free has zero stock-bars entitlement; switched to yfinance-primary + real-time latest-trade patch on the forming bar. Removed dead 3-call cascade + sticky pin. .env keys refreshed. | ~2 | ✅ DONE | §🆕-P0-D below |
-| 1 | **Backtest harness v2** — ✅ FREE-PATH DONE (`57bac3e`). 🟢 **PAID = Stocks Starter \$29 + Options DEVELOPER \$79 = \$108/mo (user subscribed 2026-05-17).** Developer ⇒ **real historical NBBO bid/ask** (true fills, ~95-99%, NOT OHLC-modeled — accuracy compromise removed). Window = min(Stocks 5yr, Options Developer depth — TBD by smoke test; likely 3-5yr, so original 3-yr scope likely back on). Build `scripts/polygon_data.py` + swap bt_v2 layer; permanent cache so post-pull cancel ⇒ \$0 re-runs. **Blocked on: key in .env + 'polygon ready' → smoke test (all endpoints incl. /v3/quotes must 200) → build.** | ~6-9 build | 🟢 subscribed (\$108 NBBO); awaiting key+'polygon ready' | §🆕-P0-A below |
+| 1 | **Backtest harness v2** — ✅ **DONE 2026-05-18. DELIVERED THE ANSWER: NO EDGE.** Real Polygon 3yr, 6 sym, real option OHLC: aggregate PF 0.74 net-negative. SPY +476% = 1/6 curve-fit outlier. Exits moot. `polygon_data.py`+`backtest_v2.py`, Desktop-cached. The $108 bought a definitive negative verdict — go-live OFF. | done | ✅ DONE (verdict: no edge) | §🆕-P0-A |
 | 2 | **PDT counter for sub-25K accounts** — ✅ **SHIPPED 2026-05-15**. Self-enforced day-trade tracking (~/.spy_trader/day_trades.json), rolling 5-business-day count, hard-block at 3, SUB_PDT_MAX_DAILY_ENTRIES=2, UI badge. Also fixed pre-existing dead-code: daily_entries_ok/record_daily_entry were never called. | ~3 | ✅ DONE | §🆕-P0-B below |
 | 3 | **Account-size adapter** — ✅ **SHIPPED 2026-05-15**. eff_* accessors apply sub-$10K profile (risk 4%, daily-loss 20%, profit-lock 10%, portfolio 20%) when equity<$10K. MIN_TRADE_NOTIONAL=$300 friction floor. UI-override > profile > defaults. Startup banner. Unit-tested. | ~2 | ✅ DONE | §🆕-P0-C below |
 | 4 | **Correlation-adjusted delta cap** (existing P1 #7) — ⚠️ **WAS SILENTLY DEAD → BUG-FIXED 2026-05-15**. Code existed + wired but 2 stacked bugs (tuple unpack + bs_delta sig) behind a bare except made net delta ALWAYS 0 → never fired. Fixed; gate now computes. **Threshold calibration (5% notional too tight for options leverage) is backtest-coupled — see §P1-I.** | ~3-4 | ✅ FIX DONE / calibration → item 1 | §P1 #7 + §🆕-P1-I |

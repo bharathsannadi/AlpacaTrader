@@ -313,3 +313,50 @@ tiebreaker. The one firm result: TIGHT atr stops (m≤1.5) are refuted
 itself* — user skepticism → conceded the prior test was weak → rebuilt
 it rigorously → honest result that's different from what I'd defended.
 That correction loop is the point of ANALYSIS_LOG.
+
+---
+
+## 2026-05-18 — 🎯 DEFINITIVE: REAL 3yr 6-symbol backtest — STRATEGY HAS NO EDGE
+
+**The gating question, finally answered on real data.** backtest_v2 on
+REAL Polygon 3yr, 6 symbols, real option OHLC, conservative costs:
+
+| Metric | Value |
+|---|---|
+| Aggregate | **PF 0.74, −1.3%/trade, 3,719 trades — NET NEGATIVE** |
+| SPY | PF 1.18, +476% (the ONLY winner) |
+| NVDA/MSFT/AMZN/GOOG/META | PF 0.63–0.74, ALL net-negative (−649% to −1317%) |
+| vwap_momentum (full universe) | PF 0.88, −1620% — negative once SPY-cherry-pick removed |
+| gap_fade | PF 0.46 — catastrophic |
+| Exit sweep | MOOT — every variant <1.0 (best 0.81 = slowest leak) |
+| Walk-forward | "holds OOS" = consistently loses OOS too |
+
+**Verdict: ⛔ NO EDGE. Do not trade real money. Definitively.**
+
+**Resolves the standing question retired across every prior entry**
+("✅ ENFORCED ≠ profitable"): the discipline was faithfully applied to a
+strategy that, on real 3yr data across a real universe, does not have
+edge. SPY's +476% is 1-of-6 = textbook curve-fit outlier, NOT edge.
+
+**Self-correction (trust-but-verify on my own claims):** the prior turn I
+reported the SPY-only smoke as "viable, honest progress." The 6-symbol
+breadth run REFUTED that. I owned it. Same standard applied to the exit
+claim, the false data-instability alarm, and now this. The correction
+loop is the point.
+
+**Why this is the project's most valuable result:** $108 of Polygon data
+bought a definitive negative answer that stopped real money funding a
+−1.3%/trade strategy. The entire disciplined apparatus (attribution →
+audits → no hand-tuning → real backtest before real money) existed to
+produce exactly this moment. It worked.
+
+**What it implies for code (per user decision 2026-05-18):**
+- Exits: correctly UNCHANGED — sweep is moot when entry has no edge.
+  Wiring an LLM into exits was proposed by user, declined with evidence
+  (un-backtestable, can't fix no-edge entry, latency-unsafe for stops).
+- Item 17 (trend_cont disabled) — confirmed correct but INSUFFICIENT;
+  removing the worst signal didn't make the rest positive.
+- Next: REDESIGN THE ENTRY SIGNAL (user choice) — but data-driven:
+  first diagnose whether the signal has ANY underlying-direction
+  predictive power (→ structure/theta problem, fixable) or none
+  (→ signal is noise, must be replaced). See next entry.

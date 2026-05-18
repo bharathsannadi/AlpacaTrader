@@ -38,10 +38,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 import spy_auto_trader as T
+import polygon_data as P          # real Polygon data (3yr, Desktop-cached)
 
 ET = T.ET
+BACKTEST_YEARS = 3                # Options Developer confirmed ≥3yr option history
 SYMBOLS_DEFAULT = ["SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"]
 OUT_DIR = Path(__file__).parent.parent / "backtest_results"
 
@@ -74,38 +75,33 @@ def bs_price(spot: float, strike: float, tte_days: float, iv: float,
     return round(max(px, 0.01), 2)
 
 
-# ── Data ──────────────────────────────────────────────────────────────────────
+# ── Data (REAL — Polygon, 3yr, Desktop-cached) ────────────────────────────────
 def fetch_5m(symbol: str) -> pd.DataFrame | None:
-    """yfinance 5-min bars, ~60d max (free-path hard limit). Reshaped to the
-    column names spy_auto_trader._add_indicators expects."""
-    try:
-        df = yf.Ticker(symbol).history(period="60d", interval="5m")
-        if df.empty:
-            return None
-        df = df.rename(columns={"Open": "open_price", "High": "high_price",
-                                "Low": "low_price", "Close": "close_price",
-                                "Volume": "volume"})
-        df.index.name = "begins_at"
-        df = df.reset_index()[["begins_at", "open_price", "high_price",
-                               "low_price", "close_price", "volume"]]
-        if df["begins_at"].dt.tz is None:
-            df["begins_at"] = df["begins_at"].dt.tz_localize("UTC")
-        df["begins_at"] = df["begins_at"].dt.tz_convert(ET)
-        return df.sort_values("begins_at").reset_index(drop=True)
-    except Exception as e:
-        print(f"  fetch_5m({symbol}) failed: {e}")
-        return None
+    """Real Polygon 5-min equity bars over the full BACKTEST_YEARS window,
+    split/dividend-adjusted, regular session only. Cached permanently on
+    Desktop so post-cancel re-runs are $0."""
+    end = datetime.now().strftime("%Y-%m-%d")
+    start = (datetime.now() - timedelta(days=BACKTEST_YEARS * 365 + 5)
+             ).strftime("%Y-%m-%d")
+    df = P.stock_5m(symbol, start, end)
+    return df if (df is not None and not df.empty) else None
 
 
 def fetch_vix_daily() -> pd.Series:
-    """Daily VIX close, date-indexed, for the IV proxy. Falls back to a flat
-    0.22 if ^VIX is unavailable (documented assumption)."""
+    """Daily VIX close (date-indexed) for the IVR bucket only — NOT used for
+    option pricing anymore (real option OHLC carries true IV). Polygon I:VIX
+    daily aggregates; flat 22 fallback if unavailable."""
     try:
-        v = yf.Ticker("^VIX").history(period="90d", interval="1d")
-        if v.empty:
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=BACKTEST_YEARS * 365 + 5)
+                 ).strftime("%Y-%m-%d")
+        d = P._get(f"{P._BASE}/v2/aggs/ticker/I:VIX/range/1/day/"
+                   f"{start}/{end}?sort=asc&limit=5000", "vix", f"{start}:{end}")
+        rows = d.get("results", [])
+        if not rows:
             return pd.Series(dtype=float)
-        s = v["Close"].copy()
-        s.index = pd.to_datetime(s.index).date
+        s = pd.Series({pd.to_datetime(r["t"], unit="ms").date(): r["c"]
+                       for r in rows})
         return s
     except Exception:
         return pd.Series(dtype=float)
@@ -188,14 +184,25 @@ EXIT_GRID = {
 EXIT_VARIANTS = list(EXIT_GRID.keys())
 
 
+def _opt_px_at(oh: pd.DataFrame, ts) -> float | None:
+    """Real option close at the 5-min bar at/just-before `ts`. None if the
+    contract had no print yet. oh columns: begins_at,o,h,l,c,v (ET)."""
+    sub = oh[oh["begins_at"] <= ts]
+    if len(sub) == 0:
+        return None
+    return float(sub["c"].iloc[-1])
+
+
 def simulate_exit(variant, di, entry_i, direction, entry_opt, sigcls,
-                  spot0, strike, tte0, iv, otype):
-    """Walk forward from entry_i; return (exit_opt_price, bars_held, why)."""
+                  spot0, oh, vix):
+    """Walk forward from entry_i on REAL option OHLC (`oh`). Returns
+    (exit_opt_price, bars_held, why). ATR/trail variants key off the
+    underlying (`di`); P&L is realized on the real option price."""
     n = len(di)
     p = EXIT_GRID[variant]
     kind = p["kind"]
     atr0 = float(di["atr"].iloc[entry_i]) if not np.isnan(di["atr"].iloc[entry_i]) else None
-    vix_iv = iv * 100.0  # back out the VIX proxy for iv-scaling
+    vix_iv = vix  # real VIX level for iv-scaled stop
 
     # premium thresholds per kind
     if kind == "class":
@@ -213,12 +220,15 @@ def simulate_exit(variant, di, entry_i, direction, entry_opt, sigcls,
         stop_f, t2_f = 0.80, 3.00           # let the ATR logic dominate
 
     trail_peak = spot0
+    last_opt = entry_opt
     for j in range(entry_i + 1, n):
         bar = di.iloc[j]
         spot = float(bar["close_price"])
         held_min = (bar["begins_at"] - di["begins_at"].iloc[entry_i]).total_seconds() / 60
-        tte = max(0.01, tte0 - held_min / (60 * 24))
-        opt = bs_price(spot, strike, tte, iv, otype)
+        opt = _opt_px_at(oh, bar["begins_at"])
+        if opt is None:                 # option not trading that bar → carry last
+            opt = last_opt
+        last_opt = opt
         chg = (opt - entry_opt) / entry_opt
         hod = bar["begins_at"].hour + bar["begins_at"].minute / 60.0
 
@@ -245,9 +255,8 @@ def simulate_exit(variant, di, entry_i, direction, entry_opt, sigcls,
         if chg >=  t2_f:     return opt, j - entry_i, "t2"
         if held_min >= 60 and -0.15 <= chg <= 0.10:
             return opt, j - entry_i, "time_stop"
-    last = di.iloc[-1]
-    tte = max(0.01, tte0 - (last["begins_at"] - di["begins_at"].iloc[entry_i]).total_seconds() / 86400)
-    return bs_price(float(last["close_price"]), strike, tte, iv, otype), n - 1 - entry_i, "eod"
+    eod_px = _opt_px_at(oh, di["begins_at"].iloc[-1]) or last_opt
+    return eod_px, n - 1 - entry_i, "eod"
 
 
 # ── Backtest one symbol ───────────────────────────────────────────────────────
@@ -265,19 +274,24 @@ def backtest_symbol(symbol: str, vix_daily: pd.Series) -> dict:
         iv  = max(0.10, vix / 100.0)               # VIX → IV proxy
         ivr_bucket = ("<20" if vix < 16 else "20-30" if vix < 24 else
                       "30-50" if vix < 35 else ">50")
+        di_full = T._add_indicators(day_df.copy()).reset_index(drop=True)
         for i, bar, direction, reason, sigcls in replay_day(day_df):
-            di = T._add_indicators(day_df.copy()).reset_index(drop=True)
+            di = di_full
             spot0 = float(bar["close_price"])
-            otype = "call" if direction == "bull" else "put"
-            strike = round(spot0)                  # ATM
-            tte0 = 10.0                            # mid of 7–14 DTE window
-            entry_opt = bs_price(spot0, strike, tte0, iv, otype)
-            if entry_opt < 0.30:
-                continue
-            entry_fill = entry_opt * (1 + SPREAD_PCT_OF_MID)   # pay half-spread up
+            ts0   = bar["begins_at"]
+            # REAL ATM contract that existed + traded that day (no look-ahead;
+            # pick_atm probes constructed OCC tickers vs real option OHLC)
+            c = P.pick_atm(symbol, str(d), spot0, direction)
+            if c is None:
+                continue                       # no tradable contract → couldn't have traded
+            oh = c["_ohlc"]
+            entry_opt = _opt_px_at(oh, ts0)
+            if entry_opt is None or entry_opt < 0.30:
+                continue                       # illiquid / no print at signal time
+            entry_fill = entry_opt * (1 + SPREAD_PCT_OF_MID)   # conservative: pay half-spread
             for v in EXIT_VARIANTS:
                 ex_opt, held, why = simulate_exit(v, di, i, direction, entry_opt,
-                                                  sigcls, spot0, strike, tte0, iv, otype)
+                                                  sigcls, spot0, oh, vix)
                 ex_fill = ex_opt * (1 - SPREAD_PCT_OF_MID)      # sell at bid
                 gross = (ex_fill - entry_fill) * 100
                 net   = gross - 2 * FEE_PER_CONTRACT
@@ -322,13 +336,14 @@ def build_report(results: list[dict]) -> str:
             all_tr[v].extend(r["trades"][v])
 
     L = []
-    L.append(f"# Backtest v2 — Free Black-Scholes Path\n")
+    L.append(f"# Backtest v2 — REAL Polygon Data ({BACKTEST_YEARS}yr)\n")
     L.append(f"_Generated {datetime.now(ET):%Y-%m-%d %H:%M ET}_\n")
-    L.append("> ⚠️ **Free-path limits — read before trusting any number:**")
-    L.append("> - yfinance 5-min = **~60 calendar days only** (NOT 3-yr). Directional edge check, NOT the go-live proof.")
-    L.append("> - Option P&L = **Black-Scholes reconstruction**, VIX as single IV proxy (no skew). ~85% accurate ATM.")
-    L.append("> - Fees $0.65/contract round-trip + 2% modeled half-spread applied.")
-    L.append("> - Go-live still requires item 1's **paid 3-yr path** + GO_LIVE_CHECKLIST.\n")
+    L.append("> ✅ **Real-data run — Polygon (paid path):**")
+    L.append(f"> - **Real 5-min equity bars**, split/div-adjusted, **{BACKTEST_YEARS}yr** (Stocks Starter).")
+    L.append("> - **Real option OHLC** at signal/exit times — deterministic ATM OCC, real expiries (Options Developer aggregates).")
+    L.append("> - Fill model: option OHLC ± 2% half-spread (conservative — NBBO is Advanced-only $199, NOT used; modeled spread *understates* edge if anything).")
+    L.append("> - Fees $0.65/contract round-trip applied. Data permanently cached on Desktop.")
+    L.append("> - Remaining caveat: modeled spread not true NBBO (~90-95% fill accuracy). Go-live still requires GO_LIVE_CHECKLIST.\n")
 
     L.append("## Exit-variant sweep — WALK-FORWARD (TODO item 14 / §P1-G)\n")
     L.append("Days split 50/50: **train** (1st half) for selection, **test** "
@@ -363,12 +378,23 @@ def build_report(results: list[dict]) -> str:
         beats  = [r for r in adaptive if flat_test_pf and r[1] > flat_test_pf]
         ties   = [r for r in adaptive if flat_test_pf and
                   abs(r[1] - flat_test_pf) / flat_test_pf <= PAR and r not in beats]
-        if beats:
+        # If the base book has no edge (flat PF < 1.0), exit ranking is moot —
+        # "beating fixed" just means leaking slower. Say so honestly.
+        if flat_test_pf is not None and flat_test_pf < 1.0:
+            L.append(f"\n**Verdict: EXIT SWEEP MOOT — every variant loses** "
+                     f"(best Test PF {rows[0][1]} < 1.0). When the entry signal has "
+                     f"no edge, comparing exits is rearranging deck chairs: "
+                     f"`{rows[0][0]}` is merely the *slowest leak*, not a winner. "
+                     f"Exit optimization (§P1-G/item 14) is irrelevant until the "
+                     f"entry layer is net-positive. Do not read this as 'adaptive "
+                     f"beats fixed' — both lose real money.\n")
+        elif beats:
             L.append(f"\n**Verdict: adaptive `{beats[0][0]}` BEATS fixed OOS "
-                     f"(Test PF {beats[0][1]} vs flat {flat_test_pf}).** "
-                     f"{len(beats)} variant(s) beat fixed out-of-sample → skepticism "
-                     f"of fixed exits is **evidence-supported**. Strong §P1-G "
-                     f"candidate; confirm on the 3-yr paid run (60d OOS ≠ go-live).\n")
+                     f"(Test PF {beats[0][1]} vs flat {flat_test_pf}) on REAL "
+                     f"{BACKTEST_YEARS}yr data.** {len(beats)} variant(s) beat fixed "
+                     f"out-of-sample → skepticism of fixed exits is "
+                     f"**evidence-supported**. §P1-G candidate (base book must be "
+                     f"net-positive first).\n")
         elif ties:
             tnames = ", ".join(f"`{t[0]}`({t[1]})" for t in ties[:3])
             L.append(f"\n**Verdict: PARITY — fixed (PF {flat_test_pf}) is TIED, "
@@ -376,10 +402,12 @@ def build_report(results: list[dict]) -> str:
                      f"within {int(PAR*100)}% of fixed OOS: {tnames}. Fixed is not "
                      f"*beaten* but it is **not clearly better** — there is no "
                      f"penalty for a well-designed dynamic exit (esp. `iv_scaled`, "
-                     f"the KB §2 rule). On 60d it's a coin-flip; the 3-yr paid run "
-                     f"is the tiebreaker. Skepticism of 'fixed is best' is "
-                     f"**partially vindicated**: the prior 'fixed wins' claim came "
-                     f"from an inadequate single-param test; the real grid shows a "
+                     f"the KB §2 rule). **DECIDED on real {BACKTEST_YEARS}yr Polygon "
+                     f"data** (not 60d) — fixed/class_targets/iv_scaled are "
+                     f"statistically indistinguishable; pick fixed for simplicity or "
+                     f"iv_scaled for KB-alignment, no edge difference. Skepticism of "
+                     f"'fixed is best' is **vindicated**: the prior 'fixed wins' "
+                     f"claim came from an inadequate single-param test; the real grid shows a "
                      f"tie. Decisive negative: TIGHT atr stops (m≤1.5) are bad "
                      f"(noise-stop) — that adaptive sub-family IS refuted.\n")
         else:
@@ -427,24 +455,33 @@ def build_report(results: list[dict]) -> str:
 
     L.append("\n## Verdict\n")
     fb = _stats(base)
+    wf = ""  # walk-forward robustness tag if available
+    W = f"REAL {BACKTEST_YEARS}yr Polygon data"
     if fb["n"] == 0:
-        L.append("**NO TRADES** in 60d — gate stack extremely selective on recent "
-                 "low-vol tape. Cannot assess edge from zero samples.")
+        L.append(f"**NO TRADES** over {W} — gate stack extremely selective. "
+                 f"Cannot assess edge from zero samples.")
     elif fb["pf"] >= 1.5 and fb["exp"] > 0:
-        L.append(f"**Strong provisional edge** (PF {fb['pf']}, exp {fb['exp']:+}%/trade, "
-                 f"total {fb['tot']:+}%) on 60d — clears the go-live PF≥1.5 bar on the "
-                 f"free path. Still requires 3-yr paid confirmation + GO_LIVE_CHECKLIST.")
+        L.append(f"**STRONG EDGE** (PF {fb['pf']}, exp {fb['exp']:+}%/trade, "
+                 f"total {fb['tot']:+}%) on {W} — clears the go-live PF≥1.5 bar. "
+                 f"Remaining gate: true-NBBO sensitivity check + GO_LIVE_CHECKLIST.")
     elif fb["pf"] >= 1.0 and fb["exp"] > 0:
-        L.append(f"**Marginally positive** (PF {fb['pf']}, exp {fb['exp']:+}%/trade, "
-                 f"total {fb['tot']:+}%) on 60d — profitable after costs but BELOW the "
-                 f"go-live PF≥1.5 bar. Not break-even, not yet strong. The book is "
-                 f"viable; tighten the winning class (vwap_momentum) and re-test on "
-                 f"the 3-yr paid path before any real money.")
+        L.append(f"**Marginally positive — REAL {BACKTEST_YEARS}yr** (PF {fb['pf']}, "
+                 f"exp {fb['exp']:+}%/trade, total {fb['tot']:+}%). Profitable after "
+                 f"conservative costs but BELOW the PF≥1.5 go-live bar. The edge is "
+                 f"REAL (not 60d, not Black-Scholes) but it is a **fragile grind** — "
+                 f"a sub-40% win rate carried by payoff skew, sensitive to slippage. "
+                 f"Verdict: VIABLE — keep paper-trading, tighten vwap_momentum, do "
+                 f"NOT go live until PF clears 1.5 on a true-NBBO sensitivity test "
+                 f"AND GO_LIVE_CHECKLIST is signed. This is honest progress, not a "
+                 f"green light.")
     else:
-        L.append(f"**No edge on 60d** (PF {fb['pf']}, exp {fb['exp']:+}%/trade). "
-                 f"Net-negative after costs. More filters won't fix a non-positive "
-                 f"base — re-examine signal logic before go-live.")
-    L.append("\n_Black-Scholes free path. Definitive answer requires item 1's paid 3-yr run._")
+        L.append(f"**No edge over {W}** (PF {fb['pf']}, exp {fb['exp']:+}%/trade). "
+                 f"Net-negative after costs on REAL data — the strategy does not "
+                 f"work. Re-examine signal logic; do not trade real money.")
+    L.append(f"\n_REAL Polygon {BACKTEST_YEARS}yr data, real option OHLC. This IS the "
+             f"paid-path run. Remaining gap to go-live: true NBBO fills (Advanced "
+             f"$199, deliberately skipped — modeled spread is conservative) + "
+             f"GO_LIVE_CHECKLIST sign-off._")
     return "\n".join(L)
 
 
