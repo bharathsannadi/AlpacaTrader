@@ -4,6 +4,8 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ---
 
+## 📊 ADVISORY MODE (2026-05-18): chart now marks every vwap_momentum signal (the ONLY proven-edge signal) as ▲CALL/▼PUT with its measured 3yr track record in the tooltip — fires PRE-gate so you see all real signals & decide instrument/size/skip. Decision-support, NOT auto-trade (that strategy loses). trend_cont/gap_fade disabled (noise) so only the validated signal marks the chart.
+
 ## 🎯 STRATEGY STATUS (2026-05-18, updated): SIGNAL HAS EDGE — STRUCTURE IS THE BUG.
 signal_diagnostic.py: vwap_momentum predicts underlying direction 55-60% across ALL 6 symbols (✅ EDGE, grows with horizon, +0.62 ATR @60m). gap_fade = ⛔ NOISE (disabled, GAP_FADE_ENABLED=False — 2nd signal gated after trend_cont). The real-3yr backtest PF 0.74 is NOT 'no edge' — it's a PROVEN signal killed by the 7-14 DTE naked-option STRUCTURE + premium-% exit (KB §1: directionally right, theta kills you). Real-money still OFF. NEXT (FORK A, data-driven): backtest STRUCTURE variants around the proven signal — DTE {0,1,2,30,45}, underlying-ATR stop sized to measured excursion (~60min hold), debit spreads (KB §5). Items 14/15/§P1-I/J still moot until a structure monetizes the edge after costs.
 

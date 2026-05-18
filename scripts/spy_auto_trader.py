@@ -56,6 +56,12 @@ from alpaca.trading.enums            import (
 STOP_MORNING = threading.Event()
 STOP_EVENING = threading.Event()
 TRADE_CONFIRM_CALLBACK = None    # set by UI; signature: (details: dict) -> bool
+ADVISORY_SIGNAL_CALLBACK = None  # set by app.py; fired the INSTANT a signal is
+                                 # detected (before gates) so the chart shows
+                                 # EVERY real signal for human decision-support.
+                                 # signature: (symbol, direction, reason, price,
+                                 # signal_class) -> None. Decision aid only —
+                                 # does NOT place orders.
 ON_FILL_CALLBACK       = None    # set by app.py; called after every successful
                                  # fill (entry) or close so the UI can refresh
                                  # account_value / buying_power / max_risk.
@@ -3576,6 +3582,18 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 signal_class = "mean_rev" if (reason or "").startswith("Mean-rev") else "trend_cont"
 
         if direction:
+            # ── Advisory chart marker — fire BEFORE the gate stack so the
+            #    user sees EVERY real signal (currently vwap_momentum only;
+            #    trend_cont/gap_fade are disabled noise) and decides for
+            #    themselves. Decision-support, NOT an order. Wrapped so a
+            #    callback error never breaks the trading loop.
+            if ADVISORY_SIGNAL_CALLBACK is not None:
+                try:
+                    ADVISORY_SIGNAL_CALLBACK(symbol, direction, reason,
+                                             current, signal_class)
+                except Exception as _adv_e:
+                    log.debug(f"advisory marker cb failed: {_adv_e}")
+
             # Cool-down: 5 min normally; 20 min after a stop hit
             last_stop = get_last_stop(symbol)
             stop_recently = (

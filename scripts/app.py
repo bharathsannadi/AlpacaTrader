@@ -193,6 +193,37 @@ class TradeApproval:
 trade_approval = TradeApproval()
 trader.TRADE_CONFIRM_CALLBACK = trade_approval.request
 
+
+# ── Advisory signal markers (decision-support, NOT auto-trade) ────────────────
+# Measured directional track-record per signal class, from the REAL 3yr
+# signal_diagnostic.py run (underlying-direction, decoupled from option P&L).
+# This is what makes a marker *informative*: the chart shows not just "signal
+# here" but "this setup is historically right X% over the next hour".
+_SIGNAL_TRACK_RECORD = {
+    "vwap_momentum": "✅ edge: 58% right @30m, 60% @60m, +0.34→0.62 ATR (real 3yr, all 6 symbols)",
+    "orb_breakout":  "⚠ unproven on real data",
+    "gap_fade":      "⛔ NOISE — ~48% (disabled)",
+    "trend_cont":    "⛔ the bleed — PF 0.49 (disabled)",
+    "mean_rev":      "⛔ negative, tiny sample (disabled)",
+}
+
+def _advisory_signal(symbol: str, direction: str, reason: str,
+                     price: float, signal_class: str) -> None:
+    """Fired the instant a signal is detected (pre-gate). Plots a call/put
+    marker on the symbol's chart for the user to decide on. NOT an order.
+
+    Honest framing baked into the tooltip: the measured track record + the
+    standing reality that monetizing this via retail options is unproven."""
+    tr = _SIGNAL_TRACK_RECORD.get(signal_class, "track record unknown")
+    side = "CALL" if direction == "bull" else "PUT"
+    enriched = (f"[ADVISORY · {signal_class} → {side}] {reason}  "
+                f"│ {tr}  │ directional aid only — option monetization unproven, "
+                f"you decide instrument/size/skip")
+    add_signal_marker(direction=direction, price=price,
+                      reason=enriched, symbol=symbol)
+
+trader.ADVISORY_SIGNAL_CALLBACK = _advisory_signal
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Root logging is already configured by spy_auto_trader.py at import time
 # (rotating spy_trader.log + errors.log with dedup + stream). Don't reconfigure
