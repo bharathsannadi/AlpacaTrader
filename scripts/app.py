@@ -61,7 +61,11 @@ TICKER_INTERVAL_SEC      = 5         # price + state push cadence
 ACCOUNT_REFRESH_TICKS    = 3         # refresh account/buying power every N ticks (~15s)
 VIX_CACHE_TTL_SEC        = 120       # VIX rarely changes
 PRIOR_LEVELS_CACHE_SEC   = 3600      # prior-day OHLC: refresh hourly
-CHART_CACHE_TTL_SEC      = 8         # short-window bar cache (matches 10s JS refresh)
+CHART_CACHE_TTL_SEC      = 60        # bar cache: 60s (a 15m chart doesn't change
+                                     # in 8s; the active chart's auto-refresh keeps
+                                     # it fresh anyway). With background pre-warm
+                                     # this makes tab switches instant cache hits
+                                     # instead of a cold 1-3s yfinance fetch.
 APPROVAL_TIMEOUT_SEC     = 60
 POSITION_MONITOR_SEC     = 10        # position monitor poll interval (10s for tighter stop execution)
 LOGIN_RATE_LIMIT         = "10 per minute"
@@ -607,6 +611,13 @@ def price_ticker() -> None:
                 if tick % ACCOUNT_REFRESH_TICKS == 0:
                     refresh_account()
                 emit_state()
+                # Background chart pre-warm: one symbol per alternating tick so
+                # every watchlist symbol's bars stay hot (~every 60s, matching
+                # CHART_CACHE_TTL_SEC). Tab switches then hit warm cache instead
+                # of a cold 1-3s yfinance fetch. Max one fetch/tick — never a
+                # 6x burst that would stall the ticker thread.
+                if tick % 2 == 1:
+                    _prewarm_next_chart()
                 tick += 1
         except Exception as e:
             log.warning(f"price_ticker iteration failed: {e}")
@@ -1240,6 +1251,29 @@ _chart_cache: dict[tuple[str, str], tuple[list, float]] = {}
 _chart_cache_lock = threading.Lock()
 
 
+# Tracks the interval/range the user is actually viewing so the background
+# pre-warmer keeps exactly the right (symbol,interval,range) combos hot.
+# A tab switch only changes the SYMBOL — interval/range stay — so warming all
+# watchlist symbols at the last-used view makes every switch an instant hit.
+_last_chart_view = {"interval": "15m", "range": "1D"}
+_prewarm_idx = 0
+
+
+def _prewarm_next_chart() -> None:
+    """Round-robin: warm ONE watchlist symbol's chart cache per call (one
+    yfinance fetch max, so the ticker thread never blocks on a 6× burst).
+    6 symbols × every-other-tick (10s) ≈ each refreshed ~60s = the TTL."""
+    global _prewarm_idx
+    syms = _SYMBOLS_ORDERED
+    sym = syms[_prewarm_idx % len(syms)]
+    _prewarm_idx += 1
+    iv, rng = _last_chart_view["interval"], _last_chart_view["range"]
+    try:
+        _cached_chart_bars(iv, rng, sym)   # populates _chart_cache if stale
+    except Exception as e:
+        log.debug(f"prewarm {sym} {iv}/{rng} failed: {e}")
+
+
 def _cached_chart_bars(interval: str, range_: str, symbol: str, force_refresh: bool = False) -> list:
     """Cache chart bars per (symbol, interval, range) for CHART_CACHE_TTL_SEC."""
     key = (symbol, interval, range_)
@@ -1320,6 +1354,10 @@ def on_get_chart_data(data=None):
 
     if interval not in _VALID_INTERVALS: interval = "15m"
     if range_   not in _VALID_RANGES:    range_   = "1D"
+    # Track what the user is viewing so the pre-warmer hot-caches the right
+    # combo for all watchlist symbols → next tab switch is an instant hit.
+    _last_chart_view["interval"] = interval
+    _last_chart_view["range"]    = range_
 
     with _state_lock:
         active = state["active_symbol"]
