@@ -874,6 +874,9 @@ let ema200Series   = null;
 let volumeSeries   = null;
 // Price lines created on candleSeries — store the priceLine handles for cleanup
 let _priceLines    = [];
+// Signal time → {tip, badge}: the real-data "why not to buy" that travels
+// with every advisory marker, shown on hover via the crosshair tooltip.
+let _signalTips    = {};
 // Position lines (stop/T1/T2) — same idea but tracked separately so position
 // updates don't clobber prior-day / ORB lines
 let _positionLines = [];
@@ -1007,9 +1010,17 @@ function _onCrosshairMove(param) {
   const ema9  = param.seriesPrices.get(ema9Series);
   const ema21 = param.seriesPrices.get(ema21Series);
   const fmt = v => (v == null ? "–" : v.toFixed(2));
-  tip.innerHTML =
+  let html =
     `O ${fmt(candle.open)} · H ${fmt(candle.high)} · L ${fmt(candle.low)} · C ${fmt(candle.close)}` +
     `<br>VWAP ${fmt(vwap)} · EMA9 ${fmt(ema9)} · EMA21 ${fmt(ema21)}`;
+  // If a signal marker sits at/near this time, show its real-data
+  // why-not-to-buy verdict prominently (within ±1 bar tolerance).
+  const sig = _signalTips[param.time] ||
+              _signalTips[param.time - 300] || _signalTips[param.time + 300];
+  if (sig && sig.tip) {
+    html += `<br><span style="color:#ff9d3d;font-weight:600">⚠ ${sig.tip}</span>`;
+  }
+  tip.innerHTML = html;
   tip.style.display = "block";
   const x = Math.min(param.point.x + 12, document.getElementById("chart-container").clientWidth - 240);
   const y = Math.max(12, param.point.y - 60);
@@ -1314,13 +1325,17 @@ socket.on("chart_data", (d) => {
   _renderPnlBadge(positions, d.bars);
 
   // ── Signal markers + close markers (with reason in tooltip text) ───────────
-  const sigMarks = (d.signals || []).map(s => ({
-    time:     s.time,
-    position: s.direction === "bull" ? "belowBar"  : "aboveBar",
-    color:    s.direction === "bull" ? "#00e5a0"   : "#ff3d68",
-    shape:    s.direction === "bull" ? "arrowUp"   : "arrowDown",
-    text:     s.direction === "bull" ? "▲ CALL"    : "▼ PUT",
-  }));
+  const sigMarks = (d.signals || []).map(s => {
+    if (s.tip) _signalTips[s.time] = { tip: s.tip, badge: s.badge || "" };
+    const side = s.direction === "bull" ? "▲ CALL" : "▼ PUT";
+    return {
+      time:     s.time,
+      position: s.direction === "bull" ? "belowBar"  : "aboveBar",
+      color:    s.direction === "bull" ? "#00e5a0"   : "#ff3d68",
+      shape:    s.direction === "bull" ? "arrowUp"   : "arrowDown",
+      text:     s.badge ? `${side} ${s.badge}` : side,
+    };
+  });
   const closeMarks = (d.closes || []).map(c => ({
     time:     c.time,
     position: "inBar",
@@ -1434,15 +1449,22 @@ function _renderBlockedWindows(windows, bars) {
 socket.on("chart_signal", (s) => {
   if (!candleSeries || !s) return;
   if (s.symbol && s.symbol !== currentSymbol) return;
+  if (s.tip) _signalTips[s.time] = { tip: s.tip, badge: s.badge || "" };
+  const side = s.direction === "bull" ? "CALL" : "PUT";
   const existing = candleSeries.markers ? candleSeries.markers() : [];
   const newMark  = {
     time: s.time,
     position: s.direction === "bull" ? "belowBar" : "aboveBar",
     color:    s.direction === "bull" ? "#00d88a" : "#ff4560",
     shape:    s.direction === "bull" ? "arrowUp" : "arrowDown",
-    text:     s.direction === "bull" ? "CALL"    : "PUT",
+    text:     s.badge ? `${side} ${s.badge}` : side,
   };
   candleSeries.setMarkers([...existing, newMark]);
+  // Also surface the plain why-not-to-buy in the Last-Signal banner so it's
+  // readable without hovering — meets the override impulse with evidence.
+  const sb = document.getElementById("signal-banner");
+  const st = document.getElementById("signal-text");
+  if (sb && st && s.tip) { st.textContent = s.tip; sb.classList.add("show"); }
 });
 
 // ── Open Positions card ───────────────────────────────────────────────────────

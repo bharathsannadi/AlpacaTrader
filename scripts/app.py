@@ -119,15 +119,58 @@ authenticated_sids = set()
 # ── Signal tracker (for chart markers) ────────────────────────────────────────
 signal_history = []   # list of {time, price, direction, reason} dicts
 
+# Real 3yr Polygon backtest verdict per symbol (commit 3a0253d) + measured
+# underlying directional hit-rate @30m (signal_diagnostic). The honest
+# "why not to buy" that travels with every advisory marker.
+_SYMBOL_VERDICT = {
+    # sym:  (PF, exp%/trade, underlying-hit% @30m, tier)
+    "SPY":  (1.18, +0.75, 59.7, "warn"),   # only positive, but 1/6 = likely fluke, <1.5 bar
+    "NVDA": (0.74, -1.46, 57.8, "bad"),
+    "MSFT": (0.71, -1.53, 55.6, "bad"),
+    "AMZN": (0.66, -1.75, 60.1, "bad"),
+    "GOOG": (0.65, -1.82, 56.3, "bad"),
+    "META": (0.63, -1.94, 55.9, "bad"),
+}
+
+def _signal_verdict(symbol: str, direction: str) -> tuple[str, str]:
+    """Returns (badge, tip) — compact on-chart tag + plain why-not-to-buy."""
+    v = _SYMBOL_VERDICT.get(symbol.upper())
+    side = "call" if direction == "bull" else "put"
+    if not v:
+        return ("⚠?", f"{symbol}: no real-data verdict — treat as unproven, do not auto-buy.")
+    pf, exp, hit, tier = v
+    if tier == "warn":
+        badge = f"⚠ {symbol} PF{pf:.2f}"
+        tip = (f"{symbol}: signal ~{hit:.0f}% directionally right @30min — the ONLY "
+               f"symbol that backtested positive (PF {pf:.2f}) over 3yr, BUT that's "
+               f"1-of-6 = likely a fluke, and still below the 1.5 go-live bar. "
+               f"NOT cleared for real money. The {side} is a discretionary read, "
+               f"not a system buy.")
+    else:
+        badge = f"❌ {symbol} PF{pf:.2f}"
+        tip = (f"{symbol}: signal ~{hit:.0f}% directionally right @30min (real edge) "
+               f"— BUT buying the {side} backtested a PROVEN LOSER: PF {pf:.2f}, "
+               f"{exp:+.2f}%/trade over real 3yr. Do NOT buy the {side}; option "
+               f"spread+theta eats the edge. If you act on the bull/bear read, "
+               f"use SHARES, not options.")
+    return (badge, tip)
+
+
 def add_signal_marker(direction: str, price: float, reason: str, symbol: str = "SPY") -> None:
     """Record a signal for chart display (thread-safe). Tagged with symbol so
-    the frontend only renders markers on the matching symbol's chart."""
+    the frontend only renders markers on the matching symbol's chart.
+    Carries the real-data verdict (badge + plain why-not-to-buy tip) so the
+    warning travels with every marker — meets the override impulse with
+    evidence, every time."""
+    _badge, _tip = _signal_verdict(symbol, direction)
     marker = {
         "time":      int(datetime.now(ET).timestamp()),
         "price":     float(price),
         "direction": direction,
         "reason":    reason,
         "symbol":    symbol.upper(),
+        "badge":     _badge,
+        "tip":       _tip,
     }
     with _state_lock:
         signal_history.append(marker)
