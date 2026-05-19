@@ -17,13 +17,26 @@ import sys, re
 from pathlib import Path
 from pypdf import PdfReader
 
-BOOKS = Path("/Users/bsannadi/Desktop/books/Trading/Options Trading")
+BOOK_ROOTS = [
+    Path("/Users/bsannadi/Desktop/books/Trading/Options Trading"),
+    Path("/Users/bsannadi/Desktop/books/Volatility and VIX Collection"),
+    Path("/Users/bsannadi/Desktop/books/options"),
+    Path("/Users/bsannadi/Desktop/books/Trading/Day Trading"),
+]
 CTX = 480   # chars of context around each hit
+
+
+def _all_pdfs() -> list[Path]:
+    out: list[Path] = []
+    for r in BOOK_ROOTS:
+        if r.is_dir():
+            out += sorted(r.glob("*.pdf"))
+    return out
 
 
 def find_book(frag: str) -> Path | None:
     frag = frag.lower()
-    for p in sorted(BOOKS.glob("*.pdf")):
+    for p in _all_pdfs():
         if frag in p.name.lower():
             return p
     return None
@@ -62,7 +75,7 @@ def dig(book: Path, pattern: str, max_hits: int = 40) -> None:
 
 def main() -> None:
     if len(sys.argv) >= 2 and sys.argv[1] == "--list":
-        for p in sorted(BOOKS.glob("*.pdf")):
+        for p in _all_pdfs():
             print(p.name)
         return
     if len(sys.argv) < 3:

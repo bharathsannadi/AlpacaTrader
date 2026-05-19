@@ -643,3 +643,46 @@ direction — a textbook-grounded confirmation. Actionable, testable:
 - H-SPR: fix S2 spread harness (2S-B) → test VERTICAL DEBIT SPREAD =
   Saliba's prescribed structure for moderate-directional+limited-risk.
 None ships without its own cost-robust ≥3bp walk-forward pass.
+
+---
+## 2026-05-19 — DEEP READ: Volatility/VIX collection (Sinclair priority)
+book_dig.py generalized to all book roots. 9 vol/VIX books text-OK
+(1 corrupt dup). Priority: Sinclair *Volatility Trading 2013*.
+
+**Sinclair verbatim findings:**
+- p.14: "When trading options, finding an edge involves FORECASTING
+  VOLATILITY" — the options edge IS a vol-forecast edge. Our system has
+  ZERO vol forecast (pure price-direction). The missing piece, stated.
+- p.67: option transaction costs (brokerage+bid/ask+fees+clearing) are
+  "FAR LARGER than costs associated with trading stocks or futures."
+  → decisive cross-confirm of why S0 options PF 0.92: a thin directional
+  edge in the HIGHEST-cost instrument = structurally worst choice.
+- p.54/57/65/87-90: volatility mean-reverts, clusters, +corr to level,
+  vol↔volume correlated; VIX is empirically mean-reverting (but spot VIX
+  untradable — "easy to price, hard to trade").
+- p.17/Ch8: Kelly / trade sizing "dramatically affects returns" & risk
+  of ruin — bet sizing is a first-class lever (Brooks p.36 "size" =
+  Sinclair's Kelly math).
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §5 (IVR→strategy) & §2 (VIX regime) already encode
+  vol-awareness. Sinclair validates KB.
+- ⚠️ DRIFT (textbook-confirmed, escalated) — prior audit H1/H5: live
+  system COMPUTES IVR/VIX but uses them only as loose filters, never as
+  an EDGE. Sinclair+Natenberg make this not-optional: an options route
+  with NO vol edge cannot overcome option-level costs. The H1/H5 drift
+  is now a first-order defect, not a nicety.
+- ❓ GAP — flat $200 sizing ignores Kelly; KB has no bet-sizing math.
+  Material for the $5K→$100K roadmap & 20% daily-loss tolerance.
+
+**Verdict / architecture refinement:** the 2S OPTIONS ROUTE must carry
+its OWN volatility edge (IVR/vol-forecast), NOT merely spread-wrap the
+directional signal — else it just pays higher option costs for the same
+thin edge (Natenberg p.97 + Sinclair p.14/p.67). Two new testable
+hypotheses:
+- H-VOL: gate/condition the options route on a vol-edge (long premium
+  only low-IVR per KB §5; OR a short-premium plug-in when IVR high &
+  mean-reversion setup). Options trade ONLY with a vol edge present.
+- H-KELLY: fractional-Kelly sizing vs flat $200 — measure return &
+  risk-of-ruin impact (Sinclair Ch8) under the phased roadmap.
+All gated by their own ≥3bp cost-robust walk-forward. No exceptions.

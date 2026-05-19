@@ -31,12 +31,19 @@ router** that picks the execution vehicle → a **shared risk/exec layer**.
   (symbol, direction, strength, ATR ctx). Additional strategies are added
   as separate validated plug-ins, not bolted onto this one.
 - **Instrument router (policy is DATA-DRIVEN, not hand-picked):**
-  - **Shares route** — PROVEN (S3 PF 1.38 OOS). Primary engine. ATR-sized.
-  - **Options route** — the disproven **naked** structure is NOT rebuilt.
-    Candidate = **debit spread** (KB §5), whose backtest (S2) was an
-    INVALID measurement (sparse short-leg data) → spreads are *unresolved,
-    not refuted*. Route stays DISABLED until a fixed spread-data harness
-    re-backtests it and PF clears the bar.
+  - **Shares route** — NOT proven (S3 PF 1.38 was a 1bp artifact; @3bp
+    PF 0.97 — REFUTED 2026-05-19). Best *candidate* vehicle (lowest cost
+    — Sinclair p.67) but only with the H-RUN runner exit + H-SEL
+    selectivity, re-tested ≥3bp. DISABLED until that passes.
+  - **Options route** — disproven **naked** structure NOT rebuilt.
+    Candidate = **debit spread** (KB §5; Saliba p.39 = the textbook
+    structure for moderate-directional + limited-risk). S2 backtest was
+    INVALID (sparse short-leg) → *unresolved, not refuted*. **REFINED
+    (Natenberg p.97 + Sinclair p.14/p.67):** the options route must carry
+    its OWN volatility edge (IVR / vol-forecast — H-VOL), NOT merely
+    spread-wrap the directional signal, else it just pays option-level
+    costs (>> stock costs) for the same thin edge. DISABLED until: fixed
+    spread harness + vol-edge component + ≥3bp walk-forward all pass.
 - **Shared layer:** sizing, daily-loss halt, cooldowns, the 18 gates,
   PDT (operator-disabled), GO_LIVE_CHECKLIST. One risk brain, two vehicles.
 - **Non-negotiable:** a route only goes live (even paper→real) after ITS
