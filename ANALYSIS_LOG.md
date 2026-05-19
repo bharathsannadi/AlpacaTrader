@@ -427,3 +427,176 @@ directional edge after costs" — the next backtest answers it.
 mostly legally mandated). The restriction isn't the problem — the no-edge
 options structure is. Don't relax gates. Test the proven directional edge as a
 multi-day shares/ETF strategy instead.
+
+---
+## 2026-05-18 — Pro-trader platform review & rating
+
+**Scorecard (weighted as a real desk would weight it):**
+| Category | Wt | Score | Note |
+|---|---|---|---|
+| Edge / expectancy | 40% | 2/10 | PF 0.74, −1.3%/trade, 3719 trades, ALL 6 syms net-neg |
+| Risk management | 20% | 9/10 | 4%/trade·20% port·20% daily-loss halt·cooldowns — institutional |
+| Signal research | 12% | 8/10 | vwap_momentum proven directional edge; noise signals killed |
+| Structure fit | 10% | 2/10 | 7-14DTE naked + 50% prem stop destroys the proven edge |
+| Execution infra | 8% | 7/10 | spread/OI/notional gates, modeled slippage, real fills |
+| Ops robustness | 6% | 8/10 | paper-mode, heartbeats, advisory mode, crash-safe |
+| Process/discipline | 4% | 10/10 | backtest-as-judge, no hand-tuning, ANALYSIS_LOG, owns errors |
+**Weighted overall ≈ 4.4/10 — DO NOT DEPLOY REAL CAPITAL.**
+
+**KB cross-ref:**
+- ✅ ENFORCED — risk/exit constants map to KB (§3 stops pre-planned, 50% prem
+  stop Natenberg/Saliba, §6 vwap is the KB-grounded signal).
+- ⚠️ DRIFT — KB §1 "directionally right, theta kills you" is exactly what the
+  backtest shows; the live STRUCTURE contradicts the KB edge thesis.
+- ⚠️ DRIFT — PDT relax (2026-05-18) raises trade frequency on a no-edge
+  strategy → faster path to the 20% daily-loss halt. Sound infra, wrong
+  engine to put more fuel in.
+- ❓ GAP — no live-validated positive-expectancy structure exists yet; the
+  shares/ETF swing test of vwap_momentum is the unfilled gap.
+
+**Verdict:** Engineering, risk-control and research *process* are genuinely
+top-decile for a retail system. The platform is rated low ONLY because a
+trading platform's rating is dominated by edge, and the options structure has
+none (backtest-proven). Fix = monetize the proven directional edge in a
+structure that survives costs (shares/ETF swing), not more tuning.
+
+---
+## 2026-05-18 — External source review: YouTube cDt5LFXjq8Q
+"Exit Strategies In Options Trading | Secure Your Profits & Limit Losses"
+(Apr-2024 generic options-education video. Verbatim transcript not
+retrievable; assessed from title + corroborated topic recap.)
+
+**What it teaches:** limit-order profit exit · stop-order loss exit ·
+trailing stops · "exit at 50% loss / +100% gain" · "take spreads off at
+50% of max profit." Textbook premium-% exit rules.
+
+**KB cross-ref & system check:**
+- ✅ ENFORCED — these are ALREADY implemented: STOP_LOSS_PCT 0.50,
+  PROFIT_TARGET 1.00, PARTIAL_TRIGGER_PCT 0.50, BREAKEVEN 0.30. Maps to
+  KB §3 (pre-planned exits) / §1.
+- ⚠️ DRIFT vs our own evidence — this video PRESCRIBES the exact
+  premium-% structure the 3yr/6-sym backtest PROVED loses (PF 0.74).
+  It is the failing structure, not a fix for it. Endorsement by a
+  generic educational video ≠ edge.
+- ❓ GAP — video says nothing about defining exits in UNDERLYING terms
+  (ATR), DTE/delta selection, or vega; i.e. it omits exactly the levers
+  our Structure-fit improvement plan (2026-05-18) identifies.
+
+**Verdict:** Adds nothing new and offers no lift to the 2/10
+Structure-fit. It reaffirms the premium-% approach we already run and
+already disproved. Not actionable. Keep to the structure-comparison
+backtest plan.
+
+---
+## 2026-05-18 — Exit-strategy coverage audit (5 categories vs code & KB)
+Triggered by user checklist (Schwab/Fidelity/E*Trade exit taxonomy).
+
+| Cat | Status | Code evidence | KB / Verdict |
+|---|---|---|---|
+| 1 Profit targets | ✅ HAVE | PROFIT_TARGET 1.00, PARTIAL_TRIGGER_PCT 0.50 + T2 | §3 ✅ ENFORCED |
+| 2 Stop-loss / risk | ✅ HAVE | STOP_LOSS_PCT 0.50, 4%/20%/20% caps, TIME_STOP 60, EOD 15:50 | §3 ✅ ENFORCED |
+| 3 Technical/catalyst exit | ❌ MISSING | no S/R, MA, VSA, or pre-catalyst position close | §10/§11 ⚠️ DRIFT (re-confirms prior log) |
+| 4 Trailing stop | 🟡 PARTIAL | TRAIL_GIVE_BACK_PCT 0.20 premium-trail; no MA-trail | §3 ⚠️ partial DRIFT |
+| 5 Rolling | ❌ ABSENT | close-only, no roll up/down/out | §15 — intentional; rolling = extend-loser trap on no-edge intraday |
+
+**Key finding:** what we HAVE (1,2,4) is all premium-%-defined = the exact
+structure the 3yr backtest disproved (PF 0.74). What we MISS (#3, MA-trail)
+is underlying-terms = exactly the Structure-fit fix lever. Coverage looks
+broad but is concentrated in the failing dimension.
+
+**Verdict:** Add #3 (spot/technical invalidation exit) — highest-value,
+matches the structure plan & closes a standing ⚠️ DRIFT. Deliberately
+SKIP #5 (rolling) — anti-pattern for a no-edge intraday directional book.
+None changes the score until backtested.
+
+---
+## 2026-05-18 — 80/20 exit rule: applicability check
+**Q:** add the "80/20 rule" (close at 80% of max profit) to exits?
+
+**Finding:** 80/20 is a premium-SELLER rule (needs defined max profit =
+credit received). Our book is long-premium directional BUYER → max profit
+undefined (unbounded for calls) → rule is structurally inapplicable as-is.
+
+**KB cross-ref:**
+- ❓ GAP — no 80/20 profit-capture rule in KB. Only the 80% *loss* ceiling
+  (KB §"max hold to 80% loss") exists — different concept (hard stop).
+- ✅ partial — buyer-analogue (scale-out + runner) already present:
+  PARTIAL_TRIGGER_PCT 0.50 → PROFIT_TARGET 1.00.
+- ⚠️ DRIFT-risk — bolting another premium-% exit onto the no-edge S0
+  (PF 0.74) = deck-chair rearrangement; the apparatus exists to prevent
+  exactly this untested tweak.
+
+**Verdict:** Do NOT hardcode. 80/20 belongs to a short-premium STRUCTURE.
+Proper test = add an S4 credit-spread + 80/20-exit variant to
+backtest_structures.py IFF S2 (debit spread) shows life in the running
+3yr run. Decision deferred to that result — no blind add.
+
+---
+## 2026-05-18 — STRUCTURE COMPARISON RESULT (backtest_structures.py)
+Same vwap_momentum entries, 4 structures, REAL Polygon 3yr, 6 syms,
+walk-forward 50/50, $200/trade risk budget. Headline = Test PF.
+
+| Structure | n | Train PF | Test PF | Win% | Avg$ | Total$ |
+|---|---|---|---|---|---|---|
+| S3 SHARES | 1510 | 1.41 | **1.38** | 53.0 | +46.5 | **+70,212** |
+| S0 naked 7-14d (CURRENT) | 1477 | 0.75 | 0.92 | 38.4 | -2.44 | -3,601 |
+| S1 naked 25-45d ATR-exit | 1509 | 0.32 | 0.41 | 33.1 | -21.5 | -32,396 |
+| S2 debit spread | 629 | 0 | 0 | 0.2 | — | INVALID (sparse short-leg data / pricing-bar mismatch — NOT a real result, disregard) |
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §1 "directionally right, theta kills you": S0/S1 naked
+  long are net-neg; the SAME entries on shares (no theta/vega) print
+  PF 1.38. The KB thesis is now quantified on real 3yr data.
+- ✅ ROBUST — S3 train 1.41 → test 1.38 = −2% OOS decay (no curve-fit),
+  1510 trades, 53% win, MaxDD −$4.5k vs +$70k total. Strongest positive
+  evidence the project has produced.
+- ⚠️ DRIFT confirmed — current production structure (S0) is net-negative
+  (PF 0.92). The 2/10 Structure-fit rating is now data-validated.
+- ❓ S2 unreliable — short-leg OHLC too sparse; spread verdict NOT
+  established (neither for nor against). Needs a fixed spread harness.
+
+**Verdict:** The vwap_momentum edge is REAL and is a **STOCK edge**. Every
+naked-option wrapper destroys it (theta); shares preserve it (PF 1.38 OOS,
+robust). Actionable path = build/validate the shares-or-ETF swing strategy;
+deprioritize options. Not go-live yet: still needs per-symbol & per-year
+robustness, cost-sensitivity, and GO_LIVE_CHECKLIST. S2 (spread) inconclusive
+— re-test only if a fixed spread-data harness is built.
+
+---
+## 2026-05-19 — SHARES ROBUSTNESS: S3 REFUTED (own-error correction)
+backtest_shares_robust.py — same vwap_momentum entries, ATR exit, 6 syms,
+3yr, cost-sensitivity sweep.
+
+**Result:** S3 PF 1.38 was an artifact of optimistic 1bp slippage.
+| bp | PF | total$ |
+|--|--|--|
+| 1 | 1.39 | +147k |
+| 3 (realistic) | 0.97 | -13.9k |
+| 5 | 0.67 | -175k |
+Per-symbol @3bp: only NVDA 1.55 / AMZN 1.22 positive; SPY 0.70 MSFT 0.79
+GOOG 0.87 negative. 11/24 symbol-year cells PF≥1.0 (coin flip). NVDA
+decays 1.96→0.99 over 2023→2026.
+
+**KB cross-ref:**
+- ⚠️ DRIFT (my own analysis) — I labelled S3 "decisive & robust" on a
+  train/test decay check ALONE, without a slippage-sensitivity check.
+  That was the error. KB §15 Lowell "hope is not a strategy" + the
+  project's own trust-but-verify discipline. Correction owned.
+- ✅ ENFORCED (method) — the cost-sensitivity gate worked exactly as
+  designed: it caught a fragile edge before it became a build decision.
+- ⚠️ structural — shares sized to a tight 1.0×ATR stop → huge share
+  count for low-ATR names → fixed-bp slippage scales with NOTIONAL not
+  RISK. The tight-ATR exit makes BOTH the options and shares expressions
+  cost-fragile by construction. The negative is partly the (my,
+  unvalidated) exit design, not purely the signal.
+
+**Verdict:** Neither the naked-options route NOR the naive-shares route
+has a cost-robust edge. signal_diagnostic's underlying directional edge
+is REAL but SMALL (~+0.6 ATR/60min, 52-56% hit) — too small to clear
+theta (options) or notional-scaled slippage at a tight stop (shares) at
+this trade FREQUENCY. The lever is SELECTIVITY / wider stops / lower
+frequency / better excursion-capture — NOT more instruments. Do NOT
+cherry-pick NVDA+AMZN (small-sample survivorship = the SPY-fluke trap).
+2S dual-instrument build + 1S 39-ticker pull are PREMATURE until a
+cost-robust expression exists. Next test is cheap ($0 cached): does a
+selective / wider-stop / lower-frequency variant clear 3-5bp?

@@ -6,8 +6,82 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ## 📊 ADVISORY MODE (2026-05-18): chart now marks every vwap_momentum signal (the ONLY proven-edge signal) as ▲CALL/▼PUT with its measured 3yr track record in the tooltip — fires PRE-gate so you see all real signals & decide instrument/size/skip. Decision-support, NOT auto-trade (that strategy loses). trend_cont/gap_fade disabled (noise) so only the validated signal marks the chart.
 
-## 🎯 STRATEGY STATUS (2026-05-18, updated): SIGNAL HAS EDGE — STRUCTURE IS THE BUG.
-signal_diagnostic.py: vwap_momentum predicts underlying direction 55-60% across ALL 6 symbols (✅ EDGE, grows with horizon, +0.62 ATR @60m). gap_fade = ⛔ NOISE (disabled, GAP_FADE_ENABLED=False — 2nd signal gated after trend_cont). The real-3yr backtest PF 0.74 is NOT 'no edge' — it's a PROVEN signal killed by the 7-14 DTE naked-option STRUCTURE + premium-% exit (KB §1: directionally right, theta kills you). Real-money still OFF. NEXT (FORK A, data-driven): backtest STRUCTURE variants around the proven signal — DTE {0,1,2,30,45}, underlying-ATR stop sized to measured excursion (~60min hold), debit spreads (KB §5). Items 14/15/§P1-I/J still moot until a structure monetizes the edge after costs.
+## 🏗️ ARCHITECTURE DIRECTION (2026-05-18 PM, user): DUAL-INSTRUMENT SYSTEM — shared signal core, instrument router, EACH ROUTE BACKTEST-GATED.
+
+The system is being built to trade **both stocks and options**, NOT as two
+codebases but as one: a single proven **signal core** → an **instrument
+router** that picks the execution vehicle → a **shared risk/exec layer**.
+
+- **Signal core:** `vwap_momentum` only (the ONE signal with proven
+  directional edge — signal_diagnostic 55→60% hit-rate). Single source of
+  truth (existing evaluator). Emits (symbol, direction, strength, ATR ctx).
+- **Instrument router (policy is DATA-DRIVEN, not hand-picked):**
+  - **Shares route** — PROVEN (S3 PF 1.38 OOS). Primary engine. ATR-sized.
+  - **Options route** — the disproven **naked** structure is NOT rebuilt.
+    Candidate = **debit spread** (KB §5), whose backtest (S2) was an
+    INVALID measurement (sparse short-leg data) → spreads are *unresolved,
+    not refuted*. Route stays DISABLED until a fixed spread-data harness
+    re-backtests it and PF clears the bar.
+- **Shared layer:** sizing, daily-loss halt, cooldowns, the 18 gates,
+  PDT (operator-disabled), GO_LIVE_CHECKLIST. One risk brain, two vehicles.
+- **Non-negotiable:** a route only goes live (even paper→real) after ITS
+  OWN walk-forward backtest passes. Shares route ≈ ready (pending 1S-B).
+  Options route is BLOCKED on the spread-harness fix + clean backtest.
+
+### 🆕 2S — Unified dual-instrument build (added 2026-05-18, user request)
+
+| Sub | Item | Status | Gate |
+|---|---|---|---|
+| **2S-A** | Shares route validation = 1S-B (robustness across 39) | ⬜ in progress | PF≥1.1 broad + survives 5bp |
+| **2S-B** | **Fix the spread-data harness** — S2 failed from sparse short-leg OHLC / pricing-bar mismatch, NOT from spreads being bad. Build a correct 2-leg spread pricer (contemporaneous bars, liquid OTM strike selection, fallback). | ⬜ TODO | a clean S2 measurement (win% sane, n not collapsed) |
+| **2S-C** | Re-backtest debit spreads cleanly (6 + 8-sample) → decide if the options route has ANY edge | ⬜ TODO — blocked on 2S-B | options route enabled ONLY if walk-forward PF clears bar |
+| **2S-D** | Define instrument-router policy from 2S-A + 2S-C results (when shares vs when spread — e.g. IVR-based per KB §5, data-driven) | ⬜ TODO | both route backtests done |
+| **2S-E** | Refactor execution into `route` abstraction (shares_executor / options_executor) behind shared signal+risk core; ARCHITECTURE.md update | ⬜ TODO | router policy locked (2S-D) |
+| **2S-F** | UI: dual-engine display + per-route P&L attribution (folds with 1S-D watchlist work) | ⬜ TODO | 2S-E done |
+| **2S-G** | Each route gated by GO_LIVE_CHECKLIST + its own clean backtest PF before real money | ⬜ standing | per-route |
+
+**Sequence:** 2S-A (running) → 2S-B → 2S-C → 2S-D → 2S-E → 2S-F. The
+options route is real and wanted, but it earns its way on with a *correct*
+backtest — we do NOT enable it on hope or rebuild the structure the data
+already buried. Trust-but-verify applies per route.
+
+---
+
+## 🎯 STRATEGY STATUS (2026-05-19, CORRECTED): NEITHER ROUTE COST-ROBUST YET. S3 SHARES REFUTED.
+**Correction:** the 2026-05-18 "S3 shares PROVEN PF 1.38 / +$70k" call was WRONG — it used an optimistic 1bp slippage. At a realistic 3bp, aggregate PF = 0.97 (net-negative); 5bp → 0.67. Only NVDA/AMZN positive (small-sample survivorship — the SPY-fluke trap, do NOT chase). 11/24 symbol-year cells positive = coin flip. Logged ANALYSIS_LOG 2026-05-19.
+
+**Where we actually are:** signal_diagnostic's underlying directional edge is REAL but SMALL (~+0.6 ATR/60min, 52-56% hit). It is too small to survive theta (options) OR notional-scaled slippage at a tight ATR stop (shares) at the CURRENT TRADE FREQUENCY. The lever is **selectivity / wider stops / lower frequency / better excursion-capture — NOT more instruments and NOT a bigger universe.**
+
+**Therefore PAUSED (premature — building infra for an unvalidated edge):** 1S-EXP (39-ticker pull / shares-robustness across 39 / UI expansion) and 2S (dual-instrument build) are ON HOLD until a cost-robust expression of the edge exists on the EXISTING 6. Next step is cheap ($0, cached data): a selective / wider-stop / lower-frequency variant — does it clear 3-5bp?
+
+<!-- superseded banner retained for history below -->
+## 🎯 (SUPERSEDED 2026-05-18 PM): NAKED-OPTIONS STRUCTURE DEAD — DUAL-ROUTE (shares proven · spreads unresolved).
+`backtest_structures.py` (REAL Polygon 3yr, 6 syms, walk-forward) ran the SAME vwap_momentum entries through 4 structures. Result is decisive & robust:
+- **S3 SHARES: Test PF 1.38, 53% win, +$70,212, MaxDD −$4,537 — train 1.41→test 1.38 (−2% decay, no curve-fit, n=1510).**
+- S0 naked 7-14d (CURRENT PRODUCTION): PF 0.92, net-NEGATIVE −$3,601 → the 2/10 Structure-fit is now data-validated.
+- S1 naked 25-45d: PF 0.41 (worse — lower gamma). S2 debit spread: INVALID measurement (sparse short-leg data; neither proves nor refutes spreads).
+
+**Conclusion:** the vwap_momentum edge is REAL and is a STOCK edge. Every naked-option wrapper destroys it via theta (KB §1 quantified). **The fix was never a better option exit — it's trading the underlying.** Real-money still OFF (shares path not yet robustness-validated). Logged in ANALYSIS_LOG 2026-05-18.
+
+**FROZEN — superseded by the structure finding (do NOT grind these; they tune a proven net-negative options book):** items 14 (dynamic exit), 15-options (H1/H2/H5/H6), 16 (FI/Supertrend), §P1-I (corr-cap calibration). H2/spreads only worth a *clean* re-test if a fixed spread-data harness is built.
+
+**NEW TOP PRIORITY → item 1S (shares-path validation):** per-symbol & per-year robustness on S3, cost/slippage sensitivity, then a shares advisory/paper harness. Nothing in the options backlog ships before this answers whether the +$70k is broad-based & deployable.
+
+### 🆕 1S-EXP — Expanded universe (39 tickers) — added 2026-05-18 (user request)
+
+Universe = existing 6 (SPY AMZN GOOG MSFT NVDA META) + 33 new: CBRE GLW QQQ
+NFLX CRWV NET AAPL NOW SOFI HOOD UNH MU AMD ARM TSM LRCX AVGO IBM PLTR CRM ORCL
+NKE TEAM UBER CRWD ADBE INTC MA V WFC C BAC JPM. (CBRS→CBRE typo-fixed. CRWV
+~1yr / ARM ~2.5yr partial history — expected, not an error.)
+
+| Sub | Item | Status | Notes |
+|---|---|---|---|
+| **1S-A** | Pull 3yr 5-min STOCK bars for all 39, permanently Desktop-cached | ⬜ TODO | Sequenced AFTER the in-progress 6-sym shares-robustness run (rate-limit contention). Cheap, $0 re-run later. |
+| **1S-B** | Run `backtest_shares_robust.py` across all 39 — is the proven shares edge BROAD across a large universe? | ⬜ TODO | The valuable output. Per-symbol/per-year/symbol×year grid + cost-sensitivity. Narrow live universe to symbols/years that pass. |
+| **1S-C** | Re-confirm options NO-EDGE on an 8-ticker representative sample (QQQ AAPL NFLX JPM AMD UNH PLTR V) via `backtest_structures.py` | ⬜ TODO | Caches their option data as a side effect. Sample, not all 39 — options path already disproven; this is a breadth sanity check only. |
+| **1S-D** | **UI: support expanded watchlist** — the dashboard tab bar / price-ticker / chart-prewarm are built for 6 symbols | ⬜ TODO — **design, do not hack** | ⚠️ NOT a constant bump. 39 symbols vs 6: `price_ticker` refreshes ALL symbols every 3rd tick, `_prewarm_next_chart` round-robins (39 → ~3.25min/cycle vs 60s TTL = perpetually-cold charts again), tab bar overflow, `emit_state` payload 6.5×. Needs: (a) symbol set driven by 1S-B's PASSING subset (don't wire 39 if only N have edge), (b) lazy/virtualized tab UI, (c) prewarm only the *active* + recently-viewed symbols, (d) ticker refresh tiering. Spec before code; do AFTER 1S-B picks the real universe. |
+
+**Sequencing rationale (trust-but-verify):** validate the universe (1S-B) BEFORE wiring it into the live UI (1S-D). No point shipping a 39-symbol watchlist if the shares backtest shows only a subset has edge — we'd narrow it anyway. The shares backtest is the gate; the UI follows the data, not the wish list.
 
 ## 🗓️ Tomorrow's plan — one-by-one queue (locked 2026-05-14 PM)
 
