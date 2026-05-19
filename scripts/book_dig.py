@@ -17,23 +17,31 @@ import sys, re
 from pathlib import Path
 from pypdf import PdfReader
 
+# Canonical reference root (user-designated 2026-05-19): recurse ALL
+# sub-collections under /books/Trading. Supplementary roots retained so
+# earlier-cited books outside /Trading still resolve.
 BOOK_ROOTS = [
-    Path("/Users/bsannadi/Desktop/books/Trading/Options Trading"),
+    Path("/Users/bsannadi/Desktop/books/Trading"),                 # primary (recursive)
     Path("/Users/bsannadi/Desktop/books/Volatility and VIX Collection"),
     Path("/Users/bsannadi/Desktop/books/options"),
-    Path("/Users/bsannadi/Desktop/books/Trading/Day Trading"),
-    Path("/Users/bsannadi/Desktop/books/Trading/@Gurgavin ‘s  Bull and Bear Market Collection"),
-    Path("/Users/bsannadi/Desktop/books/Trading 2/@Gurgavin ‘s Risk Management Collection"),
+    Path("/Users/bsannadi/Desktop/books/Trading 2"),               # recursive
 ]
 CTX = 480   # chars of context around each hit
 
 
 def _all_pdfs() -> list[Path]:
+    """All PDFs across roots, RECURSIVE (sub-collections), de-duped by
+    filename (first occurrence wins), name-sorted."""
     out: list[Path] = []
+    seen: set[str] = set()
     for r in BOOK_ROOTS:
-        if r.is_dir():
-            out += sorted(r.glob("*.pdf"))
-    return out
+        if not r.is_dir():
+            continue
+        for p in sorted(r.rglob("*.pdf")):
+            if p.name.lower() not in seen:
+                seen.add(p.name.lower())
+                out.append(p)
+    return sorted(out, key=lambda x: x.name.lower())
 
 
 def find_book(frag: str) -> Path | None:
