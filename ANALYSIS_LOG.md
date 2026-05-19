@@ -870,3 +870,28 @@ PRE-SPECIFIED rule — universe filter "trade only names with ATR%
 (runner exit) on a holdout, ≥3-5bp. That single combined backtest
 (still $0, cached) is the decisive next experiment. Stay paper;
 GO_LIVE_CHECKLIST + cost-robust pass still required.
+
+---
+## 2026-05-19 — PRO-TRADER SYSTEM RATING (post-backtest, post-deep-read)
+Scorecard (weight·score): Edge/profitability 35%·2 · Risk-mgmt 20%·7 ·
+Backtest-rigor 15%·8.5 · Process-integrity 10%·9 · Infra/ops 10%·7.5 ·
+Execution 10%·5  →  **weighted ≈ 5.5/10**.
+
+**Verdict:** elite PROCESS, immature PRODUCT. No edge validated after
+realistic costs (S0 options PF 0.92; shares 1.09@3bp/0.82@5bp;
+spreads unresolved). System's top achievement = trustworthy NEGATIVE
+results + refusing to trade an unvalidated edge. A pro allocator: keep
+the researcher, don't fund the strategy yet.
+
+**KB cross-ref:**
+- ✅ ENFORCED — rating method itself applies KB §12 (validation ladder),
+  §11 (Trader's Equation: thin edge), §4 (Kelly/ruin re: 20%/day too
+  aggressive), §5 (cost hierarchy). The discipline the books prescribe
+  is the discipline the system scores highest on.
+- ⚠️ DRIFT (own, prior, corrected) — S3 over-claim already logged;
+  cited here as evidence the integrity control works.
+- ❓ no new GAP — rating is synthesis, not new behavior.
+
+**Only lever that moves Edge 2→up:** a strategy passing ≥3-5bp
+walk-forward OOS (H-REGIME + H-RUN + vol-filtered universe). Cosmetic
+/infra work does NOT move the dominant 35% category. Real-money: OFF.
