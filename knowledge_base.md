@@ -840,3 +840,17 @@ both are valid (KB §6 EMA Signal Alignment).
 | Cofnas no-go | Pure "gut" entries | System refuses — every entry must trace to rules |
 | Cofnas no-go | Data-release trades (NFP/CPI/FOMC) | Vetoed (overlaps with macro blackout TODO #5) |
 | Fontanills order rule | Never use Market orders on options | Always Limit (5–20% slippage risk on Market) |
+| Davey too-good rule | Backtest looks astonishing | Treat as a BUG/curve-fit signal, not a discovery — investigate before believing |
+| Davey validation ladder | Result tier | historical < out-of-sample < walk-forward < real-time(paper) — credibility rises down the ladder |
+| Davey optimization rule | Optimized on full data set | Invalid by construction — always hold out / walk-forward |
+
+---
+
+## 12. Backtest & Validation Discipline (Davey, *Building Winning Algorithmic Trading Systems*) — added 2026-05-19
+
+- **"If it is too good to be true, it probably is."** Future performance is *almost never* as good as historical; the *better* a system tests historically, the *less* likely it repeats. An astonishing backtest is a **red flag to investigate**, not a green light. (Mirrors our S3: PF 1.38 @1 bp collapsed to 0.97 @3 bp — the optimistic assumption *was* the "too good" tell.)
+- **The validation ladder (credibility rises at each rung):** historical backtest → out-of-sample → walk-forward → **real-time / paper (incubation)** → live. Never skip a rung; each kills survivors the prior one missed.
+- **Never optimize on the whole data set.** Optimizing and testing on the same data is invalid by construction. Hold out; walk-forward; gently optimize (few degrees of freedom).
+- **Cost/assumption sensitivity is mandatory, not optional.** A real edge survives pessimistic cost assumptions; an edge that only exists at optimistic costs is an artifact (this is *why* the ≥3 bp gate exists).
+- **Monte Carlo + incubation before capital.** Stress trade-order/equity-path randomness; then *incubate* (paper) the finalized, frozen system before any real money — paper trading is the "real-time" rung of the ladder, not a formality.
+- **Make discretionary rules statistically testable or discard them.** "Intuition" cannot be validated; only mechanical rules can. If it can't be backtested cost-aware and walk-forward, it doesn't go live.

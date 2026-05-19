@@ -789,3 +789,25 @@ specifics stay here, not in KB):
 - §11 NEW: **The Trader's Equation** (P(win)·reward > P(loss)·risk;
   edges thin; selectivity+size not frequency; runner not fixed target).
 Verdict: ❓ GAPs → now ✅ codified. KB and ANALYSIS_LOG consistent.
+
+---
+## 2026-05-19 — DEEP READ round 5: Davey (validation discipline) → KB §12
+Davey *Building Winning Algorithmic Trading Systems*:
+- p.57 "too good to be true… better it tests historically, less likely
+  it repeats" — exactly our S3 (1.38@1bp → 0.97@3bp). Validates the
+  ≥3bp cost gate and the trust-but-verify reflex.
+- p.61/63 validation ladder: historical < OOS < walk-forward <
+  real-time(paper/incubation) < live; never optimize on full data.
+
+**KB cross-ref / action:** ❓ GAP — KB had §7 mistakes but NO explicit
+backtest-validation methodology. Closed in SAME pass (as committed):
+new **KB §12 Backtest & Validation Discipline** + 3 rule-table rows.
+
+**Understanding updated (roadmap alignment):** Davey's ladder maps 1:1
+onto the phased capital roadmap — Phase-1 PAPER == Davey's
+"real-time/incubation" rung (the highest pre-capital tier), NOT a
+formality. This independently validates 3R: paper is a *validation
+rung*, the Phase-1→2 gate is the ladder (cost-robust walk-forward +
+incubation), never paper P&L. No contradiction; convergence holds
+(8 masters). Deep-read CLOSED — methodology was the last real gap;
+further reading now strictly diminishing. Remaining value = TESTING.
