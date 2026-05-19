@@ -731,3 +731,44 @@ Prioritized, cost-gated (≥3bp walk-forward) hypothesis queue:
   H-KELLY — fractional-Kelly sizing (Sinclair Ch8) for the $5K→$100K road.
 Sequence after the running 39-ticker robustness: H-REGIME + H-RUN first
 (cheap, highest expected uplift, both test likely flaws in MY design).
+
+---
+## 2026-05-19 — DEEP READ round 4: Sinclair Ch8 (Kelly) — ROADMAP IMPACT
+- p.149: Kelly fraction = peak of growth curve. **Betting >2× Kelly
+  turns the growth rate NEGATIVE** — a positive-edge strategy LOSES
+  money and tends to ruin purely from oversizing.
+- p.150: half-Kelly ≈ most of the growth at far lower volatility/DD
+  (standard practitioner choice).
+- p.151: Kelly applies to ALL distributions (not just binary).
+- p.109: discrete trading + commissions + bid/ask → effectively
+  infinite transaction cost in the BSM continuous limit (Nth cost
+  confirmation).
+
+**KB cross-ref:**
+- ❓ GAP — KB/code have NO bet-sizing math; flat $200. First-order per
+  Sinclair (sizing "dramatically affects returns").
+- ⚠️ ROADMAP CONFLICT (must surface) — user roadmap: "MAX risk on paper
+  to learn" + 20%/day loss tolerance. Sinclair's hard result: oversizing
+  above 2×Kelly converts a WINNING strategy into a losing one and courts
+  ruin. For any realistic edge (≤+0.6ATR, ~53% hit), full-Kelly is
+  small; 20%/day and "max risk" are almost certainly FAR above 2×Kelly.
+  → "max risk to learn" risks teaching the WRONG lesson: a sound method
+  can look like a failure purely from ruinous sizing. Position sizing is
+  determinative, not a detail.
+
+**Action (refines TODO 3R-B / H-KELLY):**
+- Phase-1 paper "max risk" must be reframed: learn MECHANICS at
+  controlled size; do NOT equate paper survival/ruin at max-risk with
+  edge presence/absence (sizing confound).
+- 3R-B numeric gate must include a Kelly-derived cap: live size ≤
+  fraction (≤ half-Kelly) of the BACKTESTED edge's Kelly; refuse live
+  if requested risk > 2×Kelly of the validated edge (hard block).
+- H-KELLY promoted: estimate Kelly from each passing strategy's
+  walk-forward stats; size at ≤½-Kelly; this is the bridge from $5K
+  trial to $100K (geometric growth, ruin-bounded), not a flat %.
+
+**Discipline note:** deep-read now firmly past diminishing returns
+(round 4, still converging, no contradictions). Continuing to mine 30+
+day-trading titles would itself violate the selectivity lesson. The
+library has given its verdict; remaining value is in TESTING + correct
+SIZING, not more pages.
