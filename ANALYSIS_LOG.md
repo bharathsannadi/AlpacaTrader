@@ -895,3 +895,32 @@ the researcher, don't fund the strategy yet.
 **Only lever that moves Edge 2→up:** a strategy passing ≥3-5bp
 walk-forward OOS (H-REGIME + H-RUN + vol-filtered universe). Cosmetic
 /infra work does NOT move the dominant 35% category. Real-money: OFF.
+
+---
+## 2026-05-19 — "How to improve Edge 2/10" — expectancy-decomposed plan
+Frame: Expectancy = P(win)·avgWin − P(loss)·avgLoss − costs. At ~53%
+win / ~1:1 payoff we sit microscopically −EV after 3-5bp. Need a
+modest REAL move in one term, not a miracle.
+
+**Tier 1 (extract from existing signal; queued; $0 cached; test as ONE
+combined backtest):**
+1. H-RUN runner exit → ↑avgWin (R 1.0→~1.8 ⇒ breakeven win 50%→36%).
+   Biggest lever; likely MY fixed-target design error. (KB §11 Brooks)
+2. H-REGIME trending-gate → ↑P(win) 53→~57%+. Uses the already-computed
+   but ignored chop label (H5 drift). (KB §8 Gunn)
+3. Vol-filtered universe (pre-specified ATR% ) → ↓cost%. (39-run finding,
+   KB §5)
+4. Lower frequency / confluence → ↓total cost. (KB §11)
+5. Shares on liquid high-ATR names → ↓cost (Sinclair §5; S0 0.92 vs 1.09)
+   Levers compound; threshold = +EV after 3-5bp OOS ⇒ Edge 2→5-6.
+
+**Tier 2 (iff Tier 1 fails the cost gate — honest, acceptable):** signal
+is the ceiling; ADD edge not tune: (a) genuine volatility edge / IVR
+(KB §4/§8 — makes options viable), (b) orthogonal-edge PORTFOLIO (2S
+thesis), (c) replace primary signal. Brooks: edges small & fleeting —
+don't expect the thin one to become large.
+
+**KB cross-ref:** ✅ ENFORCED — plan is a direct application of KB
+§4/§5/§8/§11/§12; no new GAP. Discipline: no lever counts pre cost-
+robust ≥3-5bp walk-forward; Kelly compounds only a PROVEN edge.
+Real-money OFF until Tier-1 combined backtest passes OOS.
