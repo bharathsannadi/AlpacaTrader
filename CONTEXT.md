@@ -47,6 +47,35 @@ User's target real-money setup — **all strategy decisions must respect these c
 | `MAX_DAILY_ENTRIES` | 8 | **2** | PDT cap enforced (3-per-5-day window). 2/day average works out to 10/week — far too many. Hard-cap at 2/day. |
 | `DAILY_PROFIT_LOCK_PCT` | 0.02 (2%) | **0.10 (10%)** | $500 profit lock to scale for higher daily variance |
 
+## 🪜 Phased capital roadmap (locked 2026-05-19, user directive)
+
+All trade/option strategising must serve this 3-phase progression. Each
+phase has an OBJECTIVE gate to the next — not vibes.
+
+| Phase | Capital | Risk posture | Purpose | Gate to advance |
+|---|---|---|---|---|
+| **1 — Paper (NOW)** | Paper $ | **MAX risk — intentionally aggressive** | LEARN: exercise the system hard, see gates fire, stress execution/UX, surface failure modes cheaply | A **cost-robust (≥3 bp) walk-forward backtest passes** AND a defined paper track record (see caveat) |
+| **2 — Live trial** | **Real $5,000** | Disciplined (the locked $5K profile above — NOT phase-1 max risk) | Validate the edge survives REAL fills/slippage/psychology at small stakes | **Profitable AND consistent** over a defined live-trial window (criteria below) |
+| **3 — Scale** | **+$100,000** | Scaled but disciplined | Real trading at size | — |
+
+**Honest caveats (must stay attached to this plan):**
+1. **"Max risk on paper to learn" is valid ONLY for learning system
+   mechanics** (gate behaviour, execution, UX, failure modes). Paper P&L
+   at max risk on a not-yet-cost-robust edge teaches *nothing about
+   edge* — it's noise amplified. Do NOT read paper profit as validation.
+2. **Phase-1→2 gate is the backtest, not paper P&L.** A strategy can be
+   green in paper and still be the fragile 3 bp-failing edge we already
+   found. The cost-robust backtest + GO_LIVE_CHECKLIST is the real gate
+   (this is the existing non-negotiable guardrail; this roadmap does not
+   loosen it).
+3. **Phase-1 max-risk profile must NOT silently carry into Phase 2.**
+   The $5K live trial uses the disciplined locked profile. Needs an
+   explicit paper-aggressive vs live-disciplined risk mode separation
+   (TODO 3R) so going live can't inherit paper recklessness.
+4. **"Profitable and consistent" must be defined numerically** before
+   Phase 2→3 (e.g. ≥N live-trial weeks, positive expectancy after real
+   costs, max-DD within tolerance) — TODO 3R captures this.
+
 ### ⚠️ Sizing reality at $5K (discovered building item 3, 2026-05-15)
 
 With the **default 50% stop**, an option's risk/contract = `mid × 0.50 × 100`.

@@ -45,6 +45,25 @@ options route is real and wanted, but it earns its way on with a *correct*
 backtest — we do NOT enable it on hope or rebuild the structure the data
 already buried. Trust-but-verify applies per route.
 
+### 🆕 3R — Phased capital roadmap support (added 2026-05-19, user directive)
+
+Roadmap locked in [CONTEXT.md](CONTEXT.md) "Phased capital roadmap":
+Phase 1 paper@max-risk (learn) → Phase 2 live trial $5K (disciplined) →
+Phase 3 +$100K (profitable & consistent). Strategising of trades/options
+must serve this progression.
+
+| Sub | Item | Status |
+|---|---|---|
+| **3R-A** | Explicit **risk-mode separation**: `paper-aggressive` vs `live-disciplined` profiles, so Phase-1 max risk CANNOT silently inherit into Phase-2 live $5K. Live mode forces the locked disciplined profile regardless of paper settings. | ⬜ TODO |
+| **3R-B** | Define **numeric Phase-1→2 and Phase-2→3 criteria** (e.g. cost-robust ≥3bp backtest PF threshold; live-trial: ≥N weeks, positive expectancy after real costs, max-DD ≤ X%). Wire into GO_LIVE_CHECKLIST as hard checks, not prose. | ⬜ TODO |
+| **3R-C** | Paper-mode **learning instrumentation**: since paper P&L ≠ edge proof, capture what paper IS for — gate-fire stats, execution/slippage realism, failure-mode log — so Phase 1 produces *learning*, not a vanity equity curve. | ⬜ TODO |
+| **3R-D** | Strategy notebook: per backtest/finding, record the trade/option strategy implication for the roadmap (which phase it gates, what it changes). Keep alongside ANALYSIS_LOG. | ⬜ ongoing |
+
+**Discipline note (non-negotiable):** the Phase-1→2 gate is the
+cost-robust backtest + GO_LIVE_CHECKLIST, NOT paper profit. Paper@max-risk
+is for learning mechanics; it amplifies noise, not edge. This roadmap does
+NOT loosen the existing hard guardrail — it sequences within it.
+
 ---
 
 ## 🎯 STRATEGY STATUS (2026-05-19, CORRECTED): NEITHER ROUTE COST-ROBUST YET. S3 SHARES REFUTED.
