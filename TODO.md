@@ -926,8 +926,8 @@ The following numbered TODO items were already implemented in the codebase befor
 User cancelling Polygon; permanent Desktop cache = the backup ($0 re-run forever).
 | Sub | Item | Status |
 |---|---|---|
-| BK-A | S&P 500 (503) 3yr 5-min STOCK bars → cache (`pull_sp500.py`, `sp500.json` authoritative) | 🔄 RUNNING (bg PID 5853) |
-| BK-B | Bounded OPTIONS backup: `backtest_structures.py ALL` (39-ticker universe) — caches naked 7-14d/25-45d + spread short-leg OHLC. Sequenced AFTER BK-A (rate-limit safety) | ⬜ queued |
+| BK-A | S&P 500 (503) 3yr 5-min STOCK bars → cache | ✅ DONE 2026-05-19: 503/503 OK, 0 FAIL, 11 PARTIAL (recent spinoffs/rebrands = max-available history, not errors). Cache 4.2GB/32190 files |
+| BK-B | Bounded OPTIONS backup: `backtest_structures.py ALL` (39-ticker) caches naked 7-14d/25-45d + spread short-leg OHLC | 🔄 RUNNING (auto-launched post BK-A) |
 | BK-C | Verify SUMMARY (OK/partial/fail) for BOTH, report → user cancels only then. Cancellation = irreversible; gaps unrecoverable | ⬜ gate |
 
 **Honest scope note:** a full S&P-500 option archive is infeasible (millions of
