@@ -86,6 +86,27 @@ cost-robust backtest + GO_LIVE_CHECKLIST, NOT paper profit. Paper@max-risk
 is for learning mechanics; it amplifies noise, not edge. This roadmap does
 NOT loosen the existing hard guardrail — it sequences within it.
 
+#### 3R — CODE-UPDATE breakdown (added 2026-05-19, user: "add them as todo for code update")
+Convert 3R-A/B/C from design intent to concrete implementation tasks.
+Transfers across Path A (frame-shift) and Path B (stop) — work is $0,
+not strategy-dependent.
+
+| Code task | File / function | Acceptance criterion |
+|---|---|---|
+| **3R-A.1** `RISK_MODE` constant + `_is_live()` helper | `spy_auto_trader.py` (~L100 risk consts) | `RISK_MODE in {"paper_aggressive","live_disciplined"}`; default = `paper_aggressive` |
+| **3R-A.2** Mode-aware risk getters | `eff_max_risk_pct()`, `eff_daily_loss_limit()`, `eff_max_portfolio_risk()` | live mode FORCES disciplined profile (4%/20%/20% sub-10K) regardless of UI overrides; paper mode honors overrides up to a paper-aggressive cap |
+| **3R-A.3** Hard mode-switch gate at live login | `init_clients()` in `app.py` | switching paper→live REFUSES if paper risk overrides exceed disciplined ceiling; user must explicitly re-confirm |
+| **3R-A.4** UI badge | `index.html` + `main.js` | persistent "PAPER (max-risk)" / "LIVE (disciplined)" badge — no ambiguity in screenshots |
+| **3R-B.1** Kelly estimator from backtest stats | new `kelly.py` | given (win%, avg_win, avg_loss) → full-Kelly fraction; ½-Kelly default; clamp 0.005 floor / 0.05 ceiling |
+| **3R-B.2** GO_LIVE_CHECKLIST numeric gates (hard) | `check_go_live_readiness()` + `GO_LIVE_CHECKLIST.md` | NEW checks: (a) ≥1 strategy with ≥3bp walk-forward PF ≥1.10; (b) requested live size ≤ ½-Kelly of THAT strategy; (c) ≥N paper-mechanics weeks (N=4) with required event coverage; live REFUSED if any fails |
+| **3R-B.3** Phase-progression log | `~/.spy_trader/phase_log.json` | append-only record of each phase advance with the metrics that justified it (audit trail) |
+| **3R-C.1** Mechanics-vs-edge separation in EOD review | `eod_review()` | split into "MECHANICS scorecard" (gate fires, fill slippage vs modeled, watchdog events, reconcile drift) and "EDGE scorecard" (P&L) — explicit labels so paper P&L is never confused with edge |
+| **3R-C.2** Realised-vs-modeled slippage tracker | extend `slippage_history.json` | per fill: (modeled_bp, realised_bp, delta); rolling 30-fill delta with alert if >2× modeled |
+| **3R-C.3** Gate-fire telemetry | new `gate_stats.json` | per session: counts of (signals fired, signals suppressed by each gate, signals taken). Surface in EOD as "what the gates actually did today" |
+| **3R-C.4** Failure-mode log | `~/.spy_trader/failure_log.json` | append-only crash/retry/desync events with replay window — what paper IS legitimately for |
+
+**Sequence:** 3R-A.1→A.2→A.3→A.4 (one PR, mode plumbing) → 3R-B.1→B.2→B.3 (Kelly + hard gate) → 3R-C.1→C.4 (instrumentation). All gated by GO_LIVE_CHECKLIST remaining HARD; no behavior change to validated trading (we have none). Hours: A ~3, B ~4, C ~3. Total ~10h, all $0, all transfers across A/B.
+
 ---
 
 ## 🎯 STRATEGY STATUS (2026-05-19, CORRECTED): NEITHER ROUTE COST-ROBUST YET. S3 SHARES REFUTED.
