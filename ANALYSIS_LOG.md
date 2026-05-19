@@ -1096,3 +1096,58 @@ runner exit. Real-money: HARD NO. Path forward = Tier-2 orthogonal edge
 (Connors mean-reversion, queued) OR accept the signal as research, not
 a strategy. Either is a respectable, disciplined outcome — this IS the
 validation system doing its job at $0 instead of $5K-100K.
+
+---
+## 2026-05-19 — STRATEGIC SYNTHESIS: "what do we need to find an edge?"
+After Tier-1 fail + 300+ books + 8-master convergence + Polygon Pro on 503
+symbols. User's hard question; honest pro-trader answer.
+
+**Diagnosis (not motivational):** We are searching the SINGLE hardest
+corner of the trading universe — 5-min intraday directional / mean-rev
+on retail-cost shares / naked options / OHLC-only data. HFTs/market-
+makers compete most fiercely here; spreads are largest fraction of P&L;
+edges decay fastest. Both literature (Brooks §11, Sinclair §5) and our
+own backtests point at the same wall. **Adding more INPUTS of the same
+kind will not move it.** The frame is the bottleneck, not the inputs.
+
+**What is genuinely missing (priority order, NOT "more of"):**
+- Tier A — frame shifts (real EV):
+  · slower timeframe (daily/multi-day; slippage fixed per trade)
+  · structurally-different signal family — overnight/intraday return
+    decomposition, PEAD, VIX term-structure, cross-sectional momentum,
+    pairs/stat-arb (none tested)
+  · options STRUCTURAL edge: variance risk premium / short-vol
+    (Sinclair Ch10) — we dismissed options after testing only ONE
+    structure (directional naked). Unfair to options.
+- Tier B — data we don't have: dealer positioning / GEX; real L2/order
+  book; earnings/event feeds.
+- Tier C — lower-friction broker (IBKR Pro / Tradier) → can move 3bp
+  gate toward 1bp; same edge, different verdict.
+- Tier D — engineering: daily-bar harness; walk-forward ML pipeline
+  (only AFTER Tier A — curve-fit prone).
+
+**What is NOT missing:** books (convergence reached), 5-min OHLC (we
+have 3yr × 503), validation discipline (pro-grade), refinement of
+vwap_momentum (Tier-1 just exhausted it).
+
+**KB cross-ref:**
+- ✅ ENFORCED — §11 Brooks "edges small/fleeting; market won't allow
+  big persistent one" + §5 cost hierarchy + §12 Davey too-good-to-be-
+  true. Our wall = exactly what KB predicts for this frame.
+- ❓ no new GAP — frame-shift is direction change, not new principle.
+
+**Three-path fork (this is the real decision, not "another backtest"):**
+- A. **Frame shift:** pick ONE Tier-A item (slowest timeframe + an
+  academic-edge family, e.g., PEAD or variance premium). Genuine new
+  build; current intraday infra mostly doesn't transfer. Targeted at
+  where edge plausibly lives.
+- B. **Stop.** Accept project as rigorous research + apparatus that
+  produced a defensible negative. Don't deploy real money. Professional
+  outcome, not failure.
+- C. **Wait Connors** (running). One last evidence point inside the
+  CURRENT frame. Low base rate of clearing the gate; real possibility.
+
+**Pro recommendation:** wait Connors → pick A or B based on result +
+appetite for frame shift. Do NOT pay $199/mo Polygon Advanced, license
+dealer-positioning data, or buy another book before the frame question
+is settled. Inputs ≠ edge in our current frame.
