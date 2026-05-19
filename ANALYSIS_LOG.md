@@ -1012,3 +1012,31 @@ selectivity/trust-but-verify discipline.
 convergence (rounds 5-9 mostly no-op; only Davey/Covel/Connors-Raschke
 were genuine adds). Remaining value = TESTING (H-REGIME/H-RUN/
 vol-universe), not more reading.
+
+---
+## 2026-05-19 — EXTERNAL PROJECT ANALYSIS: zubair-trabzada/ai-trading-claude
+Set up ~/Desktop/External_Projects/ (AlpacaTrader_copy = 58M source copy,
+venv/cache excluded; cloned the repo read-only — third-party code NOT
+executed). Full writeup: External_Projects/ANALYSIS_ai-trading-claude.md.
+
+**What it is:** Claude Code skill pack (16 skills / 5 parallel agents) →
+composite Trade Score 0-100 + PDF report. By its README: no bot, no
+execution, no brokerage, no data subs, NO backtest. LLM-knowledge
+discretionary research assistant.
+
+**KB cross-ref:**
+- ⚠️ DRIFT vs KB §12 (validation ladder) — a 0-100 score never tested
+  vs forward returns / costs / walk-forward = narrative, not edge.
+  Bottom rung of the ladder. On our Edge standard ≈1/10. It is the
+  *polished version of the exact trap* our discipline exists to prevent.
+- ✅ useful (advisory only) — clean 5-agent parallel decomposition +
+  report UX is better-factored than our monolithic debate gate, AS AN
+  ADVISORY layer.
+
+**Verdict:** borrow its agentic decomposition + report UX for our
+ADVISORY layer only; it contributes nothing to the Edge question and
+must never gate execution (KB §12). We solve a strictly harder problem
+(edge survival after real costs) it doesn't attempt. No KB change —
+no new durable principle, just an architecture pattern noted for the
+advisory layer (folds into 2S-F if/when there's a validated strategy
+to advise on).
