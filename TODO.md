@@ -934,3 +934,21 @@ User cancelling Polygon; permanent Desktop cache = the backup ($0 re-run forever
 contracts / hundreds of GB / weeks). Bounded backup = only the contracts our
 backtests probe. Post-cancel: those exact backtests run $0; NEW option
 strikes/dates/symbols not pre-run are unrecoverable.
+
+### 🆕 UI-DRIFT — Advisory verdict numbers stale vs authoritative record (2026-05-19)
+
+- **Where:** `scripts/app.py` `_SYMBOL_VERDICT` (~L129) + `_signal_verdict`
+  tooltip text ("measured 3yr track record", "PROVEN LOSER: PF 0.74").
+- **Issue:** hardcoded per-symbol PFs are a FROZEN early-backtest snapshot,
+  not traceable to current ANALYSIS_LOG. "measured 3yr track record"
+  overstates precision (S3 showed 1bp↔3bp flips the verdict).
+- **Severity:** LOW — message ("backtested loser, don't override") is still
+  substantively correct & errs toward "don't trade" (safe). Not dangerous,
+  but inconsistent with the authoritative record.
+- **Fix (deferred, deliberate):** do NOT hot-patch numbers now — they're
+  still moving (H-REGIME/H-RUN, backups in flight). Reconcile as part of
+  2S-F (dual-engine UI) once a strategy passes the cost-robust gate:
+  drive advisory badges from a single authoritative source (ANALYSIS_LOG /
+  a results JSON), and soften copy to "superseded snapshot — no validated
+  edge; advisory only, not advice."
+- **Interim:** acceptable as-is (paper-only, discouraging-direction).
