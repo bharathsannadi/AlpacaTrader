@@ -811,3 +811,28 @@ rung*, the Phase-1→2 gate is the ladder (cost-robust walk-forward +
 incubation), never paper P&L. No contradiction; convergence holds
 (8 masters). Deep-read CLOSED — methodology was the last real gap;
 further reading now strictly diminishing. Remaining value = TESTING.
+
+---
+## 2026-05-19 — DEEP READ round 6: "Risk Management Collection" → NO-OP
+Path: ~/Desktop/books/Trading 2/@Gurgavin's Risk Management Collection.
+Triaged 10 files; targeted-dug the 3 plausibly-relevant.
+
+**Finding: NOT applicable to a retail intraday options/stock system.**
+- Advanced/Quantitative/Fundamentals/IT Risk Mgmt = credit, interest-
+  rate, enterprise, IT risk — out of domain.
+- Stock Market Math = taxes / P/E / fundamental selection — out of scope.
+- Little Book of Sideways Markets = secular value investing (multi-year,
+  P/E, dividends) — wrong timeframe & philosophy, NOT intraday regime.
+- Mastering the Stock Market / Moving Averages 101 / 7 Chart Patterns =
+  generic TA already covered by Brooks §11 / KB.
+
+**KB cross-ref:** no ❓ GAP. Every risk-relevant principle is already
+better covered by Sinclair→§4 (Kelly/ruin), Davey→§12 (validation),
+Brooks→§11 (Trader's Equation). **KB intentionally NOT updated** —
+padding it with nothing-new would violate the very selectivity /
+trust-but-verify discipline the corpus teaches.
+
+**Verdict:** clean negative, recorded per convention. Deep-read remains
+CLOSED (convergence across 8 applicable masters; 6th round confirms
+diminishing/zero returns). Remaining value = TESTING (H-REGIME/H-RUN),
+not more reading.
