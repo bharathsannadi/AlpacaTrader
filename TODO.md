@@ -952,3 +952,22 @@ strikes/dates/symbols not pre-run are unrecoverable.
   a results JSON), and soften copy to "superseded snapshot — no validated
   edge; advisory only, not advice."
 - **Interim:** acceptable as-is (paper-only, discouraging-direction).
+
+### 🆕 ADV-ARCH — Advisory-layer architecture (learned from ext. repo, 2026-05-19)
+
+Source: analysis of `zubair-trabzada/ai-trading-claude`
+(External_Projects/ANALYSIS_ai-trading-claude.md; ANALYSIS_LOG 2026-05-19).
+The repo itself = no edge (KB §12 trap), but its ADVISORY architecture is
+better-factored than our monolithic debate gate. Folds into **2S-F**.
+
+| Sub | Item | Status |
+|---|---|---|
+| ADV-1 | Refactor advisory layer into modular **parallel sub-agents** (technical · risk · sentiment · thesis) → one structured, inspectable composite — replaces the single debate-gate prompt | ⬜ TODO (do with 2S-F) |
+| ADV-2 | Decision-support **report UX** (per-signal thesis/why-not card; compare; watchlist view) — nicer surface for the advisory markers we already ship | ⬜ TODO (low pri, post-edge) |
+
+**HARD GUARDRAIL (non-negotiable):** advisory/UX ONLY. A composite/LLM
+score is the SAME epistemic status as our advisory markers — decision
+support for the human, NOT validated edge. It must NEVER gate an
+execution path and does NOT move the Edge score (only a cost-robust
+≥3-5bp walk-forward does). Build only AFTER a strategy passes that gate
+(else it's the ai-trading-claude trap with our logo on it).
