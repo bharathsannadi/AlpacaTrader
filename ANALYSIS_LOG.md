@@ -985,3 +985,30 @@ Edge plan now has a named, literature-grounded starting point, NOT just
 "find orthogonal alpha". Still gated: must pass its OWN ≥3-5bp
 walk-forward before it joins the portfolio. Deep-read otherwise at
 convergence; this is a genuine Tier-2 addition, not redundant.
+
+---
+## 2026-05-19 — DEEP READ round 9: expanded library (297 PDFs) → NO-OP
+Library consolidated under ~/Desktop/books (297 PDFs, 272 indexed
+deduped). book_dig roots fixed to the single consolidated root (3 prior
+roots no longer exist post-reorg).
+
+**Triage of NEW collections vs open needs (Tier-2 alpha / sizing /
+regime / cost):**
+- Futures&Forex, Hedge Fund x2, Bull/Bear-2, Long-Term/Bonds/Fundamental
+  = out-of-domain for an intraday equity/options system.
+- No Vince/Tharp/stat-arb/pairs text present (would've been prime
+  sizing/Tier-2 adds) — absent.
+- Minervini *Trade Like a Stock Market Wizard* (only marginal hit):
+  growth-stock POSITION investing (SEPA, fundamentals, 200-day trend
+  template). Transferable nugget (trade only with primary trend /
+  relative-strength universe) ALREADY covered by Gunn §8 + Connors §8 +
+  vol-universe finding.
+
+**KB cross-ref:** no ❓ GAP. KB intentionally NOT updated — nothing
+durable that isn't already codified. Padding would violate the
+selectivity/trust-but-verify discipline.
+
+**Verdict:** more books ≠ more edge. Deep-read remains CLOSED at
+convergence (rounds 5-9 mostly no-op; only Davey/Covel/Connors-Raschke
+were genuine adds). Remaining value = TESTING (H-REGIME/H-RUN/
+vol-universe), not more reading.
