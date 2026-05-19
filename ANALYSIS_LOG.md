@@ -686,3 +686,48 @@ hypotheses:
 - H-KELLY: fractional-Kelly sizing vs flat $200 — measure return &
   risk-of-ruin impact (Sinclair Ch8) under the phased roadmap.
 All gated by their own ≥3bp cost-robust walk-forward. No exceptions.
+
+---
+## 2026-05-19 — DEEP READ round 3: Gunn (Regime) + VSA. CONVERGENCE.
+- Gunn *Trading Regime Analysis* p.22-24: "There is NO holy grail";
+  edge = identifying TRENDING vs RANGING regime & only running the
+  directional strategy when the regime favors it. p.24 verbatim: trend
+  strategy "loses heavily" in non-trend, "wins superbly" in trend — net
+  depends on regime mix. → our 52-56% aggregate is almost certainly
+  STRONG-on-trend + NEGATIVE-on-chop blended to mush.
+- VSA (Holmes companion): act with Smart Money; "no demand" (up bar /
+  low vol) = no institutional backing → don't follow. Selectivity by
+  institutional-volume confirmation.
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB already has a chop filter + VSA concepts. Books
+  validate the KB design.
+- ⚠️ DRIFT escalated (textbook-confirmed, first-order now):
+  · H5 — live computes a regime/chop label but NEVER acts on it. Gunn
+    makes regime-gating THE lever for a trend strategy, not optional.
+  · H4 — VSA is LLM-prompt-only, not deterministic code. VSA validates
+    it must be a hard gate.
+- ❓ none new.
+
+**Convergence reached (6 masters → one prescription):**
+Natenberg+Sinclair (need a vol edge; option costs >> stock) · Saliba
+(vertical debit = the moderate-directional structure) · Brooks
+(selectivity + reward≥risk + runner + size, Trader's Equation) · Gunn
+(regime-gate the directional strategy) · VSA (institutional-volume
+confirmation). They do not diverge — they all say the SAME thing:
+a thin directional edge is monetized by SELECTIVITY (regime + volume),
+correct STRUCTURE (spread / low-cost shares), RUNNER exit, and SIZING —
+not more trades, signals, or instruments.
+
+**Decision:** deep-read has hit diminishing returns (strong convergence,
+no contradiction). Further reading is now lower-value than TESTING.
+Prioritized, cost-gated (≥3bp walk-forward) hypothesis queue:
+  H-REGIME (NEW, top) — gate vwap_momentum on trending regime (ADX /
+     BB-width / existing chop label). $0 cached. Likely biggest uplift.
+  H-RUN — runner exit vs fixed 1.5ATR target (Brooks p.85). $0 cached.
+  H-SEL/H-VSA — deterministic institutional-volume gate.
+  H-SPR — fixed spread harness + vertical debit (Saliba).
+  H-VOL — options route gated on a real vol edge (Natenberg/Sinclair).
+  H-KELLY — fractional-Kelly sizing (Sinclair Ch8) for the $5K→$100K road.
+Sequence after the running 39-ticker robustness: H-REGIME + H-RUN first
+(cheap, highest expected uplift, both test likely flaws in MY design).
