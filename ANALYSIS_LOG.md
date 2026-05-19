@@ -600,3 +600,46 @@ cherry-pick NVDA+AMZN (small-sample survivorship = the SPY-fluke trap).
 2S dual-instrument build + 1S 39-ticker pull are PREMATURE until a
 cost-robust expression exists. Next test is cheap ($0 cached): does a
 selective / wider-stop / lower-frequency variant clear 3-5bp?
+
+---
+## 2026-05-19 — DEEP BOOK READ (problem-targeted: thin edge dies after costs)
+Tooling: scripts/book_dig.py (pypdf, surgical passage extraction — NOT a
+re-summary; 3 scanned books Natenberg-1994/Hull/Passarelli need OCR).
+
+**Sources & verbatim findings:**
+- Natenberg *Option Vol & Pricing* p.71/72/97/107: profit needs a positive
+  THEORETICAL edge; for options that edge must be a VOLATILITY edge, not
+  direction alone ("unlike directional strategies… there is no current
+  volatility"). → thin directional view as long premium = paying embedded
+  theta/vega for priced-in movement.
+- Saliba *Option Spread Strategies* p.39: "Vertical spreads are
+  DIRECTIONAL strategies… to capture MODERATE underlying moves… limited
+  risk… when implied [vol elevated]"; p.5 warns transaction costs
+  "significant, especially in option strategies".
+- Brooks *Price Action Trends* p.26 Trader's Equation P(win)·reward >
+  P(loss)·risk; p.17 edges small/fleeting; p.36 best trades + reward≥risk
+  + INCREASE SIZE not frequency; p.85 winners run 4R+, partial+breakeven+
+  let remainder run.
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §5 (IVR→spread decision) & §Signal-Quality (2-of-3) &
+  §3 (partial/breakeven) already encode these. Books validate KB.
+- ❓ GAP (quantified, new) — KB states the rules; it does NOT state that
+  OUR specific edge (52-56% / +0.6ATR) is, in Trader's-Equation terms,
+  "barely favorable" and therefore (a) MUST be a spread not naked
+  (Natenberg+Saliba), (b) MUST use a runner exit not a fixed 1.5ATR cap
+  (Brooks p.85 — our current exit is the flaw), (c) is lifted by
+  SELECTIVITY+SIZE not more trades (Brooks p.36). This quantitative
+  application is the new learning.
+
+**Verdict / converges with backtests:** the literature independently
+prescribes EXACTLY the three levers our data pointed to. Not a new
+direction — a textbook-grounded confirmation. Actionable, testable:
+- H-RUN: replace fixed 1.5ATR target with partial@~1ATR + breakeven +
+  ATR-trail runner (Brooks p.85). Re-test shares @3-5bp. (My exit design
+  was likely the flaw, not purely the signal — must verify.)
+- H-SEL: selectivity gate (≥2-of-3 confluence + institutional-volume) →
+  fewer, higher-P(win) trades. Test edge clears costs.
+- H-SPR: fix S2 spread harness (2S-B) → test VERTICAL DEBIT SPREAD =
+  Saliba's prescribed structure for moderate-directional+limited-risk.
+None ships without its own cost-robust ≥3bp walk-forward pass.
