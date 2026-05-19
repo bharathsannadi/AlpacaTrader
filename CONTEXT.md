@@ -7,6 +7,7 @@ Quick-resume doc for Claude (and humans). Keep it current. Read this first; deep
 ## 🧭 The 30-second handoff
 
 - **Project:** SPY Auto Trader — Flask + SocketIO options day-trading bot. Paper mode.
+- **⚠️ Strategy state (2026-05-19):** NO validated edge. Options strategy disproven (backtest); shares over-claim corrected & refuted @realistic cost; building the **2S dual-instrument** framework + **3R phased roadmap** as PAPER-ONLY scaffolding. Read "Last session" + ANALYSIS_LOG before any strategy work. Do NOT treat the framework build as edge validation.
 - **Working directory:** `/Users/bsannadi/Desktop/AlpacaTrader`
 - **Preferred launch:** `open "/Applications/SPY Auto Trader.app"` (native macOS app — gradient bar-chart icon)
 - **CLI fallback:** `nohup /Users/bsannadi/Desktop/AlpacaTrader/venv/bin/python3.11 /Users/bsannadi/Desktop/AlpacaTrader/scripts/app.py > /dev/null 2>&1 &` → http://localhost:5000
@@ -111,43 +112,73 @@ These are the constraints we'll design tomorrow's backtest and risk-gate work ar
 
 ---
 
-## 📌 Last session: 2026-05-14
+## 📌 Last session: 2026-05-19 (strategy-research arc)
 
-### What we shipped
+> Earlier infra work (position persistence, two-way Alpaca reconcile, tab UI,
+> macOS .app, scheduler retry, KB 10→28 books) shipped 2026-05-14 — see git
+> history. This session was the **strategy verdict + research** arc:
 
-1. **Position persistence + two-way Alpaca reconcile** — `_open_positions` now persists to `~/.spy_trader/open_positions.json` (atomic tmp+rename) on every mutation. On restart `reconcile_positions()` does a two-way sync: adds Alpaca positions missing locally AND removes local positions Alpaca no longer holds (kills the "position not found" error spam). Detection by OCC regex (not asset_class) so NVDA/non-SPY options are picked up.
-2. **Sync Positions button** — manual on-demand reconcile from the Settings tab (`⟳ Sync Positions`). No app restart needed.
-3. **UI redesign** — tab-based layout:
-   - **⚙ Settings** (first tab, default on load): all config/automation/freshness/session/positions cards in a responsive CSS grid (auto-fill 300px columns, each card has native vertical resize)
-   - **SPY / AMZN / GOOG / MSFT / NVDA / META**: full-screen chart, nothing else visible
-   - **📊 Backtest**: full-screen backtest panel
-   - **📋 Log**: full-screen `auto_trader.log` terminal
-4. **Log file renamed** `spy_trader.log` → `auto_trader.log` across all files (handler, launcher, UI label).
-5. **macOS .app icon** — gradient bar chart (purple/pink, matches design ref). Saved as `AppIcon.icns` + `AppIcon.svg`. Installed to `/Applications/SPY Auto Trader.app`. Favicon for browser too.
-6. **Default state changes** — `DRY_RUN=False`, `auto_trade=True`, `debate_enabled=True` set as defaults at app boot (paper mode is the safety; DRY_RUN was redundant).
-7. **Risk-cap session start fix** — `_launch_session` no longer refuses to start a symbol when portfolio risk ≥ MAX_PORTFOLIO_RISK. The cap is still enforced per-entry inside the session. This unblocked MSFT/NVDA/META from starting when NVDA's existing position pushed the account to 5.2%.
-8. **Scheduler retries missing sessions** — scheduler used to fire once per day; now it relaunches any symbol that isn't running on every poll during market hours. Transient blocks (news veto, risk cap) recover automatically.
-9. **`refresh_prices` split** — fast path (active symbol only) for login + UI handlers, full path (all 6 symbols) on the background `price_ticker` thread every 3rd tick. Login no longer hangs on yfinance latency.
-10. **Singleton Anthropic client** — `get_anthropic_client()` in `debate.py` caches a single `anthropic.Anthropic()` instance. Fixes "Too many open files" from per-call instantiation.
-11. **Knowledge base expanded 10 → 28 books** — VSA, Brooks price action, Sinclair/Hull vol, Fontanills discipline rules wired into debate prompts.
+1. **Backtest harness built & run on REAL paid Polygon 3yr data** —
+   `polygon_data.py`, `backtest_v2.py`, `backtest_structures.py`,
+   `backtest_shares_robust.py`, `signal_diagnostic.py`. $108 data spend
+   bought a definitive answer.
+2. **THE verdict:** the automated **options** strategy has **no edge**
+   (S0 naked PF 0.92, net-negative). `vwap_momentum` has a *real but small*
+   directional edge on the **underlying** (signal_diagnostic: ~52-56% hit,
+   +0.6 ATR/60min) — too thin to survive theta (options) OR slippage
+   (shares) at current frequency.
+3. **S3 shares over-claim CORRECTED (own error):** "shares PF 1.38 / +$70k"
+   was a 1bp-slippage artifact; @3bp realistic PF 0.97. S3 **refuted**.
+   `backtest_shares_robust.py` cost-gate caught it pre-build.
+4. **Architecture set (user directive):** **2S** dual-instrument
+   portfolio-of-strategies (shared signal core → instrument router →
+   shared risk brain; each strategy earns its slot via its OWN ≥3bp
+   walk-forward). **3R** phased capital roadmap (paper@learn → $5K live
+   trial → +$100K). Hard guardrail: paper-only, every route gated by
+   GO_LIVE_CHECKLIST + cost-robust backtest. Build ≠ validated.
+5. **PDT self-enforcement disabled** — `PDT_RULE_ENABLED=False` operator
+   switch (rule eliminated mid-2026 per operator); daily-entry cap → 8.
+6. **Chart tab-switch latency fixed** — TTL 8→60s + background prewarm.
+7. **Deep book-read (problem-targeted):** `book_dig.py`; 8 masters
+   converged → KB updated §4 (Kelly/ruin·Sinclair), §5 (transaction-cost
+   hierarchy), §8 (Sinclair+Gunn), §11 (Trader's Equation·Brooks),
+   §12 NEW (validation discipline·Davey). Risk-Mgmt collection = no-op
+   (out of domain, honest negative logged).
+8. **39-ticker universe** pulled & cached (`universe.py`,
+   `pull_universe.py`; 39/39 OK, CRWV/ARM partial).
 
 ### Pending decisions / next steps
 
-- [ ] Expose `MAX_PORTFOLIO_RISK` as a Settings stepper (filed as TODO #4b)
-- [ ] Pick top P1 items: #6 Friday/expiry-week gamma, #7 correlation-adjusted delta cap, #5 macro event blackout
-- [ ] Score recent NVDA bull entries against debate-suppressed signals — is the gate actually adding edge?
-- [ ] Decide on real-money vs continued paper (TODO 🎯-P3 readiness gates)
+- [ ] **(IN FLIGHT)** 39-ticker shares-robustness run — report verdict
+- [ ] Then execute **H-REGIME** (gate vwap_momentum to trending regime,
+      Gunn) + **H-RUN** (runner exit vs fixed target, Brooks) — both
+      $0 on cached data, both test likely flaws in prior design
+- [ ] 2S sequence: 2S-B fix spread harness → 2S-C clean vertical-debit
+      backtest → 2S-D router policy → 2S-E execution refactor
+- [ ] 3R: risk-mode separation (3R-A), numeric phase gates incl. Kelly
+      cap into GO_LIVE_CHECKLIST (3R-B)
+- [ ] ARCHITECTURE.md is STALE re: dual-instrument 2S (folds into 2S-E)
 
 ---
 
 ## 🟢 What's running right now (verify before assuming)
 
-- **Launch path:** macOS app bundle at `/Applications/SPY Auto Trader.app` → spawns Flask via `desktop.py` (or run `scripts/app.py` directly)
-- **Log file:** `auto_trader.log` (main, file handler via RotatingFileHandler 10 MB × 5) + `errors.log` (ERROR-only) + `security.log`
-- **Position state:** `~/.spy_trader/open_positions.json` — persisted on every mutation, loaded before reconcile
-- **Defaults:** `DRY_RUN=False`, `auto_trade=True`, `debate_enabled=True`, `news_filter_enabled=True`, `trade_memory_enabled=True`
-- **Verify with:** `lsof -ti :5000` (process), `curl -s http://localhost:5000/health` (HTTP), `cat ~/.spy_trader/open_positions.json | jq .` (positions)
-- **Open positions (as of last check):** 2 NVDA calls — `NVDA260522C00232500` 2x @ $9.97, `NVDA260522C00235000` 4x @ $8.98 — total ~5.2% deployed risk
+- **Strategy state:** NO validated edge yet. Options route disproven;
+  shares route refuted @realistic cost; spreads unresolved. Hypotheses
+  H-REGIME/H-RUN/H-VSA/H-SPR/H-VOL/H-KELLY queued, all ≥3bp-gated.
+- **Background job:** 39-ticker `backtest_shares_robust.py ALL` run
+  (cached Polygon, $0). Check `/tmp/bsr39.log` for `Report →`.
+- **Launch path:** macOS app at `/Applications/SPY Auto Trader.app` → Flask
+  via `desktop.py` (or `scripts/app.py` directly)
+- **Log file:** `auto_trader.log` (RotatingFileHandler 10 MB × 5) +
+  `errors.log` + `security.log`
+- **Defaults:** `DRY_RUN=False`, `auto_trade=True`, `debate_enabled=True`,
+  `PDT_RULE_ENABLED=False` (operator-disabled 2026-05-19)
+- **Verify with:** `lsof -ti :5000`, `curl -s http://localhost:5000/health`,
+  `cat ~/.spy_trader/open_positions.json | jq .`
+- **Polygon cache:** `~/Desktop/AlpacaTrader_Data/polygon_cache` (~760 MB,
+  39 symbols stock bars + sampled option OHLC; $0 to re-run backtests)
+- **Open positions:** verify live (the 2026-05-14 NVDA snapshot is stale)
 
 ---
 
