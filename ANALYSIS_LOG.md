@@ -1151,3 +1151,36 @@ vwap_momentum (Tier-1 just exhausted it).
 appetite for frame shift. Do NOT pay $199/mo Polygon Advanced, license
 dealer-positioning data, or buy another book before the frame question
 is settled. Inputs ≠ edge in our current frame.
+
+---
+## 2026-05-19 — TIER-2 CONNORS (intraday frame): 0 TRADES → frame confirmed
+backtest_connors.py — pre-specified RSI(2)<10 above ema200 / >90 below.
+
+**Result:** ZERO trades fired on the 39-symbol 3yr universe. Root cause:
+intraday EMA200 never forms on 5-min bars (~78 bars/session; live engine
+correctly sets ema200=NaN). Canonical Connors is a DAILY-bar signal —
+forcing it into our intraday frame breaks the trend filter by
+construction.
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §12 Davey: result IS the result; do NOT loosen
+  parameters to manufacture trades on a signal designed for a different
+  timeframe. That would be curve-fit / "tune until it works."
+- ✅ ENFORCED — KB §8 Connors/Raschke: the literature's signal needs
+  its native timeframe (daily). Our frame breaks it.
+
+**Verdict:** Tier-2 inside the CURRENT (5-min intraday) frame is CLOSED.
+Second consecutive evidence point this session that confirms the
+strategic synthesis (2026-05-19): the FRAME is the bottleneck, not
+the signal family. The genuinely orthogonal Connors family belongs at
+DAILY bars — testing it there is Path A (frame shift), not Path C.
+
+**Decision narrowed to two:**
+- A. Build daily-bar harness + retest Connors (+ other Tier-A
+  candidates: PEAD, overnight/intraday decomp, variance premium).
+  Genuine new infrastructure work; current intraday code mostly
+  doesn't transfer.
+- B. Accept the project as rigorous research + apparatus; do not
+  deploy real money. Defensible professional outcome.
+Path C (more inside the intraday frame) is now empirically closed —
+both Tier-1 and Tier-2 attempted; both failed/inapplicable.
