@@ -836,3 +836,37 @@ trust-but-verify discipline the corpus teaches.
 CLOSED (convergence across 8 applicable masters; 6th round confirms
 diminishing/zero returns). Remaining value = TESTING (H-REGIME/H-RUN),
 not more reading.
+
+---
+## 2026-05-19 — 39-TICKER SHARES ROBUSTNESS (real, post-fix run)
+backtest_shares_robust.py ALL — 39 syms, 3yr, 18,790 trades, walk-fwd.
+
+**Result @3bp: PF 1.09 / +$241k (vs 6-sym 0.97). Verdict ⚠️ MARGINAL /
+CONCENTRATED — NOT validated:**
+- @5bp PF 0.82 (negative) — fails pessimistic-cost gate. Cost-fragile.
+- 103/154 symbol-year cells ≥1.0 (66.9%) — boundary, not broad.
+- Per-year positive every year (1.09/1.03/1.13/1.21) — regime-consistent.
+
+**Structural finding (the real signal):** edge is concentrated in
+HIGH-volatility single names (NVDA1.55 CRWV1.51 ARM/SOFI1.48 TEAM1.45
+HOOD1.42 INTC1.34 PLTR1.33) and NEGATIVE on LOW-vol index/mega
+(SPY0.70 MSFT0.79 V0.79 GOOG0.87 QQQ0.91 MA0.97 UNH0.96). Coherent
+with Sinclair (fixed cost vs movement) + the tight-ATR-stop
+notional-scaling effect: low-ATR names → slippage swamps thin edge.
+The original 6-sym watchlist was ~the WORST universe for this strategy.
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §5 transaction-cost hierarchy + §12 cost-sensitivity
+  gate worked: caught a fragile edge, prevented an over-claim (no repeat
+  of the S3 error).
+- ✅ ENFORCED — KB §11 Gunn/Brooks: edge needs volatility/movement;
+  selectivity is the lever.
+- ❓ no new GAP (principles already codified this session).
+
+**Verdict / next (NOT a green light; survivorship trap explicitly
+resisted):** do NOT hand-pick the winner list. Convert to a
+PRE-SPECIFIED rule — universe filter "trade only names with ATR%
+≥ threshold" — and test it WITH H-REGIME (trending-only) + H-RUN
+(runner exit) on a holdout, ≥3-5bp. That single combined backtest
+(still $0, cached) is the decisive next experiment. Stay paper;
+GO_LIVE_CHECKLIST + cost-robust pass still required.

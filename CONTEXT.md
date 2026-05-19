@@ -149,10 +149,15 @@ These are the constraints we'll design tomorrow's backtest and risk-gate work ar
 
 ### Pending decisions / next steps
 
-- [ ] **(IN FLIGHT)** 39-ticker shares-robustness run — report verdict
-- [ ] Then execute **H-REGIME** (gate vwap_momentum to trending regime,
-      Gunn) + **H-RUN** (runner exit vs fixed target, Brooks) — both
-      $0 on cached data, both test likely flaws in prior design
+- [x] 39-ticker shares-robustness — DONE 2026-05-19: PF 1.09 @3bp
+      (⚠️ MARGINAL/CONCENTRATED, fails @5bp). Key finding: edge lives in
+      HIGH-vol single names (NVDA/SOFI/ARM/TEAM/HOOD/PLTR), NEGATIVE on
+      low-vol index/mega (SPY/QQQ/MSFT/V/GOOG). Original 6-sym watchlist
+      ≈ worst universe. NOT validated. Logged ANALYSIS_LOG 2026-05-19.
+- [ ] **DECISIVE NEXT ($0, cached):** one combined backtest = a
+      PRE-SPECIFIED ATR%-volatility universe filter + **H-REGIME**
+      (trending-only, Gunn) + **H-RUN** (runner exit, Brooks), on a
+      holdout, ≥3-5bp. Do NOT hand-pick winners (survivorship trap).
 - [ ] 2S sequence: 2S-B fix spread harness → 2S-C clean vertical-debit
       backtest → 2S-D router policy → 2S-E execution refactor
 - [ ] 3R: risk-mode separation (3R-A), numeric phase gates incl. Kelly
