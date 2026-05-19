@@ -1040,3 +1040,26 @@ must never gate execution (KB §12). We solve a strictly harder problem
 no new durable principle, just an architecture pattern noted for the
 advisory layer (folds into 2S-F if/when there's a validated strategy
 to advise on).
+
+---
+## 2026-05-19 — EXTERNAL PROJECT #2: PyPatel/Options-Trading-Strategies
+Cloned read-only (not executed). Writeup:
+External_Projects/ANALYSIS_PyPatel-Options-Strategies.md.
+
+**What:** 4 educational scripts (~581 LOC) + C++ MC pricer. Hardcoded
+params (VIX=22, TP 5%), single instrument, NO walk-forward / OOS / cost.
+Crypto-donate + "LSTM promising" hype.
+
+**KB cross-ref:**
+- ⚠️ DRIFT vs KB §12 — cruder unvalidated-strategy trap; ~1/10 edge.
+  No adoptable code.
+- ❓ no GAP — concept notes only: (1) PCR/TRIN = candidate sentiment/
+  breadth FEATURES for advisory sentiment sub-agent (ADV-1) / a Tier-2
+  hypothesis (must pass ≥3-5bp like everything). (2) Turtle = reference
+  impl of ATR-trail/Donchian exit — doctrine ALREADY in KB §8 Covel /
+  §11 Brooks, no new principle.
+
+**Verdict:** less useful than repo #1; zero edge, zero adoptable code,
+no KB change. Two concept notes appended to existing TODOs (ADV-1
+sentiment inputs; H-RUN Turtle reference). Honest near-no-op — recorded
+per convention.

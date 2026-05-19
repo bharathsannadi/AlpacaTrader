@@ -963,6 +963,7 @@ better-factored than our monolithic debate gate. Folds into **2S-F**.
 | Sub | Item | Status |
 |---|---|---|
 | ADV-1 | Refactor advisory layer into modular **parallel sub-agents** (technical · risk · sentiment · thesis) → one structured, inspectable composite — replaces the single debate-gate prompt | ⬜ TODO (do with 2S-F) |
+| ADV-1b | Sentiment sub-agent candidate inputs: **PCR (put/call ratio)** + **TRIN (Arms index)** — contrarian breadth/sentiment features (from PyPatel repo analysis). Hypothesis only; any predictive use ≥3-5bp-gated | ⬜ TODO |
 | ADV-2 | Decision-support **report UX** (per-signal thesis/why-not card; compare; watchlist view) — nicer surface for the advisory markers we already ship | ⬜ TODO (low pri, post-edge) |
 
 **HARD GUARDRAIL (non-negotiable):** advisory/UX ONLY. A composite/LLM
@@ -971,3 +972,5 @@ support for the human, NOT validated edge. It must NEVER gate an
 execution path and does NOT move the Edge score (only a cost-robust
 ≥3-5bp walk-forward does). Build only AFTER a strategy passes that gate
 (else it's the ai-trading-claude trap with our logo on it).
+
+> **H-RUN reference impl (2026-05-19):** Turtle Trading (Donchian breakout + ATR sizing + ATR trailing stop) is a clean canonical reference for H-RUN's runner/ATR-trail exit. Doctrine already in KB §8 Covel/§11 Brooks; cited as an implementation reference, not new edge.
