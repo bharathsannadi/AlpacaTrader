@@ -920,3 +920,17 @@ The following numbered TODO items were already implemented in the codebase befor
 - [ ] Pick which P1 fixes to take next: #5 (FOMC blackout), #6 (Friday gamma), #7 (correlation), #8 (trailing stop)
 - [ ] P2 quick wins: #15 (log rotation, 5 LOC), #19/#20 (cleanups)
 - [ ] Set `ANTHROPIC_API_KEY` to enable debate gate + LLM EOD review
+
+### 🆕 1S-BACKUP — Pre-Polygon-cancellation data backup (2026-05-19, user)
+
+User cancelling Polygon; permanent Desktop cache = the backup ($0 re-run forever).
+| Sub | Item | Status |
+|---|---|---|
+| BK-A | S&P 500 (503) 3yr 5-min STOCK bars → cache (`pull_sp500.py`, `sp500.json` authoritative) | 🔄 RUNNING (bg PID 5853) |
+| BK-B | Bounded OPTIONS backup: `backtest_structures.py ALL` (39-ticker universe) — caches naked 7-14d/25-45d + spread short-leg OHLC. Sequenced AFTER BK-A (rate-limit safety) | ⬜ queued |
+| BK-C | Verify SUMMARY (OK/partial/fail) for BOTH, report → user cancels only then. Cancellation = irreversible; gaps unrecoverable | ⬜ gate |
+
+**Honest scope note:** a full S&P-500 option archive is infeasible (millions of
+contracts / hundreds of GB / weeks). Bounded backup = only the contracts our
+backtests probe. Post-cancel: those exact backtests run $0; NEW option
+strikes/dates/symbols not pre-run are unrecoverable.
