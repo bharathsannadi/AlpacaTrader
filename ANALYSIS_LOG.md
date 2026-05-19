@@ -1063,3 +1063,36 @@ Crypto-donate + "LSTM promising" hype.
 no KB change. Two concept notes appended to existing TODOs (ADV-1
 sentiment inputs; H-RUN Turtle reference). Honest near-no-op — recorded
 per convention.
+
+---
+## 2026-05-19 — DECISIVE TIER-1 TEST: H-REGIME+H-RUN+vol-universe → FAIL
+backtest_hregime_hrun.py — 39-sym universe.ALL, real 3yr cached, walk-fwd.
+
+| Variant | n | Tr PF | Te PF@3bp | Te win% | Te$ | Te PF@5bp |
+|---|---|---|---|---|---|---|
+| V0 baseline (fixed 1.5ATR tgt) | 9235 | 1.08 | 1.14 | 53.0 | +180k | **0.88** |
+| V1 H-RUN (runner exit) | 9235 | 1.10 | **1.16** | 56.0 | +184k | **0.88** |
+| V2 +H-REGIME | 2129 | 0.99 | 1.02 | 53.4 | +6k | 0.76 |
+| V3 +vol-filter (upper half ATR%) | 1004 | 1.17 | 1.07 | 53.7 | +10k | 0.87 |
+
+**Bar:** Te PF ≥ 1.10 @ BOTH 3 & 5 bp. **NONE cleared. All die @5bp.**
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §12 Davey validation ladder + cost-sensitivity gate
+  worked AGAIN, exactly as designed. Caught a marginal/cost-fragile
+  edge BEFORE real money. Repeat of the discipline catching S3.
+- ✅ ENFORCED partial — H-RUN directionally correct (Brooks p.85 / Covel
+  KB §8 "don't clip the fat tail"): win 53→56%, Te PF 1.14→1.16. Real
+  improvement, just not enough.
+- ⚠️ small-n trap (own/honest) — V2/V3 over-filtered (2129/1004 trades
+  vs 9235 base); regime+vol gates removed too much volume, didn't lift
+  edge enough to compensate. Brooks "edges small & fleeting" empirical.
+- ❓ no new GAP — outcome is consistent with KB; no new principle.
+
+**Verdict (pro-trader):** Tier-1 EXHAUSTED. The vwap_momentum directional
+signal has a real but thin edge that does NOT robustly survive realistic
+3-5bp costs at this trade frequency, even with the textbook-correct
+runner exit. Real-money: HARD NO. Path forward = Tier-2 orthogonal edge
+(Connors mean-reversion, queued) OR accept the signal as research, not
+a strategy. Either is a respectable, disciplined outcome — this IS the
+validation system doing its job at $0 instead of $5K-100K.
