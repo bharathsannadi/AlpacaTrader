@@ -954,3 +954,34 @@ edge, not evidence of no edge. Strengthens the Tier-1 priority of H-RUN
 (stop clipping the tail) and H-REGIME (react, don't predict). Deep-read
 otherwise remains at convergence; rounds 5-7 = mostly no-op, this 1
 principle the exception.
+
+---
+## 2026-05-19 — DEEP READ round 8: library triage → Connors/Raschke
+Catalogued 247-PDF library by collection; triaged for OPEN-NEED fit
+(Tier-2 orthogonal alpha, regime method, cost). Hedge-fund/market-timing/
+long-term collections = out-of-domain (no-op, honest). One on-target hit:
+**Connors & Raschke, Street Smarts (1996)** (file mislabeled "High
+Probability Short Term…"; cited accurately).
+
+**Additive findings → KB §8 (same-pass promote):**
+- p.51 recipe: edge + longer-term trend filter + volatility filter +
+  money-management = system. INDEPENDENT 3rd-lineage confirmation of
+  H-REGIME + vol-filter + Kelly stack.
+- Mean-reversion / pullback-in-trend ("Anti", RSI-extreme) = ORTHOGONAL
+  edge family vs momentum-breakout → the concrete Tier-2 diversifier the
+  2S portfolio thesis needs.
+- Combine independently-tested setups (portfolio-of-edges empirics).
+- Full-mechanization of a known edge invites arbitrage (expect modest
+  expectancy; echoes Brooks).
+
+**KB cross-ref:** ❓ GAP closed — KB had momentum/breakout (Brooks) +
+regime (Gunn) but NO explicit mean-reversion/pullback-in-trend edge
+family. Now in KB §8 Connors/Raschke. ✅ recipe convergence reinforces
+§4/§8/§11/§12.
+
+**Action impact:** gives 2S a concrete second strategy candidate
+(pullback-in-trend mean-reversion, trend+vol filtered) — Tier-2 of the
+Edge plan now has a named, literature-grounded starting point, NOT just
+"find orthogonal alpha". Still gated: must pass its OWN ≥3-5bp
+walk-forward before it joins the portfolio. Deep-read otherwise at
+convergence; this is a genuine Tier-2 addition, not redundant.

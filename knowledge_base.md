@@ -400,6 +400,12 @@ Example: Account $25,000, 1.5% risk = $375 max risk. Option at $1.80 ($180/contr
 - **Risk asymmetry cuts both ways:** risk no more than you can afford, *and also risk **enough** that a win is meaningful* — chronic under-betting a real edge is also a failure mode (complements Kelly §4: ≤½-Kelly, but not so small the edge can't compound).
 - **Volatility is the source of profit, not the enemy** — converges with the empirical finding that a thin directional edge survives on high-volatility names and dies on low-volatility ones (cost vs movement).
 
+### Connors & Raschke (*Street Smarts*) — added 2026-05-19
+- **The recipe (independent third-lineage confirmation):** a single-variable setup with a statistically significant edge becomes a real system only when you "**apply a longer-term trend indicator, a volatility filter, and a money-management algorithm**" (p.51). This is *exactly* the regime-gate + vol-filter + Kelly stack converged on from Natenberg/Sinclair/Gunn/Brooks — arrived at from a different author lineage.
+- **Mean-reversion / pullback-in-trend is a distinct, ORTHOGONAL edge family** to momentum/breakout: enter *in the direction of the longer-term trend after a counter-trend pullback* ("Anti", retracement patterns); or fade short-term RSI extremes (e.g., 3-period RSI of 1-period ROC < 30 = oversold, enter on the next breakout). Low-correlation to a continuation/breakout signal → a true diversifier for a portfolio-of-strategies.
+- **Multiple setups that "test out independently" should be combined.** Independent thin edges stacked = robustness; this is the empirical basis for a portfolio-of-strategies rather than one hero signal.
+- **Caution on full mechanization:** a *fully* mechanical, widely-known short-term edge invites large funds to arbitrage it away (p.6). Thin retail-scale edges survive partly *because* they are small/uncrowded — a reason to expect modest, not spectacular, expectancy (echoes Brooks "edges are small and fleeting").
+
 ---
 
 ## 9. Checklist Before Every Trade
