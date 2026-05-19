@@ -772,3 +772,20 @@ Sequence after the running 39-ticker robustness: H-REGIME + H-RUN first
 day-trading titles would itself violate the selectivity lesson. The
 library has given its verdict; remaining value is in TESTING + correct
 SIZING, not more pages.
+
+---
+## 2026-05-19 — KB UPDATED (closing the ❓ GAPs from rounds 1–4)
+The deep-read rounds flagged ❓ GAPs but had only been recorded in this
+log, not promoted into knowledge_base.md (convention = record BOTH).
+Closed now — durable principles + citations only (project backtest
+specifics stay here, not in KB):
+- §8 NEW master entries: **Sinclair** (options edge = vol-forecast;
+  option costs ≫ stock; Kelly determinative) + **Gunn** (regime is the
+  edge for a directional strategy).
+- §4 NEW: **Kelly Criterion & Risk of Ruin** (>2×Kelly ⇒ negative
+  growth; use ≤½-Kelly; size from backtested edge only).
+- §5 NEW: **Transaction-Cost Hierarchy** (shares < futures ≪ options ≪
+  spreads; thin edge → cheapest instrument).
+- §11 NEW: **The Trader's Equation** (P(win)·reward > P(loss)·risk;
+  edges thin; selectivity+size not frequency; runner not fixed target).
+Verdict: ❓ GAPs → now ✅ codified. KB and ANALYSIS_LOG consistent.

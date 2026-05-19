@@ -174,6 +174,13 @@ Option_Premium_Per_Contract = Ask_Price × 100
 ```
 Example: Account $25,000, 1.5% risk = $375 max risk. Option at $1.80 ($180/contract) → 2 contracts ($360 at risk).
 
+### Kelly Criterion & Risk of Ruin (Sinclair, *Volatility Trading* Ch.8) — added 2026-05-19
+- **Sizing is determinative of returns, not a detail.** Two traders with the *same* winning edge can have opposite outcomes purely from bet size.
+- **Kelly fraction** ≈ edge / odds = the bet size that maximizes long-run geometric growth. For a realistic intraday edge (~53% hit, reward ≈ risk) the full-Kelly fraction is *small* (low single-digit % of bankroll).
+- **Hard rule: betting > 2× Kelly turns a positive-edge strategy's growth rate NEGATIVE** and tends to ruin — a sound method then *looks* like a failure purely from oversizing. Never let stated risk tolerance exceed 2× the Kelly of the *validated* edge.
+- **Use ≤ ½-Kelly in practice** — captures most of the growth at far lower volatility and drawdown. This (not a flat %) is the correct mechanism for scaling an account up as edge is confirmed.
+- **Estimate Kelly from the strategy's own backtested win-rate / payoff**, not from hope. No validated edge ⇒ no basis for sizing ⇒ do not size up.
+
 ---
 
 ## 5. Strategy Selection (Naked vs. Spreads)
@@ -224,6 +231,10 @@ Example: Account $25,000, 1.5% risk = $375 max risk. Option at $1.80 ($180/contr
 
 ### Spread Slippage Consideration
 - Spreads have two legs → two bid-ask spreads → higher total slippage. For liquid SPY options: spread slippage is minimal ($0.02–0.05 per leg). For less-liquid names (NVDA, GOOG pre-split), spread slippage can be $0.05–0.15 per leg — use limit orders.
+
+### Transaction-Cost Hierarchy (Sinclair, p.67) — added 2026-05-19
+- **Total round-trip cost, lowest → highest: shares < futures ≪ single options ≪ multi-leg option spreads.** Option costs (wide bid/ask relative to price + per-contract fees + clearing) are *materially* higher than equity costs.
+- **Decision rule for a thin directional edge:** express it in the **cheapest instrument that carries it**. A small directional edge (no volatility edge) is structurally destroyed by option-level costs but can survive in shares. Only move it into options when a *separate volatility edge* is present to pay for the higher cost (Natenberg §8 / Smith §8 — "no edge without a volatility edge").
 
 ---
 
@@ -372,6 +383,16 @@ Example: Account $25,000, 1.5% risk = $375 max risk. Option at $1.80 ($180/contr
 - **Use puts as insurance on existing positions.** The value of a put is not just directional — it is protection value.
 - **Avoid holding long puts through periods of low IV** — you are paying time premium that will decay without IV expansion to compensate.
 
+### Sinclair (*Volatility Trading*) — added 2026-05-19
+- **The options edge is a volatility-forecasting edge, not a directional one** (p.14). A directional view alone, expressed as long premium, has no edge — you are paying the market's implied volatility for movement already priced in.
+- **Option transaction costs (brokerage + bid/ask + fees + clearing) are *far larger* than the costs of trading stocks or futures** (p.67). Implication: a *thin* directional edge belongs in the **lowest-cost instrument** (shares), not options, unless a genuine volatility edge is also present to overcome the higher option cost.
+- **Volatility stylized facts:** vol mean-reverts and clusters; more large up-moves than down; vol is positively correlated with both price level and volume (p.54–90).
+- **Money management is determinative, not a detail:** betting **more than 2× the Kelly fraction turns a *positive-edge* strategy's growth rate negative** and courts ruin (Ch. 8, p.149). Half-Kelly captures most of the growth at far lower drawdown. Kelly applies to all return distributions, not just binary.
+
+### Gunn (*Trading Regime Analysis*) — added 2026-05-19
+- **There is no holy grail; the edge is regime selection.** A trend/directional strategy "loses heavily" in non-trending (range) regimes and "wins superbly" in trending regimes (p.24). Net P&L is decided by the regime mix, *not* the signal in isolation.
+- **Practical rule:** never evaluate or deploy a directional/momentum strategy *un-conditioned on regime*. Gate entries to the trending regime (ADX, Bollinger-band-width, or a chop detector); a strategy that looks marginal on aggregate is often strong-in-trend diluted by negative-in-chop.
+
 ---
 
 ## 9. Checklist Before Every Trade
@@ -463,6 +484,12 @@ Use this checklist before submitting any order. Each item should have a definiti
 - **Bear signal bar:** Strong down bar (closes in lower 1/3), body > 60% range, small lower wick. Sell break of the low.
 - **Doji (inside bar) at resistance:** Indecision — price is testing resistance and failing to break cleanly. Do NOT enter; wait for resolution.
 - **Reversal bar (climax bar):** Very large bar (> 2× ATR) after an extended trend. Often marks exhaustion. Do not chase — the move may be over.
+
+### The Trader's Equation (Brooks) — added 2026-05-19
+- **Only take a trade when:  P(win) × reward  >  P(loss) × risk.** This expectancy inequality is the single gate every setup must pass. A 53% edge with reward = risk barely clears it — and transaction costs subtract from *reward*, so a marginal raw edge becomes negative after costs.
+- **Edges are always small and fleeting** — "the market is filled with smart traders who won't allow an edge to be big and persistent." Do not hunt for a bigger signal; assume the edge is thin and engineer around it.
+- **The four levers for a thin edge (Brooks' single most important message, p.36):** (1) take *only* the best setups (selectivity), (2) avoid the worst setups, (3) reward ≥ risk, (4) increase **size**, *not* trade frequency.
+- **Let winners run (p.85):** the best trades go 4×+ initial risk. Take a partial, move stop to breakeven, and let the remainder run. A *fixed* profit target caps exactly the fat-tail winners that carry the entire expectancy — prefer partial + breakeven + trail over a fixed target.
 
 ### Brooks Rules for ORB / Intraday Breakouts
 - A breakout that closes BEYOND the level with a strong trend bar AND is followed by another trend bar in the same direction = high-probability continuation.
