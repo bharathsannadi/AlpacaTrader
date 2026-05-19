@@ -302,8 +302,27 @@ def build_report(results: list[dict]) -> str:
     return "\n".join(L)
 
 
+def _resolve_syms(argv: list[str]) -> list[str]:
+    """ALL→universe.ALL, SAMPLE→universe.OPTIONS_SAMPLE, else space-safe
+    (defangs the zsh single-arg footgun). No args → SYMBOLS_DEFAULT."""
+    toks: list[str] = []
+    for a in argv:
+        toks += a.split()
+    toks = [t.upper() for t in toks]
+    if not toks:
+        return list(SYMBOLS_DEFAULT)
+    if toks == ["ALL"]:
+        from universe import ALL
+        return list(ALL)
+    if toks == ["SAMPLE"]:
+        from universe import OPTIONS_SAMPLE
+        return list(OPTIONS_SAMPLE)
+    seen: set[str] = set()
+    return [t for t in toks if not (t in seen or seen.add(t))]
+
+
 def main():
-    syms = [s.upper() for s in sys.argv[1:]] or SYMBOLS_DEFAULT
+    syms = _resolve_syms(sys.argv[1:])
     print(f"backtest_structures — {syms} — REAL {BACKTEST_YEARS}yr "
           f"(cached, $0)\n")
     results = []

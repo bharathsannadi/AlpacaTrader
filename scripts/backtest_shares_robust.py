@@ -201,8 +201,27 @@ def build_report(all_tr: list[dict]) -> str:
     return "\n".join(L)
 
 
+def _resolve_syms(argv: list[str]) -> list[str]:
+    """Resolve CLI symbols robustly. Supports:
+      • `ALL`  → universe.ALL (39)
+      • normal space-separated args
+      • a SINGLE arg that itself contains spaces (zsh non-split footgun)
+    Dedup, upper-cased, order-preserved. No args → SYMBOLS_DEFAULT (6)."""
+    toks: list[str] = []
+    for a in argv:
+        toks += a.split()                 # defangs the zsh single-arg case
+    toks = [t.upper() for t in toks]
+    if not toks:
+        return list(SYMBOLS_DEFAULT)
+    if toks == ["ALL"]:
+        from universe import ALL
+        return list(ALL)
+    seen: set[str] = set()
+    return [t for t in toks if not (t in seen or seen.add(t))]
+
+
 def main():
-    syms = [s.upper() for s in sys.argv[1:]] or SYMBOLS_DEFAULT
+    syms = _resolve_syms(sys.argv[1:])
     print(f"backtest_shares_robust — {syms} — REAL {BACKTEST_YEARS}yr "
           f"(cached, $0)\n")
     all_tr = []
