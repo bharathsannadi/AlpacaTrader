@@ -924,3 +924,33 @@ don't expect the thin one to become large.
 §4/§5/§8/§11/§12; no new GAP. Discipline: no lever counts pre cost-
 robust ≥3-5bp walk-forward; Kelly compounds only a PROVEN edge.
 Real-money OFF until Tier-1 combined backtest passes OOS.
+
+---
+## 2026-05-19 — DEEP READ round 7: Bull/Bear collection (11 books)
+Triage: 9/11 out-of-domain (macro/long-term investing, seasonality) or
+PROMOTIONAL (Identifying Market Trends = AbleTrend software vendor book —
+honest no-op). 1 genuinely additive: **Covel, Trend Following**.
+
+**Covel — durable principles → KB §8 (same-pass promote):**
+- Win rate is the WRONG metric for a directional edge; normal shape =
+  many small losses + few outsized winners; low win-rate is a feature.
+- Edge lives in the FAT TAIL; fixed targets clip the outliers that pay
+  for everything (LTCM = no-fat-tail fallacy). Strongest case for
+  runner/trailing exits — directly supports H-RUN.
+- Prediction futile → react to realized trend (reinforces Gunn/H-REGIME).
+- Risk ENOUGH that a win matters (under-betting also fails) — complements
+  Kelly §4.
+- Volatility is the profit source (converges w/ 39-ticker high-ATR
+  finding).
+
+**KB cross-ref:** ❓ GAP closed — KB §11 Brooks had "let winners run"
+but NOT the explicit "win-rate-is-misleading / edge-is-in-the-tail /
+don't-clip / risk-enough" doctrine. Promoted to KB §8 Covel entry in
+same pass (convention upheld).
+
+**Why this matters now:** directly answers our own hand-wringing over
+the 52-56% win rate — that is the NORMAL shape of a real directional
+edge, not evidence of no edge. Strengthens the Tier-1 priority of H-RUN
+(stop clipping the tail) and H-REGIME (react, don't predict). Deep-read
+otherwise remains at convergence; rounds 5-7 = mostly no-op, this 1
+principle the exception.

@@ -22,6 +22,8 @@ BOOK_ROOTS = [
     Path("/Users/bsannadi/Desktop/books/Volatility and VIX Collection"),
     Path("/Users/bsannadi/Desktop/books/options"),
     Path("/Users/bsannadi/Desktop/books/Trading/Day Trading"),
+    Path("/Users/bsannadi/Desktop/books/Trading/@Gurgavin ‘s  Bull and Bear Market Collection"),
+    Path("/Users/bsannadi/Desktop/books/Trading 2/@Gurgavin ‘s Risk Management Collection"),
 ]
 CTX = 480   # chars of context around each hit
 

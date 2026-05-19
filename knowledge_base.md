@@ -393,6 +393,13 @@ Example: Account $25,000, 1.5% risk = $375 max risk. Option at $1.80 ($180/contr
 - **There is no holy grail; the edge is regime selection.** A trend/directional strategy "loses heavily" in non-trending (range) regimes and "wins superbly" in trending regimes (p.24). Net P&L is decided by the regime mix, *not* the signal in isolation.
 - **Practical rule:** never evaluate or deploy a directional/momentum strategy *un-conditioned on regime*. Gate entries to the trending regime (ADX, Bollinger-band-width, or a chop detector); a strategy that looks marginal on aggregate is often strong-in-trend diluted by negative-in-chop.
 
+### Covel (*Trend Following*) — added 2026-05-19
+- **Win rate is the WRONG success metric for a directional/trend edge.** The healthy, *normal* shape is **many small losses + a few outsized winners**. A 40–55% win rate is a *feature*, not a defect — do not "fix" a strategy because its win rate looks low; judge it by expectancy and payoff asymmetry.
+- **The edge lives in the fat tail.** A *fixed* profit target clips exactly the outlier winners that pay for all the small losses. Trend money arrives "in sudden bursts" — clipping the burst destroys the edge. (LTCM blew up assuming no fat tails; the tail is not noise, it *is* the profit.) → strongest possible argument for runner/trailing exits over fixed targets.
+- **Prediction is futile — react to the realized trend, don't forecast it.** Reinforces regime-gating (Gunn): follow the trend that exists, don't predict the next one.
+- **Risk asymmetry cuts both ways:** risk no more than you can afford, *and also risk **enough** that a win is meaningful* — chronic under-betting a real edge is also a failure mode (complements Kelly §4: ≤½-Kelly, but not so small the edge can't compound).
+- **Volatility is the source of profit, not the enemy** — converges with the empirical finding that a thin directional edge survives on high-volatility names and dies on low-volatility ones (cost vs movement).
+
 ---
 
 ## 9. Checklist Before Every Trade
