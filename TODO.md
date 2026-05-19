@@ -12,9 +12,24 @@ The system is being built to trade **both stocks and options**, NOT as two
 codebases but as one: a single proven **signal core** → an **instrument
 router** that picks the execution vehicle → a **shared risk/exec layer**.
 
-- **Signal core:** `vwap_momentum` only (the ONE signal with proven
-  directional edge — signal_diagnostic 55→60% hit-rate). Single source of
-  truth (existing evaluator). Emits (symbol, direction, strength, ATR ctx).
+- **Portfolio-of-strategies (refined 2026-05-19, user: "trading a mix of
+  stocks and options strategies"):** the system is NOT one signal routed
+  to one instrument. It is a **portfolio of independently-validated
+  strategies**, each tagged stock | option | either, e.g.:
+  - directional shares (vwap_momentum) · directional debit spread ·
+    premium-selling in high-IVR regimes · defined-risk hedges, etc.
+  - Each strategy is a plug-in behind the shared risk brain; each MUST
+    pass its OWN cost-robust ≥3bp walk-forward backtest before it is
+    enabled (paper) and again before live. **"Mix" must NOT become "many
+    unvalidated bets"** — breadth is earned per strategy, not assumed.
+  - The router becomes an allocator across *enabled, validated*
+    strategies (correlation-aware via the existing delta cap), not a
+    single signal→instrument switch.
+- **Signal core (current only validated-edge candidate):** `vwap_momentum`
+  (signal_diagnostic 55→60% hit-rate — real but small; not yet
+  cost-robust). Single source of truth (existing evaluator). Emits
+  (symbol, direction, strength, ATR ctx). Additional strategies are added
+  as separate validated plug-ins, not bolted onto this one.
 - **Instrument router (policy is DATA-DRIVEN, not hand-picked):**
   - **Shares route** — PROVEN (S3 PF 1.38 OOS). Primary engine. ATR-sized.
   - **Options route** — the disproven **naked** structure is NOT rebuilt.
