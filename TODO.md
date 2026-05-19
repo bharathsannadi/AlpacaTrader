@@ -52,7 +52,9 @@ already buried. Trust-but-verify applies per route.
 
 **Where we actually are:** signal_diagnostic's underlying directional edge is REAL but SMALL (~+0.6 ATR/60min, 52-56% hit). It is too small to survive theta (options) OR notional-scaled slippage at a tight ATR stop (shares) at the CURRENT TRADE FREQUENCY. The lever is **selectivity / wider stops / lower frequency / better excursion-capture — NOT more instruments and NOT a bigger universe.**
 
-**Therefore PAUSED (premature — building infra for an unvalidated edge):** 1S-EXP (39-ticker pull / shares-robustness across 39 / UI expansion) and 2S (dual-instrument build) are ON HOLD until a cost-robust expression of the edge exists on the EXISTING 6. Next step is cheap ($0, cached data): a selective / wider-stop / lower-frequency variant — does it clear 3-5bp?
+**OPERATOR DECISION (2026-05-19):** build the 2S dual-instrument system + 1S 39-ticker universe NOW as research scaffolding, accepting the edge is NOT yet cost-robust. **HARD GUARDRAIL (non-negotiable, not user-removable):** everything is PAPER-ONLY; every route stays gated behind GO_LIVE_CHECKLIST + its OWN passing cost-robust (≥3bp) walk-forward backtest before ANY real money. Build ≠ validated. Edge-validation (selectivity / wider-stop / lower-frequency variant, $0 cached) runs IN PARALLEL and is the real gate to live.
+
+**Status: 1S-EXP + 2S = BUILDING (paper-only, edge-unvalidated, go-live hard-gated).**
 
 <!-- superseded banner retained for history below -->
 ## 🎯 (SUPERSEDED 2026-05-18 PM): NAKED-OPTIONS STRUCTURE DEAD — DUAL-ROUTE (shares proven · spreads unresolved).
