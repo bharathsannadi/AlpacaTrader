@@ -54,7 +54,7 @@ router** that picks the execution vehicle → a **shared risk/exec layer**.
 
 | Sub | Item | Status | Gate |
 |---|---|---|---|
-| **2S-A** | Shares route validation = 1S-B (robustness across 39) | ⬜ in progress | PF≥1.1 broad + survives 5bp |
+| **2S-A** | Shares route validation = 1S-B (robustness across 39) | ⛔ **FAILED 2026-05-19** | Tier-1 (H-REGIME+H-RUN+vol): best Te PF 1.16@3bp / 0.88@5bp. Does NOT survive 5bp. Tier-1 exhausted. Shares route blocked until/unless Path-A daily-bar frame succeeds. |
 | **2S-B** | **Fix the spread-data harness** — S2 failed from sparse short-leg OHLC / pricing-bar mismatch, NOT from spreads being bad. Build a correct 2-leg spread pricer (contemporaneous bars, liquid OTM strike selection, fallback). | ⬜ TODO | a clean S2 measurement (win% sane, n not collapsed) |
 | **2S-C** | Re-backtest debit spreads cleanly (6 + 8-sample) → decide if the options route has ANY edge | ⬜ TODO — blocked on 2S-B | options route enabled ONLY if walk-forward PF clears bar |
 | **2S-D** | Define instrument-router policy from 2S-A + 2S-C results (when shares vs when spread — e.g. IVR-based per KB §5, data-driven) | ⬜ TODO | both route backtests done |

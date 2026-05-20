@@ -1,5 +1,14 @@
 # SPY Auto Trader — Tuning Notes
 
+> ⚠️ **Largely superseded (2026-05-19).** Most content below is parameter-level
+> tuning from May 8–9 on a strategy that has since been **disproven by real
+> 3yr Polygon backtests** (Tier-1 + Tier-2 both failed the cost-robust gate).
+> Tuning constants for a no-edge strategy is the wrong layer of work — the
+> open question is now **frame-shift (Path A) or stop (Path B)**, not which
+> stop %. Retained for historical context and any items still ops-relevant
+> (UI/refresh bugs, watchdog notes). For current state see
+> [CONTEXT.md](CONTEXT.md) + [ANALYSIS_LOG.md](ANALYSIS_LOG.md) 2026-05-19.
+
 ## 🐛 Known issue: Account / Buying Power / Max Risk don't refresh after trades  *(staged for 2026-05-09 batch)*
 
 **Symptom:** Header stats stuck at startup values after a trade fires:

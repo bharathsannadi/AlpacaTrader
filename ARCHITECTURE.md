@@ -1,5 +1,19 @@
 # SPY Auto Trader — Architecture & Design
 
+> ⚠️ **STALE re: strategy direction (2026-05-19).** This document describes the
+> *as-built* intraday options bot (single-instrument, ORB+VWAP-momentum on 6
+> symbols). Since then: `trend_cont` + `gap_fade` disabled (proven noise);
+> naked options structure disproven (PF 0.92); intraday shares
+> marginal/cost-fragile (PF 1.09@3bp, 0.82@5bp); Tier-1 (H-REGIME+H-RUN+vol)
+> and Tier-2 (Connors) backtests both failed/inapplicable to the intraday
+> frame. **No validated edge exists.** A dual-instrument
+> portfolio-of-strategies architecture (**2S** in [TODO.md](TODO.md)) is
+> *designed* but not built — deliberately, per the discipline
+> ("build only after validated strategy"). This file is rewritten as part
+> of **2S-E** if/when a strategy clears the cost-robust gate. Until then:
+> [CONTEXT.md](CONTEXT.md) for current state, [ANALYSIS_LOG.md](ANALYSIS_LOG.md)
+> 2026-05-19 strategic synthesis for the decision fork.
+
 A reviewer-friendly overview of what's in the codebase, how the pieces fit, and what trading logic actually runs. Pair this with [TODO.md](TODO.md) for known gaps.
 
 ---

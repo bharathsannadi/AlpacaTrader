@@ -16,11 +16,13 @@ Last reviewed: _never_ · Signed: _________
 ## 1. Edge proven (backtest item 1 must have produced these)
 
 - [ ] Backtest profit factor > 1.5 over ≥18 months — date/initials: ____
+- [ ] **Cost-robust gate: Test PF ≥ 1.10 at BOTH 3 bp AND 5 bp slippage, OOS walk-forward** — *the binding constraint this project caught every failure with (S3, Tier-1, Tier-2). Non-negotiable. Pass at one bp level but fail the other = fail.* — date/initials: ____
 - [ ] Backtest Sharpe > 0.8 annualized — date/initials: ____
 - [ ] Backtest max drawdown < 12% — date/initials: ____
 - [ ] Walk-forward out-of-sample decay < 25% (not curve-fit) — date/initials: ____
 - [ ] Top-3 trades < 40% of total P&L (not fat-tail luck) — date/initials: ____
 - [ ] Beats SPY buy-and-hold over the same window, with lower DD — date/initials: ____
+- [ ] **Live size ≤ ½-Kelly of the validated edge's backtested win-rate × payoff** (Sinclair KB §4 — over-betting turns positive edge negative; under-betting fails to compound). Compute from the passing backtest's stats; record both ½-Kelly $ and chosen $. — date/initials: ____
 
 ## 2. Operational ready
 

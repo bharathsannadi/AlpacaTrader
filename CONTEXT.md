@@ -154,15 +154,29 @@ These are the constraints we'll design tomorrow's backtest and risk-gate work ar
       HIGH-vol single names (NVDA/SOFI/ARM/TEAM/HOOD/PLTR), NEGATIVE on
       low-vol index/mega (SPY/QQQ/MSFT/V/GOOG). Original 6-sym watchlist
       ≈ worst universe. NOT validated. Logged ANALYSIS_LOG 2026-05-19.
-- [ ] **DECISIVE NEXT ($0, cached):** one combined backtest = a
-      PRE-SPECIFIED ATR%-volatility universe filter + **H-REGIME**
-      (trending-only, Gunn) + **H-RUN** (runner exit, Brooks), on a
-      holdout, ≥3-5bp. Do NOT hand-pick winners (survivorship trap).
-- [ ] 2S sequence: 2S-B fix spread harness → 2S-C clean vertical-debit
-      backtest → 2S-D router policy → 2S-E execution refactor
-- [ ] 3R: risk-mode separation (3R-A), numeric phase gates incl. Kelly
-      cap into GO_LIVE_CHECKLIST (3R-B)
-- [ ] ARCHITECTURE.md is STALE re: dual-instrument 2S (folds into 2S-E)
+- [x] **Tier-1 H-REGIME+H-RUN+vol-universe** — DONE 2026-05-19: FAILED the
+      gate. V1 H-RUN best Te PF 1.16@3bp / **0.88@5bp** (cost-fragile).
+      H-RUN directionally right (win 53→56%) but not enough. Tier-1
+      exhausted. Logged.
+- [x] **Tier-2 Connors mean-reversion** — DONE 2026-05-19: **0 trades**
+      (intraday EMA200 doesn't form on 5-min bars; canonical Connors is
+      a DAILY-bar signal). Frame confirmed as bottleneck.
+- [ ] 🚧 **DECISION FORK (the real next step — see ANALYSIS_LOG strategic
+      synthesis 2026-05-19):**
+      **A) Frame shift** — build daily-bar harness, retest Connors at
+      native timeframe + Tier-A candidates (PEAD, overnight/intraday
+      return decomp, VIX term-structure, variance risk premium /
+      systematic short-vol). Real new infra (~2-4 weeks); intraday code
+      mostly doesn't transfer.
+      **B) Stop** — accept project as rigorous research + apparatus +
+      permanent data backup. Don't deploy real money. Professional
+      outcome. Most retail accounts end far worse.
+      Don't decide tonight; wait BK-B verification, cancel Polygon, sleep on it.
+- [ ] 3R code-update tasks (now broken down in TODO 3R, ~10h total, $0,
+      transfers across A/B): A.1-4 risk-mode separation; B.1-3 Kelly +
+      hard GO_LIVE gates; C.1-4 paper learning instrumentation.
+- [ ] ARCHITECTURE.md STALE re: dual-instrument 2S — banner added; full
+      rewrite folds into 2S-E (post-validated-strategy).
 
 ---
 
