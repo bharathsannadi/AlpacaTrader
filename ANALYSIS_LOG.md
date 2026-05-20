@@ -1222,3 +1222,31 @@ chosen and 2S-B becomes active work.
 margin. Engineering quality directly informs how to do the unresolved
 options work correctly. But it changes the cost of doing Path A, not
 the probability Path A finds an edge. Decision unchanged.
+
+---
+## 2026-05-19 — DEEP READ round 10: /books/internet → NO-OP
+Triaged 3 PDFs (Fidelity Entry/Exit transcript, Fidelity GetPlan webinar
+2016, Schwab Technical-Analysis-for-Options deck) + 2 saved broker HTML
+pages (Schwab "3 Types of Options Exit Strategies", E*TRADE "Call
+Option Exit Strategy: Automating a Closure").
+
+**All broker pedagogy / standard order-type tutorials.** Content
+overwhelmingly covers: 50% loss / 100% gain / trailing-stop / OCO /
+"pre-determine exit" / "have a plan" — exactly the textbook premium-%
+doctrine that:
+- Is ALREADY codified in KB §3 (pre-planned exits / Thomsett) +
+  §11 (Brooks Trader's Equation) + our `TRAIL_GIVE_BACK_PCT`
+  implementation.
+- Has been **empirically disproven for our edge** by our own backtests
+  (S0 naked options PF 0.92; Tier-1 H-RUN PF 0.88 @5bp).
+
+**KB cross-ref:** no ❓ GAP. KB intentionally NOT updated — broker
+pedagogy doesn't add durable principles 8 master texts and our backtests
+haven't already covered (and refuted for our use case). Padding KB with
+broker tutorials would violate the selectivity discipline + give
+unwarranted weight to the very approach our evidence rejects.
+
+**Verdict:** 3rd honest no-op in succession (round 6 Risk-Mgmt, round 9
+library expansion, round 10 internet). Convergence remains; the source
+exhaustion pattern itself is informative — the bottleneck is FRAME, not
+KNOWLEDGE inputs. Strategic synthesis stands.
