@@ -809,6 +809,67 @@ both are valid (KB §6 EMA Signal Alignment).
 
 ---
 
+## 19. Daily Mean-Reversion (Connors RSI-2) — Path A Rules
+*Validated 2026-05-20. Backtest: Test PF 1.32@3bp / 1.29@5bp OOS walk-forward. Paper incubation started 2026-05-20.*
+
+> These rules govern the **only cost-robust validated strategy** in this project as of 2026-05-20.
+> They are pre-specified and frozen — do not modify mid-incubation.
+
+### Strategy Rules (pre-specified, non-negotiable)
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Trend filter | Close > SMA(200) | Long only in bull regime (§8 Gunn: un-conditioned = no edge) |
+| Entry trigger | RSI(2) < 10 | Extreme short-term oversold in uptrend = mean-reversion setup |
+| Exit trigger | RSI(2) > 70 at prior close | Oversold condition resolved — exit next open |
+| Stop loss | 2 × ATR(14) below entry | Volatility-scaled hard stop (§8 Connors/Raschke: volatility filter) |
+| Time cap | 10 trading days | Trade does not resolve → exit regardless |
+| Risk per trade | $200 | Fixed dollar risk, sized via shares = RISK_BUDGET / (2 × ATR14) |
+| Max concurrent | 5 positions | 20% portfolio risk / 4% per trade (§4: maximum exposure) |
+| Direction | Long only | Bear-side tested and failed (PF 1.05 @3bp) — long-only is the keeper |
+| Universe | 39 large-cap stocks | Pre-specified; no cherry-picking mid-incubation |
+| Data | yfinance daily EOD bars | Free, sufficient for daily strategy; no intraday data needed |
+| Execution | Alpaca market order at next open | Enter/exit at open after EOD signal fires |
+
+### What This Strategy Is NOT
+
+- It is **not a trend-following strategy** — it fades short-term pullbacks within a longer uptrend
+- It is **not an options strategy** — shares only; options costs destroy this edge (§5 Sinclair transaction-cost hierarchy)
+- It is **not a prediction** — it reacts to a mechanical RSI condition, no forecast required (§8 Covel)
+- It is **not discretionary** — the LLM debate gate does NOT apply; RSI<10 above SMA200 = enter, full stop
+
+### Rules Inherited from KB (applicable sections only)
+
+1. **Regime gate is mandatory** (§8 Gunn): SMA200 IS the regime filter. Never remove it. A raw RSI(2)<10 signal without the SMA200 filter fires in bear markets where mean-reversion fails.
+2. **Expectancy over win rate** (§8 Covel): 66% win rate is a feature; the edge lives in the payoff ratio. Do not "fix" the strategy because some symbols have 50-55% win rates — judge by PF, not win%.
+3. **Cost-robust gate is non-negotiable** (§12 Davey): PF must hold at BOTH 3bp AND 5bp slippage OOS. This strategy cleared it. If re-run on new data and it fails, strategy goes back to paper-only regardless of live P&L.
+4. **Validation ladder** (§12 Davey): we are at rung 3 (paper incubation). Do not skip to real money. 4-week minimum before GO_LIVE_CHECKLIST §4 box can be checked.
+5. **Fixed risk per trade** (§4 KB + §8 Sinclair Kelly): $200/trade = 4% of $5K account. Do NOT size up on "high conviction" symbols — every signal gets the same size (§7 rule 9: "same size rule for every trade").
+6. **Pre-defined stop before entry** (§4 + §7): ATR stop is computed at signal time and placed as a native Alpaca stop order immediately. No discretion on stop placement.
+7. **Do not over-optimize** (§12 Davey): the RSI thresholds (10 entry / 70 exit), SMA window (200), ATR multiplier (2.0) are FROZEN from the pre-specified backtest. Do not tune them on new data — that is curve-fitting.
+8. **Paper trading minimum before live** (§13 Thomsett): 4 weeks / ~15-20 paper trades minimum. Check mechanics, not P&L.
+
+### Paper Incubation Checklist (4-week clock, started 2026-05-20)
+
+What to verify — mechanics only, P&L verdict comes later:
+
+- [ ] EOD scheduler fires at 4:10 PM ET on every trading day (no misses)
+- [ ] Morning confirm fires at 9:35 AM ET (fills confirmed, stops updated)
+- [ ] Fill prices within reasonable range of prior close (slippage check)
+- [ ] Native stop orders activate and fill on adverse moves
+- [ ] Position file stays accurate across restarts / crashes
+- [ ] launchd auto-restarts app on crash with no data loss
+- [ ] No Python exceptions or scheduler hangs over 4 weeks
+
+### Known Limitations (documented, not excuses)
+
+- **38.5% max drawdown** on $5K account (OOS, 5-concurrent cap): concentrated in Feb 2025 multi-name selloff. Acceptable per user's stated $1K/day (20%) loss tolerance. Would be ~4% on a $50K account.
+- **16/39 symbols lose in OOS test**: universe filter (ATR%/liquidity rule) is a pending TODO — must be pre-specified and OOS-tested before applying, not cherry-picked.
+- **2022 bear year PF 0.85**: strategy is regime-dependent. SMA200 filter reduces exposure in bear markets but does not eliminate it entirely. This is expected and acceptable.
+- **Long-only**: no short/bear side. Acceptable given long-only passed and bear-side failed the cost-robust gate.
+
+---
+
 ## Appendix: Quick Rules Summary
 
 | Rule | Threshold | Action |
