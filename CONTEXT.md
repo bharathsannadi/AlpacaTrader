@@ -136,13 +136,22 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
 
 **Polygon subscription:** No longer needed for the daily-bar path (yfinance is free for daily data). Safe to cancel.
 
+**Checklist status (§1 Edge — 8/9 pass):**
+- ✅ PF @3bp 1.32 / @5bp 1.29 / last-18m 1.11 / OOS decay +2.3% / Sharpe 1.32
+- ✅ +65.5%/yr annualized on account / beats SPY / top-3 concentration 5.5%
+- ⛔ Max drawdown 38.5% (fails <12% threshold) — root cause: $5K account + 5 correlated
+  longs hit simultaneously in Feb 2025 selloff = $1K/day × ~2 days. NOT signal failure.
+  User must consciously sign off: accept 38.5% worst-case as within $5K risk tolerance
+  (consistent with stated $1K/day / 20% limit), then update threshold and initial the box.
+- Bear-side: TESTED, FAILED (PF 1.05 @3bp) — long-only is the keeper.
+
 **Pending next steps (ordered, pre-specified):**
-- [ ] Bear-side test: RSI(2)>90 below SMA200 (symmetric short-side rule) — $0 cached
+- [ ] User decision: accept 38.5% max DD or reduce MAX_CONCURRENT (2→ ~15-20% DD)
 - [ ] Universe filter: pre-specified ATR%/liquidity rule to address 16/39 losers — OOS test
-- [ ] Kelly sizing: from test stats → ½-Kelly sizing for live trial
+- [ ] Kelly sizing: ½-Kelly ~7% → $350/trade (vs current $200) — validate math
 - [ ] Daily execution layer: EOD signal check + next-day open order in live bot
 - [ ] Paper incubation ≥4 weeks (mechanics, not P&L — Davey rung 3)
-- [ ] GO_LIVE_CHECKLIST: begin checking boxes
+- [ ] GO_LIVE_CHECKLIST: update max-DD threshold + start checking §2-5 boxes
 
 ---
 

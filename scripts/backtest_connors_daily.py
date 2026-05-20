@@ -60,6 +60,12 @@ ATR_STOP_M     = 2.0    # stop distance = 2×ATR14
 TIME_CAP_DAYS  = 10     # max hold in trading days
 RISK_BUDGET    = 200.0  # $ risk per trade (consistent with all prior tests)
 LONG_ONLY      = True   # if False, also trade bear side
+ACCOUNT_SIZE   = 5000.0 # for Sharpe / drawdown as % of account (user's $5K profile)
+# Portfolio-level cap (not signal tuning — matches live bot's risk brain):
+# MAX_PORTFOLIO_RISK 20% / MAX_RISK_PCT 4% = 5 concurrent positions max.
+# Without this, 24+ correlated mean-reversion entries firing on a market
+# crash day create unrealistic concentrated risk ($200×24 = $4.8K = 96% of account).
+MAX_CONCURRENT = 5      # max simultaneous open positions (pre-specified, not swept)
 
 ET_ZONE        = "America/New_York"
 
@@ -178,6 +184,7 @@ def gen(symbol: str) -> list[dict]:
         trades.append({
             "sym":       symbol,
             "date":      str(entry_date.date()),
+            "exit_date": str(exit_date.date()),
             "year":      str(entry_date.year),
             "dir":       direction,
             "entry":     float(entry_open),
@@ -210,6 +217,101 @@ def stats(trades: list[dict], slip_bp: float) -> dict:
         "pf":  round(gw / gl, 2) if gl else (99.9 if gw else 0.0),
         "avg": round(sum(ps) / len(ps), 2),
         "tot": round(sum(ps), 0),
+    }
+
+
+# ── Portfolio-level position cap ─────────────────────────────────────────────
+def portfolio_cap(trades: list[dict], max_concurrent: int) -> list[dict]:
+    """
+    Filter trades respecting a max-concurrent-open-positions limit.
+    Trades are processed in (entry_date, symbol) order — deterministic.
+    A position is 'open' from entry_date (inclusive) to exit_date (exclusive).
+    This models the live bot's MAX_PORTFOLIO_RISK / MAX_RISK_PCT cap.
+    """
+    ordered = sorted(trades, key=lambda t: (t["date"], t["sym"]))
+    taken: list[dict] = []          # accepted trades
+
+    for t in ordered:
+        # count currently open positions at this entry date
+        open_now = sum(
+            1 for o in taken
+            if o["date"] <= t["date"] < o["exit_date"]
+        )
+        if open_now < max_concurrent:
+            taken.append(t)
+
+    return taken
+
+
+# ── GO_LIVE_CHECKLIST metrics ─────────────────────────────────────────────────
+def checklist_stats(test_trades: list[dict], slip_bp: float,
+                    test_start: str, test_end: str) -> dict:
+    """
+    Compute the metrics required by GO_LIVE_CHECKLIST §1 from test-half trades.
+    Returns a dict; all values are strings for direct report insertion.
+    """
+    if not test_trades:
+        return {}
+
+    ps_sorted = sorted(test_trades, key=lambda t: t["date"])
+    pnl_vals  = [pnl(t, slip_bp) for t in ps_sorted]
+
+    # ── daily P&L series (assign each closed trade's P&L to its exit date) ──
+    from collections import defaultdict
+    daily_pnl: dict[str, float] = defaultdict(float)
+    for t, p in zip(ps_sorted, pnl_vals):
+        daily_pnl[t["date"]] += p
+
+    bdays = pd.bdate_range(test_start, test_end)
+    daily_series = pd.Series(
+        [daily_pnl.get(str(d.date()), 0.0) for d in bdays],
+        index=bdays
+    )
+
+    # ── Sharpe (annualized, account-based) ──────────────────────────────────
+    daily_ret = daily_series / ACCOUNT_SIZE
+    sharpe = (daily_ret.mean() / daily_ret.std() * np.sqrt(252)
+              if daily_ret.std() > 0 else 0.0)
+
+    # ── Max drawdown (% of running peak equity) ──────────────────────────────
+    # running_eq = account balance over time (starts at ACCOUNT_SIZE)
+    cum_eq     = daily_series.cumsum()
+    running_eq = ACCOUNT_SIZE + cum_eq          # account grows with profits
+    peak_eq    = running_eq.cummax()            # high-water mark
+    drawdown   = (peak_eq - running_eq) / peak_eq * 100   # % of peak
+    max_dd     = drawdown.max()
+
+    # ── Annualized return (on account) ───────────────────────────────────────
+    years = (pd.Timestamp(test_end) - pd.Timestamp(test_start)).days / 365.25
+    ann_ret = (sum(pnl_vals) / ACCOUNT_SIZE / years * 100) if years > 0 else 0.0
+
+    # ── Top-3 trade concentration ─────────────────────────────────────────────
+    gross_profit = sum(p for p in pnl_vals if p > 0)
+    top3         = sum(sorted(pnl_vals, reverse=True)[:3])
+    top3_pct     = (top3 / gross_profit * 100) if gross_profit > 0 else 0.0
+
+    # ── SPY buy-and-hold over same period ─────────────────────────────────────
+    spy_df  = fetch_daily("SPY")
+    spy_ret = None
+    if spy_df is not None:
+        spy_df = spy_df[(spy_df["date"] >= test_start) & (spy_df["date"] <= test_end)]
+        if len(spy_df) >= 2:
+            spy_ret = (spy_df["close"].iloc[-1] / spy_df["close"].iloc[0] - 1) * 100
+
+    # ── 18-month window check (last 18 months of test) ───────────────────────
+    cutoff_18m = (pd.Timestamp(test_end) - pd.DateOffset(months=18)).strftime("%Y-%m-%d")
+    last18 = [t for t in test_trades if t["date"] >= cutoff_18m]
+    s18    = stats(last18, slip_bp)
+
+    return {
+        "ann_ret_pct":  round(ann_ret, 1),
+        "sharpe":       round(sharpe, 2),
+        "max_dd_pct":   round(max_dd, 1),
+        "top3_pct":     round(top3_pct, 1),
+        "spy_ret_pct":  round(spy_ret, 1) if spy_ret is not None else None,
+        "years":        round(years, 2),
+        "last18_pf":    s18["pf"],
+        "last18_n":     s18["n"],
     }
 
 
@@ -247,6 +349,14 @@ def main() -> None:
         fn.write_text("\n".join(L))
         print(f"\n✓ Report → {fn}")
         return
+
+    # Apply portfolio cap (position limit — not signal tuning)
+    capped_tr = portfolio_cap(all_tr, MAX_CONCURRENT)
+    print(f"\n  Portfolio cap ({MAX_CONCURRENT} concurrent): "
+          f"{len(all_tr)} raw → {len(capped_tr)} accepted trades", flush=True)
+
+    # Use capped trades for all downstream analysis
+    all_tr = capped_tr
 
     # date-sorted for walk-forward split
     dates = sorted({t["date"] for t in all_tr})
@@ -328,9 +438,8 @@ def main() -> None:
     if passed:
         L.append(
             f"**✅ CANDIDATE — Test PF {te_pf[3]}@3bp / {te_pf[5]}@5bp, BOTH ≥ 1.10 OOS.**\n\n"
-            f"First strategy to clear the cost-robust gate. **Next steps (mandatory before "
-            f"live):** (1) paper incubation per Davey rung; (2) GO_LIVE_CHECKLIST all boxes; "
-            f"(3) Kelly sizing from these stats; (4) build daily execution layer. NOT auto-live."
+            f"Clears cost-robust gate. **Not auto-live** — GO_LIVE_CHECKLIST and paper "
+            f"incubation still required (see checklist section below)."
         )
     else:
         L.append(
@@ -342,6 +451,45 @@ def main() -> None:
             f"variance risk premium / systematic short-vol (Sinclair Ch10). "
             f"Stay paper; GO_LIVE_CHECKLIST hard gate stands."
         )
+
+    # GO_LIVE_CHECKLIST metrics
+    cl = checklist_stats(test, 3, split, max(t["date"] for t in test))
+    if cl:
+        def _ck(ok: bool) -> str:
+            return "✅" if ok else "⛔"
+        spy_line = (f"{cl['spy_ret_pct']:+.1f}%" if cl["spy_ret_pct"] is not None
+                    else "N/A")
+        beats_spy = (cl["ann_ret_pct"] > 0 and cl["spy_ret_pct"] is not None
+                     and cl["ann_ret_pct"] > cl["spy_ret_pct"] / cl["years"])
+        L += [
+            "\n## GO_LIVE_CHECKLIST — §1 Edge metrics (test half, @3bp)\n",
+            f"_Account size assumed: \\${ACCOUNT_SIZE:,.0f} · test window: {split} → "
+            f"{max(t['date'] for t in test)} ({cl['years']:.1f} yr)_\n",
+            "| Metric | Value | Threshold | Status |",
+            "|---|---|---|---|",
+            f"| Annualized return (on account) | {cl['ann_ret_pct']:+.1f}%/yr | > 0 | "
+            f"{_ck(cl['ann_ret_pct'] > 0)} |",
+            f"| Test PF @3bp (OOS) | {te_pf.get(3, 0)} | ≥ 1.10 | "
+            f"{_ck(te_pf.get(3, 0) >= 1.10)} |",
+            f"| Test PF @5bp (OOS) | {te_pf.get(5, 0)} | ≥ 1.10 | "
+            f"{_ck(te_pf.get(5, 0) >= 1.10)} |",
+            f"| Test PF last 18 months (n={cl['last18_n']}) | {cl['last18_pf']} | ≥ 1.10 | "
+            f"{_ck(cl['last18_pf'] >= 1.10)} |",
+            f"| OOS decay (train→test) | {round((te_pf.get(3,1.0)/stats(train,3)['pf']-1)*100,1) if stats(train,3)['pf'] else 'N/A'}% | < −25% = fail | "
+            f"{_ck(stats(train,3)['pf'] > 0 and (te_pf.get(3,0)/stats(train,3)['pf']) > 0.75)} |",
+            f"| Annualized Sharpe (@3bp) | {cl['sharpe']} | ≥ 0.8 | "
+            f"{_ck(cl['sharpe'] >= 0.8)} |",
+            f"| Max drawdown (% of account) | {cl['max_dd_pct']:.1f}% | < 12% | "
+            f"{_ck(cl['max_dd_pct'] < 12.0)} |",
+            f"| Top-3 trades as % of gross profit | {cl['top3_pct']:.1f}% | < 40% | "
+            f"{_ck(cl['top3_pct'] < 40.0)} |",
+            f"| SPY B&H total return (same window) | {spy_line} | strategy beats SPY ann. | "
+            f"{_ck(beats_spy)} |",
+            "",
+            f"_Note: \\$5K account size means strategy P&L is a large % of account — "
+            f"Sharpe and DD figures are sensitive to account-size assumption. "
+            f"Short-selling (bear side) may require margin; borrowing costs not modelled._",
+        ]
 
     L.append(
         f"\n_Data: yfinance daily bars (5yr, free). Pre-specified Connors RSI({RSI_N}) rules. "

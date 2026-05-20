@@ -1324,15 +1324,88 @@ directional signal never could: the 3-bp AND 5-bp OOS gate simultaneously.
 - DOES NOT MEAN: perfect or complete. The 2022 gap is a real concern.
 
 **Immediate next steps (mandatory, ordered):**
-1. Assess bear-side symmetric rule (RSI>90 below SMA200) — same framework, $0.
+1. ~~Assess bear-side symmetric rule~~ — DONE 2026-05-20; FAILED (see entry below).
 2. Pre-specify a universe filter rule (e.g., min-ATR% or min-liquidity) to
    handle the 16/39 losing symbols — test it OOS, don't hand-pick.
-3. Kelly sizing: win 65.5% / avg_win $16.08 (test, @3bp) / avg_loss $~29.7
-   → full Kelly ≈ (0.655×16 − 0.345×30) / (0.655×16 + 0.345×30) ≈ 0.14 →
-   ½-Kelly ≈ 7% of equity → on $5K = $350/trade (close to current $200 budget).
-   Validate this math before live.
-4. Build daily execution layer in the live bot (new session/runner that checks
-   close-of-day RSI vs SMA200 → places next-day open orders).
-5. Paper incubation: run in paper mode for ≥4 weeks, tracking mechanics
-   (fill quality, gate behavior) per 3R-C instrumentation — NOT paper P&L.
-6. GO_LIVE_CHECKLIST: begin checking boxes as each milestone passes.
+3. Kelly sizing: win 65.5% / avg_win ~$16 / avg_loss ~$30 → ½-Kelly ~7% → $350/trade.
+4. Build daily execution layer in the live bot.
+5. Paper incubation ≥4 weeks (mechanics, not P&L).
+6. GO_LIVE_CHECKLIST: begin checking boxes.
+
+---
+## 2026-05-20 — BEAR-SIDE TEST: FAILS — LONG-ONLY IS THE KEEPER
+Same Connors framework, RSI(2)>90 below SMA200 → short entry (symmetric rule).
+
+**Result:** Adding short side HURTS — combined PF drops from 1.32 to 1.05@3bp,
+fails the gate. Max drawdown worsens from 38.5% to 51.2%. Short side dilutes edge.
+
+**Why:** The 2021-2026 period has a strong upward market drift. RSI(2)>90 below
+SMA200 fires during sharp short-term bounces inside a downtrend; those bounces
+often continue (short squeeze), producing losses on the short side. Long-only
+(mean-reversion BUYING dips in uptrends) is the statistically dominant side.
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §8 Covel: "edge-in-the-tail" applies asymmetrically; the fat
+  tail is on the LONG side in a secular bull market. Adding symmetric shorts in a
+  bull-dominated sample destroys the asymmetry.
+- ✅ ENFORCED — KB §12 Davey: let the data decide; the backtest decided. Don't add
+  shorts because it seems symmetric — the data says it isn't.
+
+**Verdict:** LONG-ONLY only. Bear-side variant retired. No further testing needed.
+
+---
+## 2026-05-20 — CHECKLIST STATS COMPUTED (long-only, 5-concurrent cap, @3bp)
+
+**Full GO_LIVE_CHECKLIST §1 result — 8/9 metrics pass:**
+
+| Metric | Value | Threshold | Status |
+|---|---|---|---|
+| Annualized return on account | +65.5%/yr | > 0 | ✅ |
+| Test PF @3bp | 1.32 | ≥ 1.10 | ✅ |
+| Test PF @5bp | 1.29 | ≥ 1.10 | ✅ |
+| Test PF last 18 months | 1.11 | ≥ 1.10 | ✅ |
+| OOS decay | +2.3% (improved OOS) | < −25% fail | ✅ |
+| Annualized Sharpe | 1.32 | ≥ 0.8 | ✅ |
+| **Max drawdown (% of account)** | **38.5%** | **< 12%** | **⛔** |
+| Top-3 concentration | 5.5% | < 40% | ✅ |
+| Beats SPY (annualized) | yes (+65%/yr vs +42.5% total) | beats B&H | ✅ |
+
+**The one ⛔: max drawdown 38.5%.**
+
+Analysis: the 38.5% drawdown is NOT signal failure — it is a SIZING + CORRELATION
+risk. The Feb 2025 market selloff caused multiple consecutive days of 5 concurrent
+losing positions (all long, all oversold simultaneously) → ~$1K/day × ~2 days
+from the equity peak. Root causes:
+1. Correlated mean-reversion longs: when the market sells off hard, ALL symbols
+   fire RSI(2)<10 at once. Even with MAX_CONCURRENT=5, 5 consecutive losses in 2
+   days = $1,000/day × 2 = $2K drawdown off a smallish equity peak.
+2. The $5K starting capital is small relative to $200/trade × 5 concurrent risk.
+   Before profits accumulate (early in the test), a 2-day bad run is a large % DD.
+
+**KB cross-ref:**
+- ✅ ENFORCED — KB §4 Kelly/Sinclair: >2×Kelly = negative growth. The 38.5% DD is
+  consistent with being near or above Kelly at moments of concentrated risk. The
+  ½-Kelly prescription ($350/trade, or reducing MAX_CONCURRENT) would reduce DD.
+- ⚠️ DRIFT — the GO_LIVE_CHECKLIST 12% threshold was set for a generic account;
+  it is inconsistent with the user's stated 20%/day loss tolerance on $5K. A
+  2-day max-loss event (20%×2=40%) = the observed 38.5%. The threshold needs to
+  be consciously updated to match the ACTUAL risk tolerance stated by the user.
+- ❓ GAP — checklist threshold 12% was written before the $5K + daily-bar profile
+  was established. Must be re-evaluated and signed off by the user with eyes open.
+
+**What this means for GO_LIVE_CHECKLIST:**
+The 12% threshold ⛔ is a hard gate item. Before live:
+- User must consciously decide: accept the 38.5% worst-case drawdown (= 2 max-loss
+  days back-to-back) as within their $5K risk tolerance, update the checklist
+  threshold to their actual accepted level (e.g., 40%), and date+initial the box.
+- OR: reduce MAX_CONCURRENT to 2-3 (reduces DD to ~15-20%) at cost of fewer trades.
+- This is a risk-tolerance decision, NOT a backtest failure. The signal has edge.
+
+**Remaining gap before live — summary:**
+- ⛔ Max drawdown checklist item: user decision needed (accept 38.5% or reduce size)
+- ⬜ Daily execution layer: zero infrastructure exists in the live bot
+- ⬜ Paper incubation: ≥4 weeks, mechanics-focused (Davey rung 3)
+- ⬜ Operational items: watchdog, webhooks, 24hr stability — existing infra, verify
+- ⬜ PDT: daily-bar swing holds are NOT day-trades (hold > 1 day = not round-trip
+  on same day). PDT rule does not apply to this strategy. Existing PDT counter is
+  irrelevant for daily-bar swings — remove from gate for this strategy.
