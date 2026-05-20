@@ -131,6 +131,20 @@ not strategy-dependent.
 
 **NEW TOP PRIORITY → item 1S (shares-path validation):** per-symbol & per-year robustness on S3, cost/slippage sensitivity, then a shares advisory/paper harness. Nothing in the options backlog ships before this answers whether the +$70k is broad-based & deployable.
 
+### 🆕 PA-UI — Daily strategy UI cleanup (added 2026-05-20, user request)
+
+Pivot to Path A (daily Connors RSI-2) makes the current intraday options dashboard vestigial. Strategy runs headlessly — this is a quality-of-life task, NOT a blocker for paper incubation.
+
+**Remove:** intraday charts + signal markers, session start/stop buttons, auto-schedule toggle, auto-trade toggle, bull/bear debate panel, live VIX display, trades-today (intraday) panel, backtest panel, options-specific settings (DTE / stop% / profit-target% / VIX-max), symbol switcher (SPY/AMZN/GOOG/MSFT/NVDA/META).
+
+**Add:** daily positions panel (symbol, entry date, shares, entry price, stop, live RSI2, unrealized P&L), last EOD run summary card (date, signals fired, entries/exits), "Run EOD now" button (manual trigger → `daily_eod_now` SocketIO event), paper incubation tracker (trade count, days running, win/loss tally).
+
+**Keep:** login/auth, account value + buying power, dry-run toggle, health/uptime indicators.
+
+**Sequence:** do AFTER ≥1 week of paper trades so you know what information is actually useful to surface. Status: ⬜ TODO — low priority, post-incubation.
+
+---
+
 ### 🆕 1S-EXP — Expanded universe (39 tickers) — added 2026-05-18 (user request)
 
 Universe = existing 6 (SPY AMZN GOOG MSFT NVDA META) + 33 new: CBRE GLW QQQ
