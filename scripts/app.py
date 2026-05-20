@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 
 import spy_auto_trader as trader
 import news_filter
+import daily_trader as dtrad
 from security import (
     get_or_create_secret_key,
     LoginTracker,
@@ -1034,15 +1035,50 @@ def _launch_session(sym: str) -> None:
 
 EOD_REVIEW_HOUR   = 15
 EOD_REVIEW_MINUTE = 35
+# Daily strategy scheduler windows (Connors RSI-2 daily-bar, Path A)
+DAILY_EOD_HOUR      = 16
+DAILY_EOD_MINUTE    = 10   # ~4:10 PM ET — after close prints
+DAILY_MORNING_HOUR  = 9
+DAILY_MORNING_MINUTE = 35  # ~9:35 AM ET — fills confirmed by then
 LOG_PATH = os.path.join(os.path.dirname(__file__), "spy_trader.log")
+
+
+# ── Daily strategy background tasks (Connors RSI-2, Path A) ──────────────────
+def _run_daily_eod() -> None:
+    """EOD routine for the daily Connors RSI(2) strategy.
+    Fires at DAILY_EOD_HOUR:DAILY_EOD_MINUTE ET. Respects app's dry_run state."""
+    with _state_lock:
+        dry = state["dry_run"]
+    try:
+        log.info("Daily strategy: EOD routine starting")
+        summary = dtrad.run_eod(dry_run=dry)
+        socketio.emit("daily_eod_result", summary)
+        log.info(f"Daily strategy EOD: {summary}")
+    except Exception as e:
+        log.error(f"Daily strategy EOD failed: {e}")
+
+
+def _run_daily_morning() -> None:
+    """Morning fill-confirm for the daily Connors RSI(2) strategy.
+    Fires at DAILY_MORNING_HOUR:DAILY_MORNING_MINUTE ET."""
+    with _state_lock:
+        dry = state["dry_run"]
+    try:
+        log.info("Daily strategy: morning fill-confirm starting")
+        dtrad.run_morning(dry_run=dry)
+        log.info("Daily strategy: morning fill-confirm complete")
+    except Exception as e:
+        log.error(f"Daily strategy morning confirm failed: {e}")
 
 
 def scheduler():
     """Background task: auto-start all-day sessions at 9:30 ET on weekdays,
-    and fire end-of-day learning review at 15:35 ET.
-    Also fires immediately if market is already open when user logs in."""
-    session_fired_on = None
-    eod_fired_on     = None
+    fire end-of-day learning review at 15:35 ET, and run the Connors RSI(2)
+    daily-bar strategy EOD/morning routines."""
+    session_fired_on       = None
+    eod_fired_on           = None
+    daily_eod_fired_on     = None
+    daily_morning_fired_on = None
 
     while True:
         socketio.sleep(15)
@@ -1083,6 +1119,39 @@ def scheduler():
             with _state_lock:
                 trades_snapshot = list(state["trades_today"])
             socketio.start_background_task(_run_eod_review, trades_snapshot)
+
+        # Daily strategy: morning fill-confirm at 9:35 ET
+        if (now.hour * 60 + now.minute) >= (DAILY_MORNING_HOUR * 60 + DAILY_MORNING_MINUTE) \
+                and daily_morning_fired_on != today:
+            daily_morning_fired_on = today
+            socketio.start_background_task(_run_daily_morning)
+
+        # Daily strategy: EOD routine at 4:10 PM ET
+        if (now.hour * 60 + now.minute) >= (DAILY_EOD_HOUR * 60 + DAILY_EOD_MINUTE) \
+                and daily_eod_fired_on != today:
+            daily_eod_fired_on = today
+            socketio.start_background_task(_run_daily_eod)
+
+
+@socketio.on("daily_status")
+@require_auth
+def on_daily_status():
+    """Emit current Connors RSI(2) daily strategy position list to caller."""
+    try:
+        positions = dtrad._load_positions()
+        socketio.emit("daily_positions", {"positions": positions}, to=request.sid)
+    except Exception as e:
+        log.warning(f"daily_status failed: {e}")
+
+
+@socketio.on("daily_eod_now")
+@require_auth
+def on_daily_eod_now():
+    """Manually trigger the daily EOD routine (useful outside market hours for testing)."""
+    with _state_lock:
+        dry = state["dry_run"]
+    socketio.start_background_task(_run_daily_eod)
+    log.info(f"Daily EOD manually triggered (dry_run={dry})")
 
 
 @socketio.on("start_session")

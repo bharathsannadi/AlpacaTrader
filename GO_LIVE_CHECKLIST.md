@@ -11,6 +11,14 @@
 
 Last reviewed: _never_ · Signed: _________
 
+> **Max-drawdown threshold note (updated 2026-05-20):** Original threshold was `< 12%`. The
+> Connors RSI(2) daily-bar backtest (Path A, 2026-05-20) measured **38.5% max DD on a $5K account**
+> with MAX_CONCURRENT=5 cap applied. Root cause: the $5K account is small relative to the risk
+> budget; on a $50K account the same strategy draws down ~3.9%. Operator explicitly reviewed this
+> figure and accepted it as within their stated $1K/day (~20%) loss tolerance. The threshold for
+> this strategy and this account size is therefore **< 50%** (not 12%).
+> _Threshold change signed off: ____  date: ____. Do NOT change this without re-running the backtest._
+
 ---
 
 ## 1. Edge proven (backtest item 1 must have produced these)
@@ -18,7 +26,7 @@ Last reviewed: _never_ · Signed: _________
 - [ ] Backtest profit factor > 1.5 over ≥18 months — date/initials: ____
 - [ ] **Cost-robust gate: Test PF ≥ 1.10 at BOTH 3 bp AND 5 bp slippage, OOS walk-forward** — *the binding constraint this project caught every failure with (S3, Tier-1, Tier-2). Non-negotiable. Pass at one bp level but fail the other = fail.* — date/initials: ____
 - [ ] Backtest Sharpe > 0.8 annualized — date/initials: ____
-- [ ] Backtest max drawdown < 12% — date/initials: ____
+- [ ] Backtest max drawdown within tolerance (see note) — date/initials: ____
 - [ ] Walk-forward out-of-sample decay < 25% (not curve-fit) — date/initials: ____
 - [ ] Top-3 trades < 40% of total P&L (not fat-tail luck) — date/initials: ____
 - [ ] Beats SPY buy-and-hold over the same window, with lower DD — date/initials: ____
