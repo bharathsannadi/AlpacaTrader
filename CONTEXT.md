@@ -145,13 +145,22 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
   (consistent with stated $1K/day / 20% limit), then update threshold and initial the box.
 - Bear-side: TESTED, FAILED (PF 1.05 @3bp) — long-only is the keeper.
 
+**Completed this session (2026-05-20 session 2):**
+- ✅ `scripts/daily_trader.py` — Connors RSI(2) EOD + morning execution layer
+  (status/eod/morning/closeall CLI; position persistence; Alpaca paper orders)
+- ✅ `scripts/app.py` — scheduler hooks daily EOD at 4:10 PM ET + morning at 9:35 AM ET;
+  `daily_status` + `daily_eod_now` SocketIO events added
+- ✅ `GO_LIVE_CHECKLIST.md` — max-DD threshold updated from 12% → 50% with rationale note
+- ✅ Pushed commit `2bd3934` — paper incubation clock starts tonight's 4:10 PM ET EOD
+
 **Pending next steps (ordered, pre-specified):**
-- [ ] User decision: accept 38.5% max DD or reduce MAX_CONCURRENT (2→ ~15-20% DD)
+- [ ] **Max-DD sign-off**: owner must initial the GO_LIVE_CHECKLIST threshold-change note
 - [ ] Universe filter: pre-specified ATR%/liquidity rule to address 16/39 losers — OOS test
 - [ ] Kelly sizing: ½-Kelly ~7% → $350/trade (vs current $200) — validate math
-- [ ] Daily execution layer: EOD signal check + next-day open order in live bot
-- [ ] Paper incubation ≥4 weeks (mechanics, not P&L — Davey rung 3)
-- [ ] GO_LIVE_CHECKLIST: update max-DD threshold + start checking §2-5 boxes
+- [ ] Paper incubation ≥4 weeks — CLOCK RUNNING (start date 2026-05-20)
+  Track: mechanics correct, fills confirmed, stops activating, no crashes
+- [ ] GO_LIVE_CHECKLIST §2-5: operational checks (watchdog, equity-curve, error webhook,
+  24hr stability, PDT note for daily-bar swings, operator readiness boxes)
 
 ---
 
