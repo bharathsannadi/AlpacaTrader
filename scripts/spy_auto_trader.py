@@ -197,6 +197,7 @@ MIN_OPTION_OI_STOCK  = 200        # single stocks: lower floor, but still 2× th
 MIN_OPTION_VOLUME    = 10         # minimum contracts traded today at the strike
 IV_RANK_MAX          = 70         # skip buying options when IVR > 70% (extreme premium only)
 IV_RANK_WARN         = 50         # log a caution when IVR is in the 50–70% zone
+IV_RANK_SPREAD       = 30         # KB §2: IVR ≥ 30% → route to debit spread, not naked
 DELTA_TARGET_MIN     = 0.40       # prefer contracts with delta in [0.40, 0.65]
 DELTA_TARGET_MAX     = 0.65       # outside this range we still trade but log a warning
 IV_RANK_REFRESH_MIN  = 60         # re-fetch IV rank every N minutes during a session
@@ -1846,6 +1847,89 @@ def find_atm_option(direction, expiry_str, current_price, symbol: str = "SPY",
         return None, None
 
 
+def find_otm_option(direction: str, expiry_str: str, long_strike: float,
+                    current_price: float, symbol: str = "SPY",
+                    current_iv: Optional[float] = None):
+    """Find the OTM short leg for a debit spread (KB §5).
+
+    KB §5: "Buy ATM (delta ~0.50), sell 1–2 strikes further OTM (delta ~0.20–0.30)."
+    For SPY: spread width $1–$3. Target short leg delta ~0.25.
+    Returns (option_dict, strike_price) matching find_atm_option convention, or (None, None).
+    """
+    if not TRADING_CLIENT:
+        return None, None
+    symbol = symbol.upper()
+    contract_type = ContractType.CALL if direction == "bull" else ContractType.PUT
+
+    # Search window: 1–5 strikes past the long strike (KB §5: $1–$3 width for SPY)
+    if direction == "bull":
+        lo = round(long_strike + 0.50, 2)
+        hi = round(long_strike + 5.00, 2)
+    else:
+        lo = round(long_strike - 5.00, 2)
+        hi = round(long_strike - 0.50, 2)
+
+    try:
+        request = GetOptionContractsRequest(
+            underlying_symbols  = [symbol],
+            status              = AssetStatus.ACTIVE,
+            expiration_date     = datetime.fromisoformat(expiry_str).date(),
+            type                = contract_type,
+            strike_price_gte    = str(min(lo, hi)),
+            strike_price_lte    = str(max(lo, hi)),
+            limit               = 20,
+        )
+        response  = TRADING_CLIENT.get_option_contracts(request)
+        contracts = response.option_contracts or []
+        if not contracts:
+            log.warning(f"find_otm_option({symbol}): no OTM contracts in range [{lo:.2f}, {hi:.2f}]")
+            return None, None
+
+        min_oi = MIN_OPTION_OI_ETF if symbol in ETF_SYMBOLS else MIN_OPTION_OI_STOCK
+        liquid = [c for c in contracts if int(c.open_interest or 0) >= min_oi]
+        if not liquid:
+            liquid = contracts  # OI data may lag; fall back
+
+        today       = datetime.now(ET).date()
+        expiry_date = datetime.fromisoformat(expiry_str).date()
+        tte_days    = max(1, (expiry_date - today).days)
+        opt_type_str = "call" if contract_type == ContractType.CALL else "put"
+        iv_decimal   = (current_iv / 100.0) if (current_iv and current_iv > 0) else 0.25
+
+        # Target delta ~0.25 for the short leg (KB §5: "sell 1–2 strikes OTM, delta ~0.20–0.30")
+        OTM_DELTA_TARGET = 0.25
+
+        def _score(c):
+            strike = float(c.strike_price)
+            delta  = bs_delta(current_price, strike, tte_days, iv=iv_decimal, option_type=opt_type_str)
+            return abs(abs(delta) - OTM_DELTA_TARGET)
+
+        contracts_sorted = sorted(liquid, key=_score)
+        c = contracts_sorted[0]
+
+        chosen_delta = bs_delta(
+            current_price, float(c.strike_price), tte_days,
+            iv=iv_decimal, option_type=opt_type_str
+        )
+        log.info(
+            f"  Spread short leg: {c.symbol}  strike=${c.strike_price}  "
+            f"delta≈{chosen_delta:.2f}  OI={int(c.open_interest or 0)}"
+        )
+        return {
+            "symbol":          c.symbol,
+            "id":              c.id,
+            "strike_price":    str(c.strike_price),
+            "expiration_date": c.expiration_date.isoformat(),
+            "type":            opt_type_str,
+            "underlying":      symbol,
+            "open_interest":   int(c.open_interest or 0),
+            "delta":           chosen_delta,
+        }, float(c.strike_price)
+    except Exception as e:
+        log.warning(f"find_otm_option({symbol}): {e}")
+        return None, None
+
+
 # Time-of-day spread tightening (§P1-E). The first and last few minutes
 # have 3-5× normal option spreads (opening auction unwind / closing
 # imbalance). A fill there silently pays that spread as slippage. We
@@ -3445,6 +3529,10 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                 f"  ⚠️  IVR={iv_rank:.0f}% — options EXPENSIVE. "
                 f"Entries will be skipped until IV normalises below {IV_RANK_MAX}%."
             )
+        elif iv_rank >= IV_RANK_SPREAD:
+            log.warning(
+                f"  ⚠️  IVR={iv_rank:.0f}% ≥ {IV_RANK_SPREAD}% — routing to debit spread (KB §2/§5)."
+            )
         elif iv_rank > IV_RANK_WARN:
             log.warning(f"  ⚠️  IVR={iv_rank:.0f}% — elevated. Proceeding with caution.")
     htf_trend = fetch_30min_trend(symbol)
@@ -3822,30 +3910,71 @@ def all_day_session(symbol: str = "SPY", prior_levels=None, vix=None,
                                                         current_iv=_current_iv)
                     if option:
                         mid, spread, _bid, ask = option_mid_and_spread(option)
-                        log.info(f"  Found: ${strike} {expiry}  mid=${mid:.2f}  ask=${ask:.2f}  spread=${spread:.2f}")
+                        # KB §2: IVR ≥ IV_RANK_SPREAD → debit spread; else naked long
+                        use_spread = (iv_rank is not None and iv_rank >= IV_RANK_SPREAD)
+                        route_tag  = f"SPREAD (IVR={iv_rank:.0f}%)" if use_spread else "NAKED"
+                        log.info(
+                            f"  Found: ${strike} {expiry}  mid=${mid:.2f}  "
+                            f"ask=${ask:.2f}  spread=${spread:.2f}  route={route_tag}"
+                        )
                         if spread_acceptable(mid, spread):
-                            contracts = size_contracts(acct_val, mid)
                             order = None
-                            if contracts > 0:
-                                try:
-                                    order = place_trade(
-                                        option, contracts, mid, direction, reason, atr, symbol,
-                                        indicators=indicators_snapshot, ask_price=ask,
-                                        underlying_price=current, signal_class=signal_class,
-                                    )
-                                except Exception as _place_exc:
-                                    log.error(f"place_trade raised unexpectedly: {_place_exc}", exc_info=True)
-                                    order = None
-                            last_trade_ts = now  # always stamp — prevents signal flood even on error
-                            _record_global_trade()  # global cooldown across symbols
+                            if use_spread:
+                                # ── Debit spread path (KB §2, §5) ──────────────
+                                short_option, short_strike = find_otm_option(
+                                    direction, expiry, strike, current, symbol,
+                                    current_iv=_current_iv,
+                                )
+                                if short_option:
+                                    _, _s, short_bid, _sa = option_mid_and_spread(short_option)
+                                    net_debit = round(mid - short_bid, 2)
+                                    width     = abs(float(short_option["strike_price"]) - strike)
+                                    ratio     = net_debit / width if width > 0 else 999
+                                    if net_debit > 0 and 0.20 <= ratio <= 0.50:
+                                        contracts = size_contracts(acct_val, net_debit)
+                                        if contracts > 0:
+                                            try:
+                                                order = place_spread_trade(
+                                                    option, short_option, contracts, net_debit,
+                                                    direction, reason, atr, symbol,
+                                                    indicators=indicators_snapshot,
+                                                    underlying_price=current,
+                                                    signal_class=signal_class,
+                                                )
+                                            except Exception as _exc:
+                                                log.error(f"place_spread_trade raised: {_exc}", exc_info=True)
+                                    else:
+                                        log.warning(
+                                            f"  Spread ratio {ratio:.2f} outside 0.20–0.50 or debit≤0 "
+                                            f"— falling back to naked."
+                                        )
+                                else:
+                                    log.warning("  Spread short leg not found — falling back to naked.")
+
+                            if not use_spread or order is None:
+                                # ── Naked long path (KB §2: IVR < 30%) ─────────
+                                contracts = size_contracts(acct_val, mid)
+                                if contracts > 0:
+                                    try:
+                                        order = place_trade(
+                                            option, contracts, mid, direction, reason, atr, symbol,
+                                            indicators=indicators_snapshot, ask_price=ask,
+                                            underlying_price=current, signal_class=signal_class,
+                                        )
+                                    except Exception as _place_exc:
+                                        log.error(f"place_trade raised unexpectedly: {_place_exc}", exc_info=True)
+                                        order = None
+
+                            last_trade_ts = now
+                            _record_global_trade()
                             if order:
-                                record_daily_entry()  # count toward MAX/SUB_PDT daily cap
+                                record_daily_entry()
                             if order and not DRY_RUN:
                                 filled_qty = wait_for_fill(str(order.id), stop_event=stop_event)
                                 if filled_qty > 0:
                                     acct_val = account_value()
                                     update_slippage_for_order(str(order.id), target_mid=mid)
-                                    _notify_fill()  # refresh UI account stats post-entry
+                                    _notify_fill()
                                 else:
                                     log.warning(
                                         f"Entry order {order.id} not filled — removing position."
@@ -3986,6 +4115,158 @@ def classify_signal(evaluator_name: str, reason: str = "") -> str:
             return "mean_rev"
         return "trend_cont"
     return "unknown"
+
+
+def place_spread_trade(long_option, short_option, contracts: int, net_debit: float,
+                       direction: str, reason: str, atr=None, symbol: str = "SPY",
+                       indicators: dict = None, underlying_price: float = 0.0,
+                       signal_class: str = "unknown"):
+    """
+    Submit a debit spread (BTO long leg + STO short leg) and register the position.
+
+    KB §5: debit spread for IVR 30–70%. Stop = 50% of net debit (KB §9).
+    Net debit = long_mid − short_bid. Max loss = net_debit × contracts × 100.
+
+    Spread exit logic piggybacks on the existing check_positions() monitor via the
+    long-leg OCC symbol. short_occ is stored in the position dict so _close_spread_short_leg()
+    can BTC it alongside every STC of the long leg.
+    """
+    symbol     = symbol.upper()
+    long_occ   = long_option["symbol"]
+    short_occ  = short_option["symbol"]
+    long_strike  = long_option["strike_price"]
+    short_strike = short_option["strike_price"]
+    expiry       = long_option["expiration_date"]
+    opt_type     = long_option["type"]
+    width        = abs(float(short_strike) - float(long_strike))
+    max_loss     = round(net_debit * contracts * 100, 2)
+
+    stop_opt   = round(net_debit * (1 - STOP_LOSS_PCT), 2)   # KB §9: 50% stop
+    target_50  = round(net_debit * 1.50, 2)
+    target_75  = round(net_debit * (1 + PROFIT_TARGET), 2)
+
+    log.info("─" * 60)
+    log.info(f"SPREAD SIGNAL [{direction.upper()}]  {reason}")
+    log.info(f"  Long leg : {symbol} {expiry} ${long_strike} {opt_type.upper()} ({long_occ})")
+    log.info(f"  Short leg: {symbol} {expiry} ${short_strike} {opt_type.upper()} ({short_occ})")
+    log.info(f"  Width    : ${width:.2f}  Net debit: ${net_debit:.2f}  ({contracts} contract(s))")
+    log.info(f"  Max loss : ${max_loss:,.2f}  |  Stop: ${stop_opt:.2f} (-{int(STOP_LOSS_PCT*100)}%)")
+    log.info(f"  Target 1 : ${target_50:.2f}  (+50%)  Target 2: ${target_75:.2f}  (+{int(PROFIT_TARGET*100)}%)")
+    log.info(f"  Mode     : {'PAPER' if PAPER_MODE else 'LIVE'}  [KB §5 debit spread, IVR≥{IV_RANK_SPREAD}%]")
+    log.info("─" * 60)
+
+    details = {
+        "direction":   direction, "reason": reason, "symbol": symbol,
+        "occ_symbol":  long_occ,  "short_occ": short_occ,
+        "expiry":      expiry,    "type": opt_type,
+        "contracts":   contracts, "net_debit": net_debit,
+        "stop_price":  stop_opt,  "target_50": target_50, "target_75": target_75,
+        "max_loss":    max_loss,  "width": width,
+        "dry_run":     DRY_RUN,   "paper": PAPER_MODE,
+        "_indicators": indicators or {},
+    }
+
+    if TRADE_CONFIRM_CALLBACK is not None:
+        approved = TRADE_CONFIRM_CALLBACK(details)
+    elif DRY_RUN:
+        approved = False
+    else:
+        confirm = input(
+            f"\n⚠️  SPREAD ORDER: {contracts}x {long_occ}/{short_occ} net=${net_debit:.2f}? (yes/no): "
+        ).strip().lower()
+        approved = confirm == "yes"
+
+    if DRY_RUN:
+        verdict = "ALLOWED" if approved else "SKIPPED"
+        log.info(f"[DRY RUN] Spread {verdict} — no order placed.")
+        if approved:
+            dry_id = f"DRY_SPR_{long_occ}_{int(time.time() * 1000)}"
+            _narr  = generate_signal_narrative(details)
+            pos_record = register_trade(
+                long_occ, net_debit, contracts, direction, symbol,
+                order_id=dry_id, is_dry_run=True, narrative=_narr,
+                signal_class=signal_class,
+            )
+            # Tag the position dict with short_occ for spread close
+            with _positions_lock:
+                for p in _open_positions:
+                    if p["occ_symbol"] == long_occ and p.get("order_id") == dry_id:
+                        p["short_occ"] = short_occ
+                        p["net_debit"] = net_debit
+                        p["spread_width"] = width
+                        break
+            _notify_fill()
+        return None
+
+    if not approved:
+        log.info("Spread trade skipped by user.")
+        return None
+
+    if not pdt_check():
+        return None
+
+    # BTO long leg
+    try:
+        cid_long = f"spr_long_{long_occ}_{int(time.time())}"
+        long_mid, _spread, _bid, long_ask = option_mid_and_spread(long_option)
+        long_limit = round(long_mid + 0.05, 2)
+        long_order = TRADING_CLIENT.submit_order(LimitOrderRequest(
+            symbol          = long_occ,
+            qty             = contracts,
+            side            = OrderSide.BUY,
+            type            = OrderType.LIMIT,
+            time_in_force   = TimeInForce.DAY,
+            limit_price     = long_limit,
+            client_order_id = f"{cid_long}_mid",
+        ))
+        log.info(f"BTO {contracts}x {long_occ} @ ${long_limit:.2f}  id={long_order.id}")
+    except Exception as e:
+        log.error(f"BTO {long_occ} failed: {e}")
+        return None
+
+    # STO short leg
+    short_order_id = None
+    try:
+        cid_short = f"spr_short_{short_occ}_{int(time.time())}"
+        short_mid, _spread, short_bid, _ask = option_mid_and_spread(short_option)
+        short_limit = round(max(short_bid - 0.05, short_bid * 0.90, 0.01), 2)
+        short_order = TRADING_CLIENT.submit_order(LimitOrderRequest(
+            symbol          = short_occ,
+            qty             = contracts,
+            side            = OrderSide.SELL,
+            type            = OrderType.LIMIT,
+            time_in_force   = TimeInForce.DAY,
+            limit_price     = short_limit,
+            client_order_id = f"{cid_short}_mid",
+        ))
+        short_order_id = str(short_order.id)
+        log.info(f"STO {contracts}x {short_occ} @ ${short_limit:.2f}  id={short_order_id}")
+    except Exception as e:
+        log.warning(f"STO {short_occ} failed: {e} — spread now naked long, monitor closely")
+
+    # Register position using long leg — stop/targets based on net_debit
+    _narr = generate_signal_narrative(details)
+    register_trade(
+        long_occ, net_debit, contracts, direction, symbol,
+        order_id=str(long_order.id), is_dry_run=False,
+        narrative=_narr, signal_class=signal_class,
+    )
+    # Attach spread metadata so _close_spread_short_leg() can BTC the short leg
+    with _positions_lock:
+        for p in _open_positions:
+            if p["occ_symbol"] == long_occ and p.get("order_id") == str(long_order.id):
+                p["short_occ"]    = short_occ
+                p["net_debit"]    = net_debit
+                p["spread_width"] = width
+                break
+    _notify_fill()
+    TRADE_MEMORY.record(
+        symbol=symbol, direction=direction,
+        indicators=details.get("_indicators", {}),
+        entry_price=net_debit, trade_id=str(long_order.id),
+        is_dry_run=False,
+    )
+    return long_order
 
 
 def register_trade(occ_symbol: str, entry_price: float, contracts: int,
@@ -4436,6 +4717,22 @@ def _close_option_position(occ_symbol: str, qty: int, reason: str,
         return False
 
 
+def _close_spread_short_leg(pos: dict) -> None:
+    """BTC the short leg of a debit spread when the long leg is closed.
+
+    Called alongside every _close_option_position() for spread positions.
+    No-op for naked positions or dry-runs.
+    """
+    short_occ = pos.get("short_occ")
+    if not short_occ or pos.get("is_dry_run"):
+        return
+    try:
+        TRADING_CLIENT.close_position(short_occ)
+        log.info(f"BTC spread short leg: {short_occ}")
+    except Exception as e:
+        log.warning(f"BTC short leg {short_occ} failed: {e}")
+
+
 def _remove_position(pos: dict) -> None:
     # Record a PDT day-trade if this position opened AND fully closed on the
     # same trading day. Real positions only — dry-runs aren't real day-trades.
@@ -4490,6 +4787,7 @@ def flatten_all_positions(reason: str = "user kill switch") -> dict:
         cid = f"flatten_{occ}_{int(time.time())}"
         ok = _close_option_position(occ, qty, f"FLATTEN: {reason}", client_order_id=cid)
         if ok:
+            _close_spread_short_leg(pos)
             with _positions_lock:
                 for p in _open_positions:
                     if p["occ_symbol"] == occ:
@@ -4699,6 +4997,8 @@ def check_positions() -> list[dict]:
                 cid = pos["close_client_id"]
             ok = _close_option_position(occ, close_qty, reason, client_order_id=cid)
             if ok:
+                if pos["remaining"] - close_qty <= 0:
+                    _close_spread_short_leg(pos)
                 pos["remaining"] -= close_qty
                 if pos["remaining"] <= 0:
                     _remove_position(pos)

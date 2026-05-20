@@ -133,6 +133,8 @@ not strategy-dependent.
 
 ### 🆕 PA-UI — Daily strategy UI cleanup (added 2026-05-20, user request)
 
+> **EOD 2026-05-20:** Remove Stop Loss / Profit Target / DTE Min / DTE Max controls — they exist in UI + state + validation but are never consumed by the trader. Dead weight. Files: `templates/index.html` lines ~1119–1154, `static/main.js` lines ~291–294 and ~549–552, `scripts/app.py` state defaults lines ~338–341 and update handler lines ~929–951, `scripts/security.py` `validate_stop_loss` / `validate_profit_target`.
+
 Pivot to Path A (daily Connors RSI-2) makes the current intraday options dashboard vestigial. Strategy runs headlessly — this is a quality-of-life task, NOT a blocker for paper incubation.
 
 **Remove:** intraday charts + signal markers, session start/stop buttons, auto-schedule toggle, auto-trade toggle, bull/bear debate panel, live VIX display, trades-today (intraday) panel, backtest panel, options-specific settings (DTE / stop% / profit-target% / VIX-max), symbol switcher (SPY/AMZN/GOOG/MSFT/NVDA/META).
