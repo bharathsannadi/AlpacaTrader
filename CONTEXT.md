@@ -112,6 +112,40 @@ These are the constraints we'll design tomorrow's backtest and risk-gate work ar
 
 ---
 
+## 📌 Last session: 2026-05-20 (Path A — daily-bar frame-shift)
+
+> Prior session (2026-05-19) research arc summarised below.
+
+**PATH A CHOSEN (2026-05-20).** User decision: frame-shift to daily-bar harness
+rather than accept the no-edge verdict on 5-min intraday (Path B).
+
+**FIRST COST-ROBUST PASS IN THE PROJECT (2026-05-20):**
+Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
+- **Test PF 1.31@3bp / 1.28@5bp — BOTH ≥ 1.10 OOS ✅**
+- 2,325 trades, 39 syms, 5yr yfinance daily, pre-specified rules, walk-fwd 50/50
+- OOS decay −11.5% (Davey <25% threshold ✅ non-curve-fit)
+- **23/39 symbols positive in test half** (decent breadth)
+- Exit: 75% mean_revert / 23% atr_stop / 2% time_cap
+- 2022 (bear year) PF 0.79 — regime-dependent; bear-side rule needed
+- Report: `backtest_results/backtest_connors_daily_2026-05-20.md`
+
+**New scripts (committed):**
+- `scripts/daily_data.py` — yfinance daily OHLC fetcher + CSV cache (39 syms, 5yr)
+- `scripts/backtest_connors_daily.py` — Connors RSI(2) daily walk-fwd backtest
+- `daily_cache/` at `~/Desktop/AlpacaTrader_Data/daily_cache/` (39 CSVs, $0)
+
+**Polygon subscription:** No longer needed for the daily-bar path (yfinance is free for daily data). Safe to cancel.
+
+**Pending next steps (ordered, pre-specified):**
+- [ ] Bear-side test: RSI(2)>90 below SMA200 (symmetric short-side rule) — $0 cached
+- [ ] Universe filter: pre-specified ATR%/liquidity rule to address 16/39 losers — OOS test
+- [ ] Kelly sizing: from test stats → ½-Kelly sizing for live trial
+- [ ] Daily execution layer: EOD signal check + next-day open order in live bot
+- [ ] Paper incubation ≥4 weeks (mechanics, not P&L — Davey rung 3)
+- [ ] GO_LIVE_CHECKLIST: begin checking boxes
+
+---
+
 ## 📌 Last session: 2026-05-19 (strategy-research arc)
 
 > Earlier infra work (position persistence, two-way Alpaca reconcile, tab UI,
@@ -161,17 +195,9 @@ These are the constraints we'll design tomorrow's backtest and risk-gate work ar
 - [x] **Tier-2 Connors mean-reversion** — DONE 2026-05-19: **0 trades**
       (intraday EMA200 doesn't form on 5-min bars; canonical Connors is
       a DAILY-bar signal). Frame confirmed as bottleneck.
-- [ ] 🚧 **DECISION FORK (the real next step — see ANALYSIS_LOG strategic
-      synthesis 2026-05-19):**
-      **A) Frame shift** — build daily-bar harness, retest Connors at
-      native timeframe + Tier-A candidates (PEAD, overnight/intraday
-      return decomp, VIX term-structure, variance risk premium /
-      systematic short-vol). Real new infra (~2-4 weeks); intraday code
-      mostly doesn't transfer.
-      **B) Stop** — accept project as rigorous research + apparatus +
-      permanent data backup. Don't deploy real money. Professional
-      outcome. Most retail accounts end far worse.
-      Don't decide tonight; wait BK-B verification, cancel Polygon, sleep on it.
+- [x] 🚧 **DECISION FORK → RESOLVED 2026-05-20: PATH A (frame shift)**
+      **Connors RSI(2) on daily bars PASSES: Test PF 1.31@3bp / 1.28@5bp ✅**
+      Next: bear-side rule → universe filter → Kelly → daily exec layer → paper.
 - [ ] 3R code-update tasks (now broken down in TODO 3R, ~10h total, $0,
       transfers across A/B): A.1-4 risk-mode separation; B.1-3 Kelly +
       hard GO_LIVE gates; C.1-4 paper learning instrumentation.
