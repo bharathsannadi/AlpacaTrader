@@ -1184,3 +1184,41 @@ DAILY bars — testing it there is Path A (frame shift), not Path C.
   deploy real money. Defensible professional outcome.
 Path C (more inside the intraday frame) is now empirically closed —
 both Tier-1 and Tier-2 attempted; both failed/inapplicable.
+
+---
+## 2026-05-19 — EXTERNAL PROJECT #3: sirnfs/OptionSuite (substantively useful)
+Cloned read-only (not executed). Writeup:
+External_Projects/ANALYSIS_OptionSuite.md.
+
+**What:** Event-driven options backtest FRAMEWORK with proper engineering:
+PutVertical/Strangle as first-class multi-leg objects with leg-match
+invariants enforced at construction; unit tests for every primitive;
+pluggable data providers (iVolatility configured); decimal precision.
+NOT a strategy; doesn't claim an edge.
+
+**KB cross-ref:**
+- ✅ relevant infra — directly addresses how S2 broke (sparse short-leg
+  / pricing-bar mismatch). Their PutVertical ctor *raises* on mismatched
+  expirations — exactly the discipline our S2 lacked. Unit tests per
+  primitive would have caught the 0.2%-winrate impossibility immediately.
+- ⚠️ KB §12 — framework ≠ edge. Adopting it does not move Edge score.
+  Whether ANY strategy clears the cost-robust gate is a separate
+  empirical question (current answer: no in 5-min intraday).
+- ❓ no NEW durable principle — engineering patterns, not doctrine. The
+  Trader's Equation / Kelly / cost-hierarchy stuff is already in KB.
+- 📍 DATA POINTER: iVolatility ($50-200/mo) provides full historical
+  option CHAIN snapshots — different from Polygon Options Developer
+  (single-contract OHLC). For proper spread backtesting iVolatility may
+  be a better data spend than Polygon Options Advanced ($199 NBBO).
+  Real finding worth recording.
+
+**Action:** enrich 2S-B (broken spread harness) with OptionSuite
+architectural references — leg-match invariants, primitive-as-object,
+event-driven loop, unit tests per primitive. NOT wholesale code adoption
+(always read what you adopt). Reference becomes useful only if Path A
+chosen and 2S-B becomes active work.
+
+**Verdict:** the most useful external repo this session by a wide
+margin. Engineering quality directly informs how to do the unresolved
+options work correctly. But it changes the cost of doing Path A, not
+the probability Path A finds an edge. Decision unchanged.
