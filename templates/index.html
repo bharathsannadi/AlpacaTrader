@@ -986,6 +986,12 @@
     font-size: 9px; text-transform: uppercase; letter-spacing: .6px;
     color: var(--muted); padding: 0 4px; white-space: nowrap;
   }
+  .grid-dropdown {
+    background: var(--card2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 3px 8px; font-family: var(--mono); font-size: 11px;
+    cursor: pointer; outline: none; appearance: auto;
+  }
+  .grid-dropdown:hover, .grid-dropdown:focus { border-color: var(--cyan); color: var(--cyan); }
 
   /* Legacy .chart-card kept in case backtest panel references it */
   .chart-card { display: flex; flex-direction: column; min-height: 0; padding: 8px 10px; }
@@ -1129,12 +1135,13 @@
   <button class="symbol-tab settings-tab active" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
   <div class="tab-divider"></div>
   <button class="symbol-tab" id="tab-chart" onclick="showCharts()">Charts</button>
-  <span class="tab-grid-label">Grid</span>
-  <button class="symbol-tab grid-btn" id="grid-btn-1" data-count="1" onclick="setGridCount(1)">1</button>
-  <button class="symbol-tab grid-btn" id="grid-btn-2" data-count="2" onclick="setGridCount(2)">2</button>
-  <button class="symbol-tab grid-btn" id="grid-btn-4" data-count="4" onclick="setGridCount(4)">4</button>
-  <button class="symbol-tab grid-btn" id="grid-btn-6" data-count="6" onclick="setGridCount(6)">6</button>
-  <button class="symbol-tab grid-btn" id="grid-btn-8" data-count="8" onclick="setGridCount(8)">8</button>
+  <select class="grid-dropdown" id="grid-dropdown" onchange="setGridCount(parseInt(this.value))">
+    <option value="1">1 Pane</option>
+    <option value="2">2 Panes</option>
+    <option value="4">4 Panes</option>
+    <option value="6">6 Panes</option>
+    <option value="8">8 Panes</option>
+  </select>
   <div class="tab-divider"></div>
   <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>

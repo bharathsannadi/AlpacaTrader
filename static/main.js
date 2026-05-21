@@ -844,27 +844,34 @@ class ChartPane {
     this._ind = this._loadIndicators();
 
     // Main chart LWC handles
-    this.chart          = null;
-    this.candleSeries   = null;
-    this.vwapSeries     = null;
-    this.ema9Series     = null;
-    this.ema21Series    = null;
-    this.ema200Series   = null;
-    this.volumeSeries   = null;
-    this.bbUpperSeries  = null;
-    this.bbMidSeries    = null;
-    this.bbLowerSeries  = null;
+    this.chart        = null;
+    this.candleSeries = null;
+    this.volumeSeries = null;
+    // Moving averages
+    this.sma20Series  = null; this.sma50Series  = null; this.sma200Series = null;
+    this.ema20Series  = null; this.ema50Series  = null; this.ema200Series = null;
+    this.vwapSeries   = null;
+    // Bands & channels
+    this.bbUpperSeries    = null; this.bbMidSeries     = null; this.bbLowerSeries    = null;
+    this.donchUpperSeries = null; this.donchLowerSeries = null;
+    this.keltUpperSeries  = null; this.keltLowerSeries  = null;
+    // Trend
+    this.psarBullSeries = null; this.psarBearSeries = null;
+    this.stBullSeries   = null; this.stBearSeries   = null;
+    this.ichiTenSeries  = null; this.ichiKijSeries  = null;
+    this.ichiSenASeries = null; this.ichiSenBSeries = null;
 
-    // Sub-chart LWC handles (RSI / MACD)
-    this.rsiChart         = null;
-    this.rsiSeries        = null;
-    this.macdChart        = null;
-    this.macdFastSeries   = null;
-    this.macdSignalSeries = null;
-    this.macdHistSeries   = null;
+    // Sub-chart LWC handles (RSI / MACD / Stochastic)
+    this.rsiChart         = null; this.rsiSeries        = null;
+    this.macdChart        = null; this.macdFastSeries   = null;
+    this.macdSignalSeries = null; this.macdHistSeries   = null;
+    this.stochChart       = null; this.stochKSeries     = null; this.stochDSeries = null;
+    this._stochBodyEl     = null;
 
     this._priceLines = [];
     this._posLines   = [];
+    this._pivotLines = [];
+    this._fvgLines   = [];
     this._signalTips = {};
     this._shadeEls   = [];
 
@@ -886,7 +893,14 @@ class ChartPane {
       const s = localStorage.getItem(`chart_pane_${this.id}_ind`);
       if (s) return JSON.parse(s);
     } catch (_) {}
-    return { ema9: false, ema21: false, ema200: true, vwap: true, bb: false, rsi: false, macd: false };
+    return {
+      sma20: false, sma50: false, sma200: false,
+      ema20: false, ema50: false, ema200: true, vwap: true,
+      bb: false, donchian: false, keltner: false,
+      psar: false, supertrend: false, ichimoku: false,
+      pivots: false, fvg: false, vpoc: false,
+      rsi: false, macd: false, stoch: false,
+    };
   }
 
   _saveIndicators() {
@@ -928,15 +942,29 @@ class ChartPane {
     // ── Indicators panel (slides in from left) ──────────────────────────────
     const IND_DEFS = [
       { section: "MOVING AVERAGES" },
-      { key: "ema9",   color: "#22d3ee", label: "EMA (9)" },
-      { key: "ema21",  color: "#a78bfa", label: "EMA (21)" },
+      { key: "sma20",  color: "#fb923c", label: "SMA (20)" },
+      { key: "sma50",  color: "#fbbf24", label: "SMA (50)" },
+      { key: "sma200", color: "#ef4444", label: "SMA (200)" },
+      { key: "ema20",  color: "#22d3ee", label: "EMA (20)" },
+      { key: "ema50",  color: "#a78bfa", label: "EMA (50)" },
       { key: "ema200", color: "#f43f5e", label: "EMA (200)" },
       { key: "vwap",   color: "#f59e0b", label: "VWAP" },
       { section: "BANDS & CHANNELS" },
-      { key: "bb",     color: "#60a5fa", label: "Bollinger (20, 2)" },
+      { key: "bb",       color: "#60a5fa", label: "Bollinger (20, 2)" },
+      { key: "donchian", color: "#34d399", label: "Donchian (20)" },
+      { key: "keltner",  color: "#818cf8", label: "Keltner (20, 2)" },
+      { section: "TREND" },
+      { key: "psar",       color: "#e2e8f0", label: "Parabolic SAR" },
+      { key: "supertrend", color: "#00e5a0", label: "SuperTrend (10, 3)" },
+      { key: "ichimoku",   color: "#38bdf8", label: "Ichimoku Cloud" },
+      { section: "SUPPORT & RESISTANCE" },
+      { key: "pivots", color: "#94a3b8", label: "Pivot Points" },
+      { key: "fvg",    color: "#fde68a", label: "Fair Value Gaps" },
+      { key: "vpoc",   color: "#c084fc", label: "Volume Profile (POC)" },
       { section: "OSCILLATORS" },
-      { key: "rsi",    color: "#a78bfa", label: "RSI (14)" },
-      { key: "macd",   color: "#22d3ee", label: "MACD (12, 26, 9)" },
+      { key: "rsi",  color: "#a78bfa", label: "RSI (14)" },
+      { key: "macd", color: "#22d3ee", label: "MACD (12, 26, 9)" },
+      { key: "stoch",color: "#4ade80", label: "Stochastic (14, 3, 3)" },
     ];
     const indPanel = document.createElement("div");
     indPanel.className = "indicators-panel";
@@ -986,9 +1014,15 @@ class ChartPane {
     macdBody.id        = `pane-macd-${pid}`;
     macdBody.style.display = this._ind.macd ? "" : "none";
 
+    const stochBody = document.createElement("div");
+    stochBody.className = "pane-sub-body";
+    stochBody.id        = `pane-stoch-${pid}`;
+    stochBody.style.display = this._ind.stoch ? "" : "none";
+
     chartArea.appendChild(mainBody);
     chartArea.appendChild(rsiBody);
     chartArea.appendChild(macdBody);
+    chartArea.appendChild(stochBody);
 
     content.appendChild(indPanel);
     content.appendChild(chartArea);
@@ -997,10 +1031,11 @@ class ChartPane {
     pane.appendChild(content);
     gridEl.appendChild(pane);
 
-    this.paneEl      = pane;
-    this._bodyEl     = mainBody;
-    this._rsiBodyEl  = rsiBody;
-    this._macdBodyEl = macdBody;
+    this.paneEl       = pane;
+    this._bodyEl      = mainBody;
+    this._rsiBodyEl   = rsiBody;
+    this._macdBodyEl  = macdBody;
+    this._stochBodyEl = stochBody;
   }
 
   // ── Chart initialization ───────────────────────────────────────────────────
@@ -1025,14 +1060,32 @@ class ChartPane {
       upColor: "#00e5a0", downColor: "#ff3d68", borderUpColor: "#00e5a0", borderDownColor: "#ff3d68",
       wickUpColor: "#00e5a055", wickDownColor: "#ff3d6855", priceLineVisible: false,
     });
-    this.vwapSeries   = this.chart.addLineSeries({ color: "#f59e0b", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,  title: "VWAP"    });
-    this.ema9Series   = this.chart.addLineSeries({ color: "#22d3ee", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "EMA9"    });
-    this.ema21Series  = this.chart.addLineSeries({ color: "#a78bfa", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "EMA21"   });
-    this.ema200Series = this.chart.addLineSeries({ color: "#f43f5e", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, title: "EMA200d" });
-    // Bollinger Bands (hidden until enabled)
-    this.bbUpperSeries = this.chart.addLineSeries({ color: "#60a5fa66", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-    this.bbMidSeries   = this.chart.addLineSeries({ color: "#60a5fa99", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-    this.bbLowerSeries = this.chart.addLineSeries({ color: "#60a5fa66", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    const L = (color, w=1, style=0, title="", last=false) =>
+      this.chart.addLineSeries({ color, lineWidth: w, lineStyle: style, priceLineVisible: false, lastValueVisible: last, title });
+
+    // Moving averages
+    this.sma20Series  = L("#fb923c", 1, 0, "SMA20");
+    this.sma50Series  = L("#fbbf24", 1, 0, "SMA50");
+    this.sma200Series = L("#ef4444", 1, 2, "SMA200");
+    this.ema20Series  = L("#22d3ee", 1, 0, "EMA20");
+    this.ema50Series  = L("#a78bfa", 1, 0, "EMA50");
+    this.ema200Series = L("#f43f5e", 1, 2, "EMA200");
+    this.vwapSeries   = this.chart.addLineSeries({ color: "#f59e0b", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: "VWAP" });
+
+    // Bands & channels
+    this.bbUpperSeries    = L("#60a5fa55", 1, 0); this.bbMidSeries    = L("#60a5fa88", 1, 0); this.bbLowerSeries    = L("#60a5fa55", 1, 0);
+    this.donchUpperSeries = L("#34d39955", 1, 0); this.donchLowerSeries = L("#34d39955", 1, 0);
+    this.keltUpperSeries  = L("#818cf855", 1, 0); this.keltLowerSeries  = L("#818cf855", 1, 0);
+
+    // Trend
+    this.psarBullSeries = L("#e2e8f0", 1, 3, "PSAR↑");
+    this.psarBearSeries = L("#94a3b8", 1, 3, "PSAR↓");
+    this.stBullSeries   = L("#00e5a0", 2, 0, "ST↑");
+    this.stBearSeries   = L("#ff3d68", 2, 0, "ST↓");
+    this.ichiTenSeries  = L("#22d3ee", 1, 0, "Tenkan");
+    this.ichiKijSeries  = L("#f43f5e", 1, 0, "Kijun");
+    this.ichiSenASeries = L("#00e5a066", 1, 0, "SenkouA");
+    this.ichiSenBSeries = L("#ff3d6866", 1, 0, "SenkouB");
 
     this.volumeSeries = this.chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", color: "#3b82f660" });
     this.chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.88, bottom: 0 }, borderVisible: false });
@@ -1085,6 +1138,22 @@ class ChartPane {
           this.macdChart.applyOptions({ width: this._macdBodyEl.clientWidth, height: this._macdBodyEl.clientHeight });
       }).observe(this._macdBodyEl);
     }
+
+    // Stochastic sub-chart
+    if (this._stochBodyEl) {
+      this.stochChart = LightweightCharts.createChart(this._stochBodyEl, {
+        ...subBase, width: this._stochBodyEl.clientWidth || 300, height: this._stochBodyEl.clientHeight || 80,
+        timeScale: { visible: false },
+      });
+      this.stochKSeries = this.stochChart.addLineSeries({ color: "#4ade80", lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: "%K" });
+      this.stochDSeries = this.stochChart.addLineSeries({ color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: "%D" });
+      this.stochKSeries.createPriceLine({ price: 80, color: "#ff3d6855", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "OB" });
+      this.stochKSeries.createPriceLine({ price: 20, color: "#00e5a055", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "OS" });
+      new ResizeObserver(() => {
+        if (this.stochChart && this._stochBodyEl.clientWidth)
+          this.stochChart.applyOptions({ width: this._stochBodyEl.clientWidth, height: this._stochBodyEl.clientHeight });
+      }).observe(this._stochBodyEl);
+    }
   }
 
   // ── Indicator panel controls ───────────────────────────────────────────────
@@ -1101,8 +1170,9 @@ class ChartPane {
     this._saveIndicators();
     this._applyIndicatorButtons();
     // Show/hide sub-chart containers
-    if (this._rsiBodyEl)  this._rsiBodyEl.style.display  = this._ind.rsi  ? "" : "none";
-    if (this._macdBodyEl) this._macdBodyEl.style.display = this._ind.macd ? "" : "none";
+    if (this._rsiBodyEl)   this._rsiBodyEl.style.display   = this._ind.rsi   ? "" : "none";
+    if (this._macdBodyEl)  this._macdBodyEl.style.display  = this._ind.macd  ? "" : "none";
+    if (this._stochBodyEl) this._stochBodyEl.style.display = this._ind.stoch ? "" : "none";
     // Re-render with cached bars
     if (this._lastBars) this._renderData(this._lastBars, this._lastOverlays);
   }
@@ -1175,6 +1245,16 @@ class ChartPane {
     this._posLines.forEach(pl => { try { this.candleSeries.removePriceLine(pl); } catch (_) {} });
     this._posLines = [];
   }
+  _clearPivotLines() {
+    if (!this.candleSeries) return;
+    this._pivotLines.forEach(pl => { try { this.candleSeries.removePriceLine(pl); } catch (_) {} });
+    this._pivotLines = [];
+  }
+  _clearFVGLines() {
+    if (!this.candleSeries) return;
+    this._fvgLines.forEach(pl => { try { this.candleSeries.removePriceLine(pl); } catch (_) {} });
+    this._fvgLines = [];
+  }
   _clearShades() {
     this._shadeEls.forEach(el => el.remove());
     this._shadeEls = [];
@@ -1206,8 +1286,10 @@ class ChartPane {
   // ── Core render ────────────────────────────────────────────────────────────
   _renderData(bars, ov) {
     if (!this.candleSeries) return;
-    const newClose = bars.length ? bars[bars.length-1].close : null;
-    const clean    = arr => (arr || []).filter(p => p && p.value != null);
+    const n  = bars.length;
+    const clean = arr => (arr || []).filter(p => p && p.value != null);
+    const SET  = (s, d) => { if (s) s.setData(d); };
+    const OFF  = (...ss) => ss.forEach(s => { if (s) s.setData([]); });
 
     this.candleSeries.setData(bars);
     if (this.volumeSeries)
@@ -1216,50 +1298,122 @@ class ChartPane {
         color: (b.close >= b.open) ? "#00e5a055" : "#ff3d6855",
       })));
 
-    // Overlays from server — gated by indicator toggles
-    if (this.vwapSeries)   this.vwapSeries.setData(  this._ind.vwap  ? clean(ov.vwap)  : []);
-    if (this.ema9Series)   this.ema9Series.setData(   this._ind.ema9  ? clean(ov.ema9)  : []);
-    if (this.ema21Series)  this.ema21Series.setData(  this._ind.ema21 ? clean(ov.ema21) : []);
-    if (this.ema200Series) {
-      const e200 = ov.ema200d;
-      if (this._ind.ema200 && e200 && newClose && Math.abs((e200-newClose)/newClose) <= 0.03)
-        this.ema200Series.setData(bars.map(b => ({ time: b.time, value: e200 })));
-      else
-        this.ema200Series.setData([]);
-    }
+    // ── Moving averages ───────────────────────────────────────────────────────
+    const closes = bars.map(b => b.close);
+    const mkLine = (values, period) => {
+      const out = [];
+      for (let i = period-1; i < values.length; i++)
+        out.push({ time: bars[i].time, value: values[i] });
+      return out;
+    };
 
-    // Bollinger Bands (computed client-side)
-    if (this._ind.bb && bars.length >= 20) {
+    // SMA helper
+    const sma = (period) => {
+      const out = [];
+      let sum = 0;
+      for (let i = 0; i < n; i++) {
+        sum += closes[i];
+        if (i >= period) sum -= closes[i - period];
+        if (i >= period - 1) out.push({ time: bars[i].time, value: sum / period });
+      }
+      return out;
+    };
+
+    SET(this.sma20Series,  this._ind.sma20  ? sma(20)  : []);
+    SET(this.sma50Series,  this._ind.sma50  ? sma(50)  : []);
+    SET(this.sma200Series, this._ind.sma200 ? sma(200) : []);
+
+    const ema20v = ChartPane._ema(closes, 20);
+    const ema50v = ChartPane._ema(closes, 50);
+    const ema200v= ChartPane._ema(closes, 200);
+    SET(this.ema20Series,  this._ind.ema20  ? mkLine(ema20v,  20)  : []);
+    SET(this.ema50Series,  this._ind.ema50  ? mkLine(ema50v,  50)  : []);
+    SET(this.ema200Series, this._ind.ema200 ? mkLine(ema200v, 200) : []);
+
+    SET(this.vwapSeries, this._ind.vwap ? clean(ov.vwap) : []);
+
+    // ── Bands & channels ──────────────────────────────────────────────────────
+    if (this._ind.bb && n >= 20) {
       const { upper, mid, lower } = ChartPane._computeBB(bars);
-      if (this.bbUpperSeries) this.bbUpperSeries.setData(upper);
-      if (this.bbMidSeries)   this.bbMidSeries.setData(mid);
-      if (this.bbLowerSeries) this.bbLowerSeries.setData(lower);
-    } else {
-      if (this.bbUpperSeries) this.bbUpperSeries.setData([]);
-      if (this.bbMidSeries)   this.bbMidSeries.setData([]);
-      if (this.bbLowerSeries) this.bbLowerSeries.setData([]);
+      SET(this.bbUpperSeries, upper); SET(this.bbMidSeries, mid); SET(this.bbLowerSeries, lower);
+    } else OFF(this.bbUpperSeries, this.bbMidSeries, this.bbLowerSeries);
+
+    if (this._ind.donchian && n >= 20) {
+      const { upper, lower } = ChartPane._computeDonchian(bars);
+      SET(this.donchUpperSeries, upper); SET(this.donchLowerSeries, lower);
+    } else OFF(this.donchUpperSeries, this.donchLowerSeries);
+
+    if (this._ind.keltner && n >= 20) {
+      const { upper, lower } = ChartPane._computeKeltner(bars);
+      SET(this.keltUpperSeries, upper); SET(this.keltLowerSeries, lower);
+    } else OFF(this.keltUpperSeries, this.keltLowerSeries);
+
+    // ── Trend ─────────────────────────────────────────────────────────────────
+    if (this._ind.psar && n >= 3) {
+      const { bull, bear } = ChartPane._computePSAR(bars);
+      SET(this.psarBullSeries, bull); SET(this.psarBearSeries, bear);
+    } else OFF(this.psarBullSeries, this.psarBearSeries);
+
+    if (this._ind.supertrend && n >= 12) {
+      const { bull, bear } = ChartPane._computeSuperTrend(bars);
+      SET(this.stBullSeries, bull); SET(this.stBearSeries, bear);
+    } else OFF(this.stBullSeries, this.stBearSeries);
+
+    if (this._ind.ichimoku && n >= 52) {
+      const { tenkan, kijun, senkouA, senkouB } = ChartPane._computeIchimoku(bars);
+      SET(this.ichiTenSeries, tenkan); SET(this.ichiKijSeries, kijun);
+      SET(this.ichiSenASeries, senkouA); SET(this.ichiSenBSeries, senkouB);
+    } else OFF(this.ichiTenSeries, this.ichiKijSeries, this.ichiSenASeries, this.ichiSenBSeries);
+
+    // ── Support & resistance ──────────────────────────────────────────────────
+    this._clearPivotLines();
+    if (this._ind.pivots && n >= 2) {
+      const pv = ChartPane._computePivots(bars, this.interval);
+      if (pv && this.candleSeries) {
+        const pl = (price, color, title) => this.candleSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title });
+        this._pivotLines.push(pl(pv.pp, "#94a3b8", "PP"));
+        this._pivotLines.push(pl(pv.r1, "#f43f5e99", "R1")); this._pivotLines.push(pl(pv.r2, "#f43f5e66", "R2")); this._pivotLines.push(pl(pv.r3, "#f43f5e44", "R3"));
+        this._pivotLines.push(pl(pv.s1, "#00e5a099", "S1")); this._pivotLines.push(pl(pv.s2, "#00e5a066", "S2")); this._pivotLines.push(pl(pv.s3, "#00e5a044", "S3"));
+      }
     }
 
-    // RSI sub-chart
-    if (this._ind.rsi && this.rsiSeries && bars.length > 15) {
+    this._clearFVGLines();
+    if (this._ind.fvg && n >= 3) {
+      ChartPane._computeFVG(bars).forEach(g => {
+        const col = g.bull ? "#00e5a077" : "#ff3d6877";
+        this._fvgLines.push(this.candleSeries.createPriceLine({ price: g.top,    color: col, lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" }));
+        this._fvgLines.push(this.candleSeries.createPriceLine({ price: g.bottom, color: col, lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" }));
+      });
+    }
+
+    if (this._ind.vpoc && n >= 10) {
+      const vp = ChartPane._computeVPOC(bars);
+      if (vp && this.candleSeries) {
+        this._pivotLines.push(this.candleSeries.createPriceLine({ price: vp.poc,    color: "#c084fc",   lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: "POC" }));
+        this._pivotLines.push(this.candleSeries.createPriceLine({ price: vp.vaHigh, color: "#c084fc66", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "VAH" }));
+        this._pivotLines.push(this.candleSeries.createPriceLine({ price: vp.vaLow,  color: "#c084fc66", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "VAL" }));
+      }
+    }
+
+    // ── Oscillator sub-charts ─────────────────────────────────────────────────
+    if (this._ind.rsi && this.rsiSeries && n > 15) {
       this.rsiSeries.setData(ChartPane._computeRSI(bars));
       if (this.rsiChart) this.rsiChart.timeScale().fitContent();
-    } else if (this.rsiSeries) {
-      this.rsiSeries.setData([]);
-    }
+    } else if (this.rsiSeries) this.rsiSeries.setData([]);
 
-    // MACD sub-chart
-    if (this._ind.macd && this.macdFastSeries && bars.length > 27) {
+    if (this._ind.macd && this.macdFastSeries && n > 27) {
       const { macdData, signalData, histData } = ChartPane._computeMACD(bars);
-      this.macdFastSeries.setData(macdData);
-      this.macdSignalSeries.setData(signalData);
-      this.macdHistSeries.setData(histData);
+      this.macdFastSeries.setData(macdData); this.macdSignalSeries.setData(signalData); this.macdHistSeries.setData(histData);
       if (this.macdChart) this.macdChart.timeScale().fitContent();
-    } else if (this.macdFastSeries) {
-      this.macdFastSeries.setData([]); this.macdSignalSeries.setData([]); this.macdHistSeries.setData([]);
-    }
+    } else if (this.macdFastSeries) OFF(this.macdFastSeries, this.macdSignalSeries, this.macdHistSeries);
 
-    if (bars.length > 0) this.chart.timeScale().fitContent();
+    if (this._ind.stoch && this.stochKSeries && n >= 20) {
+      const { kData, dData } = ChartPane._computeStochastic(bars);
+      this.stochKSeries.setData(kData); this.stochDSeries.setData(dData);
+      if (this.stochChart) this.stochChart.timeScale().fitContent();
+    } else if (this.stochKSeries) OFF(this.stochKSeries, this.stochDSeries);
+
+    if (n > 0) this.chart.timeScale().fitContent();
   }
 
   // ── Socket data handler ────────────────────────────────────────────────────
@@ -1357,13 +1511,189 @@ class ChartPane {
   destroy() {
     this._stopAutoRefresh();
     this._clearShades();
-    if (this.rsiChart)  { try { this.rsiChart.remove();  } catch (_) {} this.rsiChart  = null; }
-    if (this.macdChart) { try { this.macdChart.remove(); } catch (_) {} this.macdChart = null; }
-    if (this.chart)     { try { this.chart.remove();     } catch (_) {} this.chart     = null; }
-    if (this.paneEl)    { this.paneEl.remove(); this.paneEl = null; }
+    this._clearPivotLines();
+    this._clearFVGLines();
+    if (this.rsiChart)   { try { this.rsiChart.remove();   } catch (_) {} this.rsiChart   = null; }
+    if (this.macdChart)  { try { this.macdChart.remove();  } catch (_) {} this.macdChart  = null; }
+    if (this.stochChart) { try { this.stochChart.remove(); } catch (_) {} this.stochChart = null; }
+    if (this.chart)      { try { this.chart.remove();      } catch (_) {} this.chart      = null; }
+    if (this.paneEl)     { this.paneEl.remove(); this.paneEl = null; }
   }
 
   // ── Client-side indicator computation ──────────────────────────────────────
+
+  // ATR (Wilder's smoothing)
+  static _atr(bars, period=14) {
+    const tr = bars.map((b,i) => !i ? b.high-b.low :
+      Math.max(b.high-b.low, Math.abs(b.high-bars[i-1].close), Math.abs(b.low-bars[i-1].close)));
+    const atr = new Array(bars.length).fill(0);
+    atr[period-1] = tr.slice(0,period).reduce((a,b)=>a+b,0)/period;
+    for (let i=period; i<bars.length; i++) atr[i]=(atr[i-1]*(period-1)+tr[i])/period;
+    return atr;
+  }
+
+  // Donchian Channel
+  static _computeDonchian(bars, period=20) {
+    const upper=[], lower=[];
+    for (let i=period-1; i<bars.length; i++) {
+      const sl = bars.slice(i-period+1, i+1);
+      upper.push({ time: bars[i].time, value: Math.max(...sl.map(b=>b.high)) });
+      lower.push({ time: bars[i].time, value: Math.min(...sl.map(b=>b.low)) });
+    }
+    return { upper, lower };
+  }
+
+  // Keltner Channel (EMA20 ± 2×ATR10)
+  static _computeKeltner(bars, period=20, mult=2) {
+    const closes = bars.map(b=>b.close);
+    const emaV   = ChartPane._ema(closes, period);
+    const atrV   = ChartPane._atr(bars, 10);
+    const upper=[], lower=[];
+    for (let i=period-1; i<bars.length; i++) {
+      if (emaV[i]==null || !atrV[i]) continue;
+      upper.push({ time: bars[i].time, value: emaV[i]+mult*atrV[i] });
+      lower.push({ time: bars[i].time, value: emaV[i]-mult*atrV[i] });
+    }
+    return { upper, lower };
+  }
+
+  // Parabolic SAR
+  static _computePSAR(bars, iAF=0.02, step=0.02, maxAF=0.2) {
+    const n=bars.length; if (n<3) return { bull:[], bear:[] };
+    const bull=[], bear=[];
+    let rising = bars[1].close > bars[0].close;
+    let af=iAF, ep=rising?bars[0].high:bars[0].low, sar=rising?bars[0].low:bars[0].high;
+    for (let i=1; i<n; i++) {
+      sar = sar + af*(ep-sar);
+      if (rising) {
+        sar = Math.min(sar, bars[i-1].low, i>1?bars[i-2].low:bars[i-1].low);
+        if (bars[i].low < sar) {
+          rising=false; sar=ep; ep=bars[i].low; af=iAF;
+          bear.push({ time:bars[i].time, value:sar });
+        } else {
+          if (bars[i].high>ep){ ep=bars[i].high; af=Math.min(af+step,maxAF); }
+          bull.push({ time:bars[i].time, value:sar });
+        }
+      } else {
+        sar = Math.max(sar, bars[i-1].high, i>1?bars[i-2].high:bars[i-1].high);
+        if (bars[i].high > sar) {
+          rising=true; sar=ep; ep=bars[i].high; af=iAF;
+          bull.push({ time:bars[i].time, value:sar });
+        } else {
+          if (bars[i].low<ep){ ep=bars[i].low; af=Math.min(af+step,maxAF); }
+          bear.push({ time:bars[i].time, value:sar });
+        }
+      }
+    }
+    return { bull, bear };
+  }
+
+  // SuperTrend (period=10, multiplier=3)
+  static _computeSuperTrend(bars, period=10, mult=3) {
+    const n=bars.length; if (n<period) return { bull:[], bear:[] };
+    const atrV = ChartPane._atr(bars, period);
+    const bull=[], bear=[];
+    let stDown=0, stUp=Infinity, trend=1;
+    for (let i=period; i<n; i++) {
+      const hl2=(bars[i].high+bars[i].low)/2;
+      const dn = hl2-mult*atrV[i];
+      const up = hl2+mult*atrV[i];
+      stDown = (dn>stDown || bars[i-1].close<stDown) ? dn : stDown;
+      stUp   = (up<stUp   || bars[i-1].close>stUp)   ? up : stUp;
+      if (bars[i].close>stUp)  trend=1;
+      else if (bars[i].close<stDown) trend=-1;
+      if (trend===1) bull.push({ time:bars[i].time, value:stDown });
+      else           bear.push({ time:bars[i].time, value:stUp });
+    }
+    return { bull, bear };
+  }
+
+  // Ichimoku Cloud
+  static _computeIchimoku(bars) {
+    const n=bars.length;
+    const midN=(b,start,len)=>{ let hi=-Infinity,lo=Infinity; for(let i=start;i<start+len&&i<n;i++){hi=Math.max(hi,b[i].high);lo=Math.min(lo,b[i].low);} return(hi+lo)/2; };
+    const tenkan=[], kijun=[], senkouA=[], senkouB=[];
+    for (let i=8;  i<n; i++) tenkan.push({ time:bars[i].time, value:midN(bars,i-8,9) });
+    for (let i=25; i<n; i++) {
+      const k=midN(bars,i-25,26); kijun.push({ time:bars[i].time, value:k });
+      const ti=i-17; // tenkan index offset (i-8 from tenkan start i=8 → tenkan[i-8])
+      const tVal=ti>=0&&ti<tenkan.length?tenkan[ti].value:null;
+      if (tVal!=null) senkouA.push({ time:bars[i].time, value:(tVal+k)/2 });
+    }
+    for (let i=51; i<n; i++) senkouB.push({ time:bars[i].time, value:midN(bars,i-51,52) });
+    return { tenkan, kijun, senkouA, senkouB };
+  }
+
+  // Pivot Points (classic, from previous day or previous bar)
+  static _computePivots(bars, interval) {
+    const n=bars.length; if (n<2) return null;
+    let pdH, pdL, pdC;
+    if (interval==='1d') {
+      pdH=bars[n-2].high; pdL=bars[n-2].low; pdC=bars[n-2].close;
+    } else {
+      // Intraday: group by day
+      const dayMap={};
+      bars.forEach(b=>{
+        const d=typeof b.time==='number'?new Date(b.time*1000).toISOString().slice(0,10):String(b.time).slice(0,10);
+        if(!dayMap[d])dayMap[d]=[];dayMap[d].push(b);
+      });
+      const days=Object.keys(dayMap).sort();
+      if (days.length<2) return null;
+      const prev=dayMap[days[days.length-2]];
+      pdH=Math.max(...prev.map(b=>b.high)); pdL=Math.min(...prev.map(b=>b.low)); pdC=prev[prev.length-1].close;
+    }
+    const pp=(pdH+pdL+pdC)/3, rng=pdH-pdL;
+    return { pp, r1:2*pp-pdL, r2:pp+rng, r3:pdH+2*(pp-pdL), s1:2*pp-pdH, s2:pp-rng, s3:pdL-2*(pdH-pp) };
+  }
+
+  // Fair Value Gaps (last 6, unfilled)
+  static _computeFVG(bars) {
+    const gaps=[];
+    for (let i=2; i<bars.length; i++) {
+      if (bars[i].low > bars[i-2].high) // bullish gap
+        gaps.push({ bull:true,  top:bars[i].low,    bottom:bars[i-2].high, time:bars[i].time });
+      else if (bars[i].high < bars[i-2].low) // bearish gap
+        gaps.push({ bull:false, top:bars[i-2].low,  bottom:bars[i].high,   time:bars[i].time });
+    }
+    return gaps.slice(-6);
+  }
+
+  // Volume Profile — POC + Value Area
+  static _computeVPOC(bars, bins=50) {
+    if (!bars.length) return null;
+    const lo=Math.min(...bars.map(b=>b.low)), hi=Math.max(...bars.map(b=>b.high));
+    if (hi===lo) return null;
+    const bsz=(hi-lo)/bins, vol=new Array(bins).fill(0);
+    bars.forEach(b=>{ const idx=Math.min(Math.floor((b.close-lo)/bsz),bins-1); vol[idx]+=(b.volume||1); });
+    const maxI=vol.indexOf(Math.max(...vol)), poc=lo+(maxI+0.5)*bsz;
+    const total=vol.reduce((a,b)=>a+b,0);
+    let acc=vol[maxI], up=maxI, dn=maxI;
+    while(acc<total*0.70&&(up<bins-1||dn>0)){
+      const vU=up<bins-1?vol[up+1]:0, vD=dn>0?vol[dn-1]:0;
+      vU>=vD ? acc+=vol[++up] : acc+=vol[--dn];
+    }
+    return { poc, vaHigh:lo+(up+1)*bsz, vaLow:lo+dn*bsz };
+  }
+
+  // Stochastic (14, 3, 3) — slow
+  static _computeStochastic(bars, kPeriod=14, smooth=3, dPeriod=3) {
+    const n=bars.length; if (n<kPeriod) return { kData:[], dData:[] };
+    const raw=[];
+    for (let i=kPeriod-1; i<n; i++) {
+      const sl=bars.slice(i-kPeriod+1,i+1);
+      const hi=Math.max(...sl.map(b=>b.high)), lo=Math.min(...sl.map(b=>b.low));
+      raw.push({ time:bars[i].time, value:hi===lo?50:((bars[i].close-lo)/(hi-lo))*100 });
+    }
+    const smK=[];
+    for (let i=smooth-1; i<raw.length; i++) {
+      smK.push({ time:raw[i].time, value:raw.slice(i-smooth+1,i+1).reduce((a,b)=>a+b.value,0)/smooth });
+    }
+    const dData=[];
+    for (let i=dPeriod-1; i<smK.length; i++)
+      dData.push({ time:smK[i].time, value:smK.slice(i-dPeriod+1,i+1).reduce((a,b)=>a+b.value,0)/dPeriod });
+    return { kData:smK, dData };
+  }
+
   static _ema(values, period) {
     const k = 2 / (period + 1);
     const result = new Array(values.length).fill(null);
@@ -1456,10 +1786,9 @@ const gridManager = {
       this.panes.push(new ChartPane(i, grid));
     }
 
-    // Sync grid count buttons
-    document.querySelectorAll(".grid-btn").forEach(b => {
-      b.classList.toggle("active", parseInt(b.dataset.count) === n);
-    });
+    // Sync grid dropdown
+    const dd = document.getElementById("grid-dropdown");
+    if (dd) dd.value = n;
 
     // Keep currentSymbol in sync with pane 0
     if (this.panes[0]) currentSymbol = this.panes[0].sym;
@@ -1545,7 +1874,7 @@ function showBacktest() {
   document.getElementById("backtest-panel").style.display = "";
   const gw = document.getElementById("chart-grid-wrapper");
   if (gw) gw.style.display = "none";
-  document.querySelectorAll(".grid-btn, #tab-settings, #tab-log").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll("#tab-chart, #tab-settings, #tab-log").forEach(t => t.classList.remove("active"));
   document.getElementById("tab-backtest").classList.add("active");
 }
 
