@@ -790,11 +790,10 @@ function updateGridLayout() {
 // ── Multi-Pane Chart Grid ─────────────────────────────────────────────────────
 
 const SYMBOLS = [
-  "SPY","AMZN","GOOG","MSFT","NVDA","META","IWM",
-  "CBRE","GLW","QQQ","NFLX","CRWV","NET","AAPL","NOW","SOFI",
-  "HOOD","UNH","MU","AMD","ARM","TSM","LRCX","AVGO","IBM",
-  "PLTR","CRM","ORCL","NKE","TEAM","UBER","CRWD","ADBE","INTC",
-  "MA","V","WFC","C","BAC","JPM",
+  "AAPL","ADBE","AMD","AMZN","ARM","AVGO","BAC","C","CBRE","CRM",
+  "CRWD","CRWV","GLW","GOOG","HOOD","IBM","INTC","IWM","JPM","LRCX",
+  "MA","META","MSFT","MU","NET","NFLX","NKE","NOW","NVDA","ORCL",
+  "PLTR","QQQ","SOFI","SPY","TEAM","TSM","UBER","UNH","V","WFC",
 ];
 
 const LIVE_RANGES        = new Set(["1D", "5D"]);
@@ -889,18 +888,23 @@ class ChartPane {
   }
 
   _loadIndicators() {
-    try {
-      const s = localStorage.getItem(`chart_pane_${this.id}_ind`);
-      if (s) return JSON.parse(s);
-    } catch (_) {}
-    return {
+    const BLANK = {
       sma20: false, sma50: false, sma200: false,
-      ema20: false, ema50: false, ema200: true, vwap: true,
+      ema20: false, ema50: false, ema200: false, vwap: false,
       bb: false, donchian: false, keltner: false,
       psar: false, supertrend: false, ichimoku: false,
       pivots: false, fvg: false, vpoc: false,
       rsi: false, macd: false, stoch: false,
     };
+    try {
+      const s = localStorage.getItem(`chart_pane_${this.id}_ind`);
+      if (s) {
+        const saved = JSON.parse(s);
+        // Only restore if saved with current schema (has psar + stoch keys)
+        if ("psar" in saved && "stoch" in saved) return { ...BLANK, ...saved };
+      }
+    } catch (_) {}
+    return { ...BLANK };
   }
 
   _saveIndicators() {

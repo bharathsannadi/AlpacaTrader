@@ -913,18 +913,25 @@
     padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px;
     white-space: nowrap; cursor: default; flex-shrink: 0;
   }
+  /* ── Shared dropdown base ── */
+  .pane-sym-select, .pane-tf-select {
+    border-radius: 5px; font-family: var(--mono); cursor: pointer; flex-shrink: 0;
+    outline: none; transition: border-color .15s, background .15s;
+  }
+  /* Symbol — cyan accent */
   .pane-sym-select {
-    background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
-    border-radius: 4px; padding: 3px 6px; font-family: var(--mono); font-size: 12px;
-    font-weight: 700; cursor: pointer; min-width: 60px; flex-shrink: 0;
+    background: rgba(34,211,238,0.07); border: 1px solid rgba(34,211,238,0.45); color: #22d3ee;
+    padding: 3px 6px; font-size: 12px; font-weight: 700; min-width: 64px;
   }
-  .pane-sym-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(34,211,238,0.25); }
+  .pane-sym-select:hover  { background: rgba(34,211,238,0.13); border-color: var(--cyan); }
+  .pane-sym-select:focus  { background: rgba(34,211,238,0.13); border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(34,211,238,0.18); }
+  /* Timeframe — amber accent */
   .pane-tf-select {
-    background: transparent; border: 1px solid var(--border); color: var(--text);
-    border-radius: 4px; padding: 3px 5px; font-family: var(--mono); font-size: 11px;
-    cursor: pointer; flex-shrink: 0;
+    background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.4); color: #f5a623;
+    padding: 3px 5px; font-size: 11px;
   }
-  .pane-tf-select:focus { outline: none; border-color: var(--cyan); }
+  .pane-tf-select:hover { background: rgba(245,158,11,0.13); border-color: #f59e0b; }
+  .pane-tf-select:focus { border-color: #f59e0b; background: rgba(245,158,11,0.13); }
   .pane-ind-btn {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
     border-radius: 4px; padding: 3px 10px; font-family: var(--mono); font-size: 10px;
@@ -986,12 +993,13 @@
     font-size: 9px; text-transform: uppercase; letter-spacing: .6px;
     color: var(--muted); padding: 0 4px; white-space: nowrap;
   }
+  /* Grid layout dropdown — blue accent */
   .grid-dropdown {
-    background: var(--card2); border: 1px solid var(--border); color: var(--text);
-    border-radius: 4px; padding: 3px 8px; font-family: var(--mono); font-size: 11px;
-    cursor: pointer; outline: none; appearance: auto;
+    background: rgba(77,158,255,0.07); border: 1px solid rgba(77,158,255,0.35); color: #4d9eff;
+    border-radius: 5px; padding: 3px 8px; font-family: var(--mono); font-size: 11px;
+    cursor: pointer; outline: none; transition: border-color .15s, background .15s;
   }
-  .grid-dropdown:hover, .grid-dropdown:focus { border-color: var(--cyan); color: var(--cyan); }
+  .grid-dropdown:hover, .grid-dropdown:focus { border-color: var(--blue); background: rgba(77,158,255,0.13); color: var(--blue); }
 
   /* Legacy .chart-card kept in case backtest panel references it */
   .chart-card { display: flex; flex-direction: column; min-height: 0; padding: 8px 10px; }
