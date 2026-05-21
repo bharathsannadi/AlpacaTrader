@@ -1425,7 +1425,7 @@ def on_sync_positions():
     added = trader.reconcile_positions()
     refresh_account()
     emit_state()
-    emit("sync_positions_done", {"added": added})
+    socketio.emit("sync_positions_done", {"added": added}, to=request.sid)
 
 
 _VALID_INTERVALS  = frozenset({"1m", "5m", "15m", "30m", "1h", "1d"})
