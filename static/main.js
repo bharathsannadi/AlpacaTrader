@@ -1323,16 +1323,24 @@ class ChartPane {
       return out;
     };
 
-    SET(this.sma20Series,  this._ind.sma20  ? sma(20)  : []);
-    SET(this.sma50Series,  this._ind.sma50  ? sma(50)  : []);
-    SET(this.sma200Series, this._ind.sma200 ? sma(200) : []);
+    SET(this.sma20Series, this._ind.sma20 ? sma(20) : []);
+    SET(this.sma50Series, this._ind.sma50 ? sma(50) : []);
+    // SMA 200: compute from bars when ≥200 available; fall back to server daily EMA200 level
+    if (this._ind.sma200) {
+      SET(this.sma200Series, n >= 200 ? sma(200)
+        : ov.ema200d != null ? bars.map(b => ({ time: b.time, value: ov.ema200d })) : []);
+    } else SET(this.sma200Series, []);
 
-    const ema20v = ChartPane._ema(closes, 20);
-    const ema50v = ChartPane._ema(closes, 50);
-    const ema200v= ChartPane._ema(closes, 200);
-    SET(this.ema20Series,  this._ind.ema20  ? mkLine(ema20v,  20)  : []);
-    SET(this.ema50Series,  this._ind.ema50  ? mkLine(ema50v,  50)  : []);
-    SET(this.ema200Series, this._ind.ema200 ? mkLine(ema200v, 200) : []);
+    const ema20v  = ChartPane._ema(closes, 20);
+    const ema50v  = ChartPane._ema(closes, 50);
+    SET(this.ema20Series, this._ind.ema20 ? mkLine(ema20v, 20) : []);
+    SET(this.ema50Series, this._ind.ema50 ? mkLine(ema50v, 50) : []);
+    // EMA 200: compute from bars when ≥200; fall back to server daily EMA200 flat line
+    if (this._ind.ema200) {
+      const ema200v = ChartPane._ema(closes, 200);
+      SET(this.ema200Series, n >= 200 ? mkLine(ema200v, 200)
+        : ov.ema200d != null ? bars.map(b => ({ time: b.time, value: ov.ema200d })) : []);
+    } else SET(this.ema200Series, []);
 
     SET(this.vwapSeries, this._ind.vwap ? clean(ov.vwap) : []);
 
@@ -1371,13 +1379,18 @@ class ChartPane {
 
     // ── Support & resistance ──────────────────────────────────────────────────
     this._clearPivotLines();
-    if (this._ind.pivots && n >= 2) {
-      const pv = ChartPane._computePivots(bars, this.interval);
-      if (pv && this.candleSeries) {
-        const pl = (price, color, title) => this.candleSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title });
-        this._pivotLines.push(pl(pv.pp, "#94a3b8", "PP"));
-        this._pivotLines.push(pl(pv.r1, "#f43f5e99", "R1")); this._pivotLines.push(pl(pv.r2, "#f43f5e66", "R2")); this._pivotLines.push(pl(pv.r3, "#f43f5e44", "R3"));
-        this._pivotLines.push(pl(pv.s1, "#00e5a099", "S1")); this._pivotLines.push(pl(pv.s2, "#00e5a066", "S2")); this._pivotLines.push(pl(pv.s3, "#00e5a044", "S3"));
+    if (this._ind.pivots && this.candleSeries) {
+      // Use server prior_levels — works on all timeframes including 1D range
+      // (client-side bar grouping fails when viewing only today's bars)
+      const pl_data = ov.prior_levels || {};
+      const pdH = pl_data.prev_high, pdL = pl_data.prev_low, pdC = pl_data.prev_close;
+      if (pdH && pdL && pdC) {
+        const pp = (pdH + pdL + pdC) / 3, rng = pdH - pdL;
+        const addPL = (price, color, title) =>
+          this._pivotLines.push(this.candleSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+        addPL(pp,               "#94a3b8",   "PP");
+        addPL(2*pp - pdL,       "#f43f5e99", "R1"); addPL(pp + rng,       "#f43f5e66", "R2"); addPL(pdH + 2*(pp-pdL), "#f43f5e44", "R3");
+        addPL(2*pp - pdH,       "#00e5a099", "S1"); addPL(pp - rng,       "#00e5a066", "S2"); addPL(pdL - 2*(pdH-pp), "#00e5a044", "S3");
       }
     }
 
