@@ -840,7 +840,42 @@ def on_login(data):
     trader.init_news_filter(enabled=state.get("news_filter_enabled", True))
     trader.DRY_RUN = state.get("dry_run", False)
     trade_approval.auto_trade = state.get("auto_trade", True)
-    log.info(f"Connected to Alpaca {'PAPER' if paper else 'LIVE'} — equity ${float(account.equity):,.2f}")
+    mode_str = "PAPER" if paper else "LIVE"
+    log.info(f"Connected to Alpaca {mode_str} — equity ${float(account.equity):,.2f}")
+
+    # Surface system state to the log tab on every login
+    def _login_status_lines():
+        socketio.sleep(1)   # let the client finish login_result handling first
+        debate_on  = trader.DEBATE_ENABLED
+        dry_on     = trader.DRY_RUN
+        auto_on    = trade_approval.auto_trade
+        eq         = float(account.equity)
+        socketio.emit("log", {"message": "─" * 52,          "level": "INFO"})
+        socketio.emit("log", {"message": f"Connected  Alpaca {mode_str}  equity=${eq:,.2f}", "level": "INFO"})
+        socketio.emit("log", {"message":
+            f"  Debate gate : {'✓ ON' if debate_on else '✗ OFF'}"
+            f"   |  Auto-trade: {'✓ ON' if auto_on else '✗ OFF'}"
+            f"   |  Dry-run: {'ON' if dry_on else 'off'}",
+            "level": "INFO"})
+        # Daily positions snapshot
+        try:
+            positions = dtrad._load_positions()
+            open_pos = [p for p in positions if p["status"] in ("open", "pending", "signal")]
+            if open_pos:
+                socketio.emit("log", {"message": f"  Daily positions ({len(open_pos)}):", "level": "INFO"})
+                for p in open_pos:
+                    instr = p.get("structure", p.get("instrument", "?"))
+                    socketio.emit("log", {"message":
+                        f"    {p['sym']:6}  {instr:6}  entry={p['entry_date']}"
+                        f"  debit=${p.get('entry_debit') or p.get('est_debit','?')}"
+                        f"  [{p['status']}]",
+                        "level": "INFO"})
+            else:
+                socketio.emit("log", {"message": "  Daily positions: none", "level": "INFO"})
+        except Exception:
+            pass
+        socketio.emit("log", {"message": "─" * 52, "level": "INFO"})
+    socketio.start_background_task(_login_status_lines)
 
     # Slow path AFTER the client already knows it's in — populate header/state.
     def _post_login_refresh():
@@ -1045,18 +1080,58 @@ LOG_PATH = os.path.join(os.path.dirname(__file__), "spy_trader.log")
 
 
 # ── Daily strategy background tasks (Connors RSI-2, Path A) ──────────────────
+def _emit_log(msg: str, level: str = "INFO") -> None:
+    """Emit a line to the dashboard log tab and the server log."""
+    socketio.emit("log", {"message": msg, "level": level})
+    if level == "ERROR":
+        log.error(msg)
+    elif level == "WARNING":
+        log.warning(msg)
+    else:
+        log.info(msg)
+
+
 def _run_daily_eod() -> None:
     """EOD routine for the daily Connors RSI(2) strategy.
     Fires at DAILY_EOD_HOUR:DAILY_EOD_MINUTE ET. Respects app's dry_run state."""
     with _state_lock:
         dry = state["dry_run"]
     try:
-        log.info("Daily strategy: EOD routine starting")
+        _emit_log("─" * 52)
+        _emit_log(f"DAILY EOD  Connors RSI(2)  {'[DRY RUN]' if dry else '[PAPER]'}")
         summary = dtrad.run_eod(dry_run=dry)
         socketio.emit("daily_eod_result", summary)
-        log.info(f"Daily strategy EOD: {summary}")
+
+        # Surface per-signal detail to the log tab
+        positions = dtrad._load_positions()
+        new_signals = [p for p in positions if p["status"] == "signal"]
+        pending_exits = [p for p in positions if p["status"] == "exit_pending"]
+
+        if not new_signals and not pending_exits:
+            _emit_log("  No new signals today.")
+        for p in new_signals:
+            instr = p.get("structure", "?")
+            occ   = p.get("long_occ", "?")
+            deb   = p.get("est_debit", "?")
+            exp   = p.get("expiry", "?")
+            dte   = p.get("dte", "?")
+            ivhv  = p.get("iv_hv", "?")
+            _emit_log(
+                f"  ▲ ENTRY  {p['sym']:6}  {instr:6}  "
+                f"occ={occ}  debit=${deb}  exp={exp}  DTE={dte}  IV/HV={ivhv}"
+            )
+        for p in pending_exits:
+            _emit_log(
+                f"  ✗ EXIT   {p['sym']:6}  reason={p.get('exit_reason','?')}  "
+                f"→ order at morning open",
+                level="WARNING"
+            )
+        _emit_log(
+            f"  Summary: {summary['entries']} entr, {summary['exits']} exit, "
+            f"{summary['open']} open"
+        )
     except Exception as e:
-        log.error(f"Daily strategy EOD failed: {e}")
+        _emit_log(f"Daily EOD error: {e}", level="ERROR")
 
 
 def _run_daily_morning() -> None:
@@ -1065,11 +1140,49 @@ def _run_daily_morning() -> None:
     with _state_lock:
         dry = state["dry_run"]
     try:
-        log.info("Daily strategy: morning fill-confirm starting")
+        _emit_log("─" * 52)
+        _emit_log(f"DAILY MORNING  fill-confirm  {'[DRY RUN]' if dry else '[PAPER]'}")
+
+        # Snapshot status before so we can report what changed
+        before = {p["sym"]: p["status"] for p in dtrad._load_positions()}
+
         dtrad.run_morning(dry_run=dry)
-        log.info("Daily strategy: morning fill-confirm complete")
+
+        positions = dtrad._load_positions()
+        for p in positions:
+            was = before.get(p["sym"], "?")
+            now_s = p["status"]
+            sym   = p["sym"]
+            instr = p.get("structure", p.get("instrument", "?"))
+            if was == "signal" and now_s == "pending":
+                _emit_log(
+                    f"  ⏳ ORDER SUBMITTED  {sym:6}  {instr}  "
+                    f"long={p.get('long_occ','?')}  "
+                    f"est_debit=${p.get('est_debit','?')}"
+                )
+            elif was in ("signal", "pending") and now_s == "open":
+                _emit_log(
+                    f"  ✓ FILLED  {sym:6}  {instr}  "
+                    f"debit=${p.get('entry_debit','?')}  "
+                    f"stop_debit=${p.get('stop_debit','?')}"
+                )
+            elif was == "open" and now_s == "exit_pending":
+                _emit_log(
+                    f"  ⚠ STOP HIT  {sym:6}  reason={p.get('exit_reason','?')}",
+                    level="WARNING"
+                )
+            elif was == "exit_pending" and now_s == "closed":
+                pnl = ""
+                if p.get("entry_debit") and p.get("exit_debit"):
+                    raw = (float(p["exit_debit"]) - float(p["entry_debit"])) \
+                          * p.get("contracts", 1) * 100
+                    pnl = f"  P&L ${raw:+.0f}"
+                _emit_log(
+                    f"  ✓ CLOSED  {sym:6}  {p.get('exit_reason','?')}{pnl}"
+                )
+        _emit_log("  Morning routine complete.")
     except Exception as e:
-        log.error(f"Daily strategy morning confirm failed: {e}")
+        _emit_log(f"Daily morning error: {e}", level="ERROR")
 
 
 def scheduler():
