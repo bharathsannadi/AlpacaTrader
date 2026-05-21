@@ -916,22 +916,26 @@
   /* ── Shared dropdown base ── */
   .pane-sym-select, .pane-tf-select {
     border-radius: 5px; font-family: var(--mono); cursor: pointer; flex-shrink: 0;
-    outline: none; transition: border-color .15s, background .15s;
+    outline: none; transition: border-color .15s, background .15s, box-shadow .15s;
+    -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a6280'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 6px center;
+    padding-right: 20px !important;
   }
   /* Symbol — cyan accent */
   .pane-sym-select {
-    background: rgba(34,211,238,0.07); border: 1px solid rgba(34,211,238,0.45); color: #22d3ee;
+    background-color: rgba(34,211,238,0.10); border: 1px solid rgba(34,211,238,0.55); color: #22d3ee;
     padding: 3px 6px; font-size: 12px; font-weight: 700; min-width: 64px;
   }
-  .pane-sym-select:hover  { background: rgba(34,211,238,0.13); border-color: var(--cyan); }
-  .pane-sym-select:focus  { background: rgba(34,211,238,0.13); border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(34,211,238,0.18); }
+  .pane-sym-select:hover  { background-color: rgba(34,211,238,0.17); border-color: #22d3ee; box-shadow: 0 0 0 1px rgba(34,211,238,0.25); }
+  .pane-sym-select:focus  { background-color: rgba(34,211,238,0.17); border-color: #22d3ee; box-shadow: 0 0 0 2px rgba(34,211,238,0.22); }
   /* Timeframe — amber accent */
   .pane-tf-select {
-    background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.4); color: #f5a623;
-    padding: 3px 5px; font-size: 11px;
+    background-color: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.55); color: #f59e0b;
+    padding: 3px 5px; font-size: 11px; font-weight: 600;
   }
-  .pane-tf-select:hover { background: rgba(245,158,11,0.13); border-color: #f59e0b; }
-  .pane-tf-select:focus { border-color: #f59e0b; background: rgba(245,158,11,0.13); }
+  .pane-tf-select:hover { background-color: rgba(245,158,11,0.17); border-color: #f59e0b; box-shadow: 0 0 0 1px rgba(245,158,11,0.25); }
+  .pane-tf-select:focus { background-color: rgba(245,158,11,0.17); border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,0.22); }
   .pane-ind-btn {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
     border-radius: 4px; padding: 3px 10px; font-family: var(--mono); font-size: 10px;
@@ -995,9 +999,10 @@
   }
   /* Grid layout dropdown — blue accent */
   .grid-dropdown {
-    background: rgba(77,158,255,0.07); border: 1px solid rgba(77,158,255,0.35); color: #4d9eff;
-    border-radius: 5px; padding: 3px 8px; font-family: var(--mono); font-size: 11px;
+    background: rgba(77,158,255,0.10); border: 1px solid rgba(77,158,255,0.55); color: #4d9eff;
+    border-radius: 5px; padding: 3px 8px; font-family: var(--mono); font-size: 11px; font-weight: 600;
     cursor: pointer; outline: none; transition: border-color .15s, background .15s;
+    -webkit-appearance: none; appearance: none;
   }
   .grid-dropdown:hover, .grid-dropdown:focus { border-color: var(--blue); background: rgba(77,158,255,0.13); color: var(--blue); }
 

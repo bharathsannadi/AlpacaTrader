@@ -888,7 +888,9 @@ class ChartPane {
   }
 
   _loadIndicators() {
-    const BLANK = {
+    // Always start with a clean chart — no indicators restored from localStorage.
+    // Indicators stay on only for the current page session; each fresh load is clean.
+    return {
       sma20: false, sma50: false, sma200: false,
       ema20: false, ema50: false, ema200: false, vwap: false,
       bb: false, donchian: false, keltner: false,
@@ -896,15 +898,6 @@ class ChartPane {
       pivots: false, fvg: false, vpoc: false,
       rsi: false, macd: false, stoch: false,
     };
-    try {
-      const s = localStorage.getItem(`chart_pane_${this.id}_ind`);
-      if (s) {
-        const saved = JSON.parse(s);
-        // Only restore if saved with current schema (has psar + stoch keys)
-        if ("psar" in saved && "stoch" in saved) return { ...BLANK, ...saved };
-      }
-    } catch (_) {}
-    return { ...BLANK };
   }
 
   _saveIndicators() {
