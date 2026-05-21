@@ -430,17 +430,51 @@
   body.view-chart .chart-card      { flex: 1; min-height: 0; }
   body.view-chart #chart-container { flex: 1; min-height: 0; }
 
-  /* Settings view — left panel fills screen as a responsive card grid */
-  body.view-settings .dashboard  { display: block; overflow-y: auto; height: calc(100vh - 56px - 36px - 38px); padding: var(--s-3) var(--s-4); }
+  /* ── Settings view: 3-column pinned layout ────────────────────────────── */
+  body.view-settings .dashboard  { display: block; overflow-y: auto; height: calc(100vh - 56px - 36px - 38px); padding: 10px 16px; }
   body.view-settings .right-panel   { display: none !important; }
   body.view-settings .panel-divider { display: none !important; }
   body.view-settings .left-panel {
     display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 14px; padding-right: 0; overflow: visible;
-    align-content: start;
+    grid-template-columns: 1.3fr 1fr 1fr;
+    grid-template-rows: auto auto auto auto;
+    gap: 10px; padding-right: 0; overflow: visible;
+    align-content: start; width: 100%;
   }
-  body.view-settings .left-panel .card { resize: vertical; overflow: auto; min-height: 60px; }
+  /* Column 1: Config spans all rows */
+  body.view-settings .card[data-card-id="config"]       { grid-column: 1; grid-row: 1 / 5; }
+  /* Column 2: Automation → Session → Equity → Slippage */
+  body.view-settings .card[data-card-id="auto-schedule"]{ grid-column: 2; grid-row: 1; }
+  body.view-settings .card[data-card-id="session"]      { grid-column: 2; grid-row: 2; }
+  body.view-settings .card[data-card-id="equity"]       { grid-column: 2; grid-row: 3; }
+  body.view-settings .card[data-card-id="slippage"]     { grid-column: 2; grid-row: 4; }
+  /* Column 3: Freshness → Positions */
+  body.view-settings .card[data-card-id="freshness"]    { grid-column: 3; grid-row: 1; }
+  body.view-settings .card[data-card-id="positions"]    { grid-column: 3; grid-row: 2 / 5; }
+  /* Compact card padding in settings view */
+  body.view-settings .left-panel .card { padding: 10px 13px; min-height: 0; overflow: visible; }
+  body.view-settings .card-title        { font-size: 10px; margin-bottom: 8px; }
+  body.view-settings .config-section    { font-size: 9px;  margin: 7px 0 4px; }
+  body.view-settings .config-row        { padding: 3px 0;  }
+  body.view-settings .config-label      { font-size: 11px; }
+  body.view-settings .config-sub        { font-size: 9px;  }
+  body.view-settings .auto-schedule-row { padding: 3px 0;  }
+  body.view-settings .auto-schedule-label { font-size: 11px; }
+  body.view-settings .auto-schedule-hint  { font-size: 9px; }
+  /* Fallback for narrow screens */
+  @media (max-width: 860px) {
+    body.view-settings .left-panel {
+      grid-template-columns: 1fr 1fr !important;
+      grid-template-rows: unset !important;
+    }
+    body.view-settings .card[data-card-id="config"]       { grid-column: 1 / 3; grid-row: unset; }
+    body.view-settings .card[data-card-id="auto-schedule"],
+    body.view-settings .card[data-card-id="session"],
+    body.view-settings .card[data-card-id="equity"],
+    body.view-settings .card[data-card-id="slippage"],
+    body.view-settings .card[data-card-id="freshness"],
+    body.view-settings .card[data-card-id="positions"]    { grid-column: unset; grid-row: unset; }
+  }
 
   /* Log view — full-screen log terminal */
   .log-panel { display: none; flex-direction: column; height: calc(100vh - 56px - 36px - 38px); padding: var(--s-3) var(--s-4); }
