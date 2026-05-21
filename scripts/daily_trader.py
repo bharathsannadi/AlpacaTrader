@@ -133,6 +133,18 @@ def _get_hv21(df: pd.DataFrame) -> float:
     return float(lr.tail(21).std() * np.sqrt(252))
 
 
+def _get_hv_range_252(df: pd.DataFrame) -> tuple[float, float]:
+    """Return (min, max) of the 21-day rolling HV over the last 252 trading days.
+    Used to build an IVR proxy: ivr = (current_iv - hv_min) / (hv_max - hv_min).
+    KB §2 Appendix: IVR < 30 → naked, 30-50 → spread, > 50 → spread only."""
+    log_ret  = np.log(df["close"] / df["close"].shift(1)).dropna()
+    hv_roll  = log_ret.rolling(21).std() * np.sqrt(252)
+    hv_252   = hv_roll.iloc[-252:].dropna()
+    if len(hv_252) < 21:
+        return float("nan"), float("nan")
+    return float(hv_252.min()), float(hv_252.max())
+
+
 def compute_indicators(sym: str) -> dict | None:
     df = fetch_daily(sym, force_refresh=True)
     if df is None or len(df) < SMA_WIN + 2:
@@ -144,20 +156,100 @@ def compute_indicators(sym: str) -> dict | None:
 
     row     = df.iloc[-1]
     row_prv = df.iloc[-2]
+    hv252_min, hv252_max = _get_hv_range_252(df)
     return {
-        "sym":       sym,
-        "date":      str(row["date"].date()),
-        "close":     float(row["close"]),
-        "sma200":    float(row["sma200"]),
-        "rsi2":      float(row["rsi2"]),
-        "rsi2_prev": float(row_prv["rsi2"]),
-        "atr14":     float(row["atr14"]),
-        "hv21":      _get_hv21(df),
+        "sym":        sym,
+        "date":       str(row["date"].date()),
+        "close":      float(row["close"]),
+        "sma200":     float(row["sma200"]),
+        "rsi2":       float(row["rsi2"]),
+        "rsi2_prev":  float(row_prv["rsi2"]),
+        "atr14":      float(row["atr14"]),
+        "hv21":       _get_hv21(df),
+        "hv252_min":  hv252_min,   # IVR proxy lower bound
+        "hv252_max":  hv252_max,   # IVR proxy upper bound
     }
 
 
+# ── Earnings proximity check (KB §3, §7) ─────────────────────────────────────
+def _days_to_earnings(sym: str) -> int:
+    """Calendar days to next known earnings date. Returns 99 if unknown.
+    KB §3: 'Earnings within 2 trading days → never buy naked calls/puts.'"""
+    try:
+        import yfinance as yf
+        cal = yf.Ticker(sym).calendar
+        if cal is None:
+            return 99
+        # yfinance returns either a dict or DataFrame depending on version
+        if isinstance(cal, dict):
+            raw = cal.get("Earnings Date", [])
+            earn_list = raw if hasattr(raw, "__iter__") and not isinstance(raw, str) else [raw]
+        elif hasattr(cal, "columns") and "Earnings Date" in cal.columns:
+            earn_list = cal["Earnings Date"].tolist()
+        else:
+            return 99
+        today   = date.today()
+        future  = []
+        for d in earn_list:
+            try:
+                d2 = d.date() if hasattr(d, "date") else d
+                if d2 >= today:
+                    future.append(d2)
+            except Exception:
+                pass
+        if not future:
+            return 99
+        return (min(future) - today).days
+    except Exception:
+        return 99
+
+
+# ── Macro blackout calendar 2026 (FOMC / CPI / NFP) ──────────────────────────
+# KB §3: "Never enter within 5-10 min before/after major economic data releases."
+# KB Cofnas: "Block all entries during scheduled data releases."
+# We block the signal day AND the day before (IV inflates into the print).
+_MACRO_DATES_2026: dict[date, str] = {
+    # FOMC decision days (Federal Reserve pre-announced schedule)
+    date(2026,  1, 28): "FOMC", date(2026,  3, 18): "FOMC",
+    date(2026,  5,  7): "FOMC", date(2026,  6, 17): "FOMC",
+    date(2026,  7, 30): "FOMC", date(2026,  9, 16): "FOMC",
+    date(2026, 10, 29): "FOMC", date(2026, 12, 10): "FOMC",
+    # CPI releases (BLS, approx 2nd/3rd Wed of month)
+    date(2026,  1, 14): "CPI",  date(2026,  2, 11): "CPI",
+    date(2026,  3, 11): "CPI",  date(2026,  4, 15): "CPI",
+    date(2026,  5, 13): "CPI",  date(2026,  6, 10): "CPI",
+    date(2026,  7, 15): "CPI",  date(2026,  8, 12): "CPI",
+    date(2026,  9,  9): "CPI",  date(2026, 10, 14): "CPI",
+    date(2026, 11, 13): "CPI",  date(2026, 12,  9): "CPI",
+    # NFP / Jobs Report (first Friday of month)
+    date(2026,  1,  9): "NFP",  date(2026,  2,  6): "NFP",
+    date(2026,  3,  6): "NFP",  date(2026,  4,  3): "NFP",
+    date(2026,  5,  8): "NFP",  date(2026,  6,  5): "NFP",
+    date(2026,  7,  2): "NFP",  date(2026,  8,  7): "NFP",
+    date(2026,  9,  4): "NFP",  date(2026, 10,  2): "NFP",
+    date(2026, 11,  6): "NFP",  date(2026, 12,  4): "NFP",
+}
+
+def _macro_event_on(check_date: date) -> str | None:
+    """Return event label if check_date is a macro blackout day, else None."""
+    return _MACRO_DATES_2026.get(check_date)
+
+
+# ── IVR proxy helper ──────────────────────────────────────────────────────────
+def _compute_ivr_proxy(atm_iv: float, hv252_min: float, hv252_max: float) -> float:
+    """KB §2 Appendix IVR proxy using 252-day rolling HV range as reference.
+    Returns 0-100; 50 if range data unavailable (conservative default).
+    True IVR needs historical IV data (expensive); this uses HV range as proxy."""
+    if (np.isnan(atm_iv) or np.isnan(hv252_min) or np.isnan(hv252_max)
+            or hv252_max <= hv252_min):
+        return 50.0   # unknown → treat as moderate, use spread
+    return float(np.clip((atm_iv - hv252_min) / (hv252_max - hv252_min) * 100, 0.0, 100.0))
+
+
 # ── Options contract selection (KB §1, §2, §5, §9) ───────────────────────────
-def _get_option_context(sym: str, spot: float, hv21: float) -> dict | None:
+def _get_option_context(sym: str, spot: float, hv21: float,
+                        hv252_min: float = float("nan"),
+                        hv252_max: float = float("nan")) -> dict | None:
     """
     Select the best option structure for a Connors RSI(2) bull entry.
 
@@ -218,12 +310,19 @@ def _get_option_context(sym: str, spot: float, hv21: float) -> dict | None:
     if atm_oi < OPT_MIN_OI:
         return None
 
-    # IV/HV ratio — KB §2 "implied vs historical volatility divergence"
-    iv_hv = (atm_iv / hv21) if (not np.isnan(hv21) and hv21 > 0) else 1.0
+    # ── IVR proxy (KB §2 Appendix) ───────────────────────────────────────────
+    # True IVR = (current_iv - 52wk_low_iv) / (52wk_high_iv - 52wk_low_iv).
+    # We approximate using 252-day rolling HV range (free, no historical IV needed).
+    ivr   = _compute_ivr_proxy(atm_iv, hv252_min, hv252_max)
+    iv_hv = (atm_iv / hv21) if (not np.isnan(hv21) and hv21 > 0) else 1.0  # kept for logging
 
-    # ── Naked: IV cheap, premium fits budget — KB §2, §5 ────────────────────
-    # "IVR < 25–30%: IV is historically cheap; you are buying vega at a discount"
-    if iv_hv < OPT_IV_HV_NAKED_MAX and atm_mid * 100 <= RISK_BUDGET:
+    # KB §2 Appendix: IVR > 80 = premium too expensive for any long options structure
+    if ivr > 80:
+        print(f"  {sym}: IVR={ivr:.0f}% > 80 — premium too expensive, skip (KB §2)")
+        return None
+
+    # ── Naked: IVR < 30 → IV historically cheap (KB §2 Appendix) ────────────
+    if ivr < 30 and atm_mid * 100 <= RISK_BUDGET:
         return {
             "structure":    "naked",
             "expiry":       expiry_str,
@@ -235,10 +334,11 @@ def _get_option_context(sym: str, spot: float, hv21: float) -> dict | None:
             "est_debit":    round(atm_mid, 2),
             "width":        None,
             "iv_hv":        round(iv_hv, 2),
+            "ivr":          round(ivr, 1),
             "contracts":    1,
         }
 
-    # ── Debit spread: KB §5 ──────────────────────────────────────────────────
+    # ── Debit spread: IVR 30–80 (KB §2, §5) ─────────────────────────────────
     # "Buy ATM (delta ~0.50), sell 1–2 strikes further OTM (delta ~0.20–0.30)"
     # "Debit paid should be 30–40% of spread width for a good risk/reward"
     otm_calls = calls[calls["strike"] > atm_strike].sort_values("strike")
@@ -277,6 +377,7 @@ def _get_option_context(sym: str, spot: float, hv21: float) -> dict | None:
             "est_debit":    round(net_debit, 2),
             "width":        round(width, 2),
             "iv_hv":        round(iv_hv, 2),
+            "ivr":          round(ivr, 1),
             "contracts":    1,
         }
 
@@ -347,7 +448,20 @@ def generate_signals(indicators: dict[str, dict],
     exiting_syms = {e["sym"] for e in exits}
     free_slots   = MAX_CONCURRENT - (open_count - len(exits))
 
-    if free_slots > 0:
+    # ── Macro blackout check — blocks ALL new entries on event day + day before ─
+    # KB §3 / Cofnas: IV inflates into the print; entering = overpaying for premium
+    today_date = date.today()
+    macro_block: str | None = None
+    for offset in (0, 1):
+        event = _macro_event_on(today_date + timedelta(days=offset))
+        if event:
+            macro_block = f"{event} {'today' if offset == 0 else 'tomorrow'}"
+            break
+
+    if macro_block:
+        print(f"  ⚠ Macro blackout: {macro_block} — no new entries (KB §3/Cofnas)")
+
+    if free_slots > 0 and not macro_block:
         candidates = []
         for sym, ind in indicators.items():
             if sym in open_syms or sym in exiting_syms:
@@ -356,6 +470,13 @@ def generate_signals(indicators: dict[str, dict],
                 continue
             # KB §19: RSI(2) < 10 AND close > SMA200
             if ind["rsi2"] < RSI_LO and ind["close"] > ind["sma200"]:
+
+                # ── Earnings exclusion (KB §3, §7) ──────────────────────────
+                earn_days = _days_to_earnings(sym)
+                if earn_days <= 2:
+                    print(f"  {sym}: earnings in {earn_days}d — skip (KB §3 §7)")
+                    continue
+
                 entry = {
                     "sym":        sym,
                     "rsi2":       ind["rsi2"],
@@ -368,7 +489,12 @@ def generate_signals(indicators: dict[str, dict],
                 }
 
                 if INSTRUMENT == "options":
-                    opt = _get_option_context(sym, ind["close"], ind.get("hv21", float("nan")))
+                    opt = _get_option_context(
+                        sym, ind["close"],
+                        ind.get("hv21",      float("nan")),
+                        ind.get("hv252_min", float("nan")),
+                        ind.get("hv252_max", float("nan")),
+                    )
                     if opt is None:
                         print(f"  {sym}: RSI2={ind['rsi2']:.1f} — no option passes KB gates, skip")
                         continue
@@ -719,7 +845,8 @@ def run_eod(dry_run: bool = False) -> dict:
                 print(f"  {en['sym']}: RSI2={en['rsi2']:.1f}  {struct}  "
                       f"occ={en.get('long_occ','?')}  "
                       f"est_debit=${en.get('est_debit','?')}  "
-                      f"exp={en.get('expiry','?')}  iv/hv={en.get('iv_hv','?')}")
+                      f"exp={en.get('expiry','?')}  "
+                      f"IVR={en.get('ivr','?')}%  iv/hv={en.get('iv_hv','?')}")
                 positions.append({
                     "sym":          en["sym"],
                     "entry_date":   en["entry_date"],

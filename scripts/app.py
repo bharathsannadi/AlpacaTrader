@@ -1116,9 +1116,11 @@ def _run_daily_eod() -> None:
             exp   = p.get("expiry", "?")
             dte   = p.get("dte", "?")
             ivhv  = p.get("iv_hv", "?")
+            ivr   = p.get("ivr", "?")
             _emit_log(
                 f"  ▲ ENTRY  {p['sym']:6}  {instr:6}  "
-                f"occ={occ}  debit=${deb}  exp={exp}  DTE={dte}  IV/HV={ivhv}"
+                f"occ={occ}  debit=${deb}  exp={exp}  "
+                f"DTE={dte}  IVR={ivr}%  IV/HV={ivhv}"
             )
         for p in pending_exits:
             _emit_log(
