@@ -430,31 +430,28 @@
   body.view-chart .chart-card      { flex: 1; min-height: 0; }
   body.view-chart #chart-container { flex: 1; min-height: 0; }
 
-  /* ── Settings view: responsive free-form grid ─────────────────────────── */
+  /* ── Settings view: explicit 3-column flex layout ───────────────────────── */
+  /* Uses .s-col wrapper divs in DOM — no CSS grid placement magic needed     */
   body.view-settings .dashboard  { display: block; overflow-y: auto; height: calc(100vh - 56px - 36px - 38px); padding: 10px 14px; }
   body.view-settings .right-panel   { display: none !important; }
   body.view-settings .panel-divider { display: none !important; }
+  /* Left panel becomes a flex row of 3 column divs */
   body.view-settings .left-panel {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+    display: flex !important;
+    flex-direction: row;
+    align-items: flex-start;
     gap: 10px; padding-right: 0;
-    align-items: start; align-content: start;
     overflow: visible;
   }
-  /* Cards are freely resizable — drag bottom-right corner handle */
-  body.view-settings .left-panel .card {
-    resize: both; overflow: auto;
-    min-width: 220px; min-height: 48px;
-    box-sizing: border-box;
-  }
-  /* Show resize cursor hint on card bottom-right */
-  body.view-settings .left-panel .card::after {
-    content: ''; display: block; position: absolute;
-    bottom: 3px; right: 3px; width: 8px; height: 8px;
-    background: linear-gradient(135deg, transparent 50%, rgba(74,98,128,0.35) 50%);
-    pointer-events: none;
-  }
-  body.view-settings .left-panel .card { position: relative; }
+  /* Column containers */
+  .s-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .s-col-left  { flex: 1.1 1 230px; }   /* Config + Automation */
+  .s-col-mid   { flex: 2.3 1 360px; }   /* Equity / Session / Positions / Slippage */
+  .s-col-right { flex: 0.9 1 180px; }   /* Data Freshness */
+  /* Cards fill their column width */
+  body.view-settings .left-panel .card { width: 100%; box-sizing: border-box; }
+  /* No drag grips in settings — layout is column-pinned */
+  body.view-settings .drag-grip { display: none !important; }
 
   /* Log view — full-screen log terminal */
   .log-panel { display: none; flex-direction: column; height: calc(100vh - 56px - 36px - 38px); padding: var(--s-3) var(--s-4); }
@@ -1187,218 +1184,227 @@
 <!-- ── Dashboard ─────────────────────────────────────────────────────────── -->
 <div class="dashboard">
 
-  <!-- Left panel (settings view) -->
+  <!-- Left panel — settings view uses 3-column layout via .s-col wrappers -->
   <div class="left-panel" id="left-panel">
 
-    <!-- Config -->
-    <div class="card" data-card-id="config">
-      <span class="drag-grip" title="Drag to reorder">⋮⋮</span>
-      <div class="card-title">Configuration</div>
+    <!-- ── LEFT COLUMN: Config + Automation ───────────────────────────────── -->
+    <div class="s-col s-col-left">
 
-      <!-- Mode -->
-      <div class="config-section">Trading Mode</div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Dry Run</div>
-          <div class="config-sub">No real orders placed</div>
+      <!-- Config -->
+      <div class="card" data-card-id="config">
+        <div class="card-title">Configuration</div>
+
+        <!-- Mode -->
+        <div class="config-section">Trading Mode</div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">Dry Run</div>
+            <div class="config-sub">No real orders placed</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="dry-run-toggle" checked onchange="setDryRun()" aria-label="Dry run mode"/>
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="dry-run-toggle" checked onchange="setDryRun()" aria-label="Dry run mode"/>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Risk per Trade</div>
-          <div class="config-sub">% of account value</div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">Risk per Trade</div>
+            <div class="config-sub">% of account value</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--s-1)">
+            <input class="risk-input" type="number" id="risk-pct" value="3" min="0.1" max="10" step="0.1" onchange="setRisk()" aria-label="Risk per trade percent"/>
+            <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:var(--s-1)">
-          <input class="risk-input" type="number" id="risk-pct" value="3" min="0.1" max="10" step="0.1" onchange="setRisk()" aria-label="Risk per trade percent"/>
-          <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
+        <div class="config-row">
+          <div>
+            <div class="config-label">Max Portfolio Risk</div>
+            <div class="config-sub">% total deployed across all positions</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--s-1)">
+            <input class="risk-input" type="number" id="max-portfolio-risk" value="3" min="0.5" max="50" step="0.5" onchange="setMaxPortfolioRisk()" aria-label="Max portfolio risk percent"/>
+            <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
+          </div>
         </div>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Max Portfolio Risk</div>
-          <div class="config-sub">% total deployed across all positions</div>
+
+        <!-- Filters -->
+        <div class="config-section">Filters</div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">VIX Max</div>
+            <div class="config-sub">Skip session above this</div>
+          </div>
+          <div class="stepper" role="group" aria-label="VIX maximum">
+            <button class="stepper-btn" onclick="adjustParam('vix_max', -1, 10, 100)" aria-label="Decrease VIX max">−</button>
+            <span class="stepper-value" id="val-vix-max">30</span>
+            <button class="stepper-btn" onclick="adjustParam('vix_max', 1, 10, 100)" aria-label="Increase VIX max">+</button>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:var(--s-1)">
-          <input class="risk-input" type="number" id="max-portfolio-risk" value="3" min="0.5" max="50" step="0.5" onchange="setMaxPortfolioRisk()" aria-label="Max portfolio risk percent"/>
-          <span style="font-size:var(--fs-xs);color:var(--muted)">%</span>
+
+        <!-- Trade rules -->
+        <div class="config-section">Trade Rules</div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">Stop Loss</div>
+            <div class="config-sub">% of premium paid</div>
+          </div>
+          <div class="stepper" role="group" aria-label="Stop loss">
+            <button class="stepper-btn" onclick="adjustParam('stop_loss', -5, 10, 90)" aria-label="Decrease stop loss">−</button>
+            <span class="stepper-value red" id="val-stop-loss">-50%</span>
+            <button class="stepper-btn" onclick="adjustParam('stop_loss', 5, 10, 90)" aria-label="Increase stop loss">+</button>
+          </div>
+        </div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">Profit Target</div>
+            <div class="config-sub">% of premium paid</div>
+          </div>
+          <div class="stepper" role="group" aria-label="Profit target">
+            <button class="stepper-btn" onclick="adjustParam('profit_target', -5, 10, 500)" aria-label="Decrease profit target">−</button>
+            <span class="stepper-value green" id="val-profit-target">+75%</span>
+            <button class="stepper-btn" onclick="adjustParam('profit_target', 5, 10, 500)" aria-label="Increase profit target">+</button>
+          </div>
+        </div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">DTE Min</div>
+            <div class="config-sub">Min days to expiry</div>
+          </div>
+          <div class="stepper" role="group" aria-label="DTE minimum">
+            <button class="stepper-btn" onclick="adjustParam('dte_min', -1, 0, 60)" aria-label="Decrease DTE min">−</button>
+            <span class="stepper-value" id="val-dte-min">7</span>
+            <button class="stepper-btn" onclick="adjustParam('dte_min', 1, 0, 60)" aria-label="Increase DTE min">+</button>
+          </div>
+        </div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">DTE Max</div>
+            <div class="config-sub">Max days to expiry</div>
+          </div>
+          <div class="stepper" role="group" aria-label="DTE maximum">
+            <button class="stepper-btn" onclick="adjustParam('dte_max', -1, 0, 60)" aria-label="Decrease DTE max">−</button>
+            <span class="stepper-value" id="val-dte-max">14</span>
+            <button class="stepper-btn" onclick="adjustParam('dte_max', 1, 0, 60)" aria-label="Increase DTE max">+</button>
+          </div>
         </div>
       </div>
 
-      <!-- Filters -->
-      <div class="config-section">Filters</div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">VIX Max</div>
-          <div class="config-sub">Skip session above this</div>
+      <!-- Automation toggles -->
+      <div class="card auto-schedule-card" data-card-id="auto-schedule">
+        <div class="card-title">Automation</div>
+        <div class="auto-schedule-row">
+          <span class="auto-schedule-label">Auto-schedule</span>
+          <span class="auto-schedule-hint">Start all symbols at 9:30 ET</span>
+          <button class="auto-schedule-btn" id="btn-auto-schedule" onclick="toggleAutoSchedule()">ON</button>
         </div>
-        <div class="stepper" role="group" aria-label="VIX maximum">
-          <button class="stepper-btn" onclick="adjustParam('vix_max', -1, 10, 100)" aria-label="Decrease VIX max">−</button>
-          <span class="stepper-value" id="val-vix-max">30</span>
-          <button class="stepper-btn" onclick="adjustParam('vix_max', 1, 10, 100)" aria-label="Increase VIX max">+</button>
+        <div class="auto-schedule-row" style="margin-top:6px">
+          <span class="auto-schedule-label">News filter</span>
+          <span class="auto-schedule-hint">Veto on bad headlines</span>
+          <button class="auto-schedule-btn" id="btn-news-filter" onclick="toggleNewsFilter()">ON</button>
+        </div>
+        <div class="auto-schedule-row" style="margin-top:6px">
+          <span class="auto-schedule-label">Trade memory</span>
+          <span class="auto-schedule-hint">ChromaDB recall</span>
+          <button class="auto-schedule-btn" id="btn-trade-memory" onclick="toggleTradeMemory()">ON</button>
+        </div>
+        <div class="auto-schedule-row" style="margin-top:6px">
+          <span class="auto-schedule-label">Bull/Bear LLM</span>
+          <span class="auto-schedule-hint">Needs ANTHROPIC_API_KEY</span>
+          <button class="auto-schedule-btn off" id="btn-debate" onclick="toggleDebate()">OFF</button>
+        </div>
+        <div class="auto-schedule-row" style="margin-top:6px">
+          <span class="auto-schedule-label" style="color:var(--yellow)">Auto-trade</span>
+          <span class="auto-schedule-hint">Skip approval modal</span>
+          <button class="auto-schedule-btn off" id="btn-auto-trade" onclick="toggleAutoTrade()">OFF</button>
         </div>
       </div>
 
-      <!-- Trade rules -->
-      <div class="config-section">Trade Rules</div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Stop Loss</div>
-          <div class="config-sub">% of premium paid</div>
-        </div>
-        <div class="stepper" role="group" aria-label="Stop loss">
-          <button class="stepper-btn" onclick="adjustParam('stop_loss', -5, 10, 90)" aria-label="Decrease stop loss">−</button>
-          <span class="stepper-value red" id="val-stop-loss">-50%</span>
-          <button class="stepper-btn" onclick="adjustParam('stop_loss', 5, 10, 90)" aria-label="Increase stop loss">+</button>
-        </div>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Profit Target</div>
-          <div class="config-sub">% of premium paid</div>
-        </div>
-        <div class="stepper" role="group" aria-label="Profit target">
-          <button class="stepper-btn" onclick="adjustParam('profit_target', -5, 10, 500)" aria-label="Decrease profit target">−</button>
-          <span class="stepper-value green" id="val-profit-target">+75%</span>
-          <button class="stepper-btn" onclick="adjustParam('profit_target', 5, 10, 500)" aria-label="Increase profit target">+</button>
-        </div>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">DTE Min</div>
-          <div class="config-sub">Min days to expiry</div>
-        </div>
-        <div class="stepper" role="group" aria-label="DTE minimum">
-          <button class="stepper-btn" onclick="adjustParam('dte_min', -1, 0, 60)" aria-label="Decrease DTE min">−</button>
-          <span class="stepper-value" id="val-dte-min">7</span>
-          <button class="stepper-btn" onclick="adjustParam('dte_min', 1, 0, 60)" aria-label="Increase DTE min">+</button>
-        </div>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">DTE Max</div>
-          <div class="config-sub">Max days to expiry</div>
-        </div>
-        <div class="stepper" role="group" aria-label="DTE maximum">
-          <button class="stepper-btn" onclick="adjustParam('dte_max', -1, 0, 60)" aria-label="Decrease DTE max">−</button>
-          <span class="stepper-value" id="val-dte-max">14</span>
-          <button class="stepper-btn" onclick="adjustParam('dte_max', 1, 0, 60)" aria-label="Increase DTE max">+</button>
-        </div>
-      </div>
-    </div>
+    </div><!-- /s-col-left -->
 
-    <!-- Automation toggles -->
-    <div class="card auto-schedule-card" data-card-id="auto-schedule">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="card-title">Automation</div>
-      <div class="auto-schedule-row">
-        <span class="auto-schedule-label">Auto-schedule</span>
-        <span class="auto-schedule-hint">Start all symbols at 9:30 ET</span>
-        <button class="auto-schedule-btn" id="btn-auto-schedule" onclick="toggleAutoSchedule()">ON</button>
-      </div>
-      <div class="auto-schedule-row" style="margin-top:6px">
-        <span class="auto-schedule-label">News filter</span>
-        <span class="auto-schedule-hint">Veto on bad headlines</span>
-        <button class="auto-schedule-btn" id="btn-news-filter" onclick="toggleNewsFilter()">ON</button>
-      </div>
-      <div class="auto-schedule-row" style="margin-top:6px">
-        <span class="auto-schedule-label">Trade memory</span>
-        <span class="auto-schedule-hint">ChromaDB recall</span>
-        <button class="auto-schedule-btn" id="btn-trade-memory" onclick="toggleTradeMemory()">ON</button>
-      </div>
-      <div class="auto-schedule-row" style="margin-top:6px">
-        <span class="auto-schedule-label">Bull/Bear LLM</span>
-        <span class="auto-schedule-hint">Needs ANTHROPIC_API_KEY</span>
-        <button class="auto-schedule-btn off" id="btn-debate" onclick="toggleDebate()">OFF</button>
-      </div>
-      <div class="auto-schedule-row" style="margin-top:6px">
-        <span class="auto-schedule-label" style="color:var(--yellow)">Auto-trade</span>
-        <span class="auto-schedule-hint">Skip approval modal</span>
-        <button class="auto-schedule-btn off" id="btn-auto-trade" onclick="toggleAutoTrade()">OFF</button>
-      </div>
-    </div>
+    <!-- ── MIDDLE COLUMN (2× wide): Equity → Session → Positions → Slippage ─ -->
+    <div class="s-col s-col-mid">
 
-    <!-- Data Freshness -->
-    <div class="card" data-card-id="equity">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="card-title">Equity Curve</div>
-      <div id="equity-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No equity history yet — first point lands at EOD (15:35 ET).</div>
-      <div id="equity-body" style="display:none">
-        <svg id="equity-spark" width="100%" height="48" viewBox="0 0 300 48" preserveAspectRatio="none" style="margin:6px 0;display:block"></svg>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:var(--fs-xs);font-family:var(--mono)">
-          <div>Equity <span id="eq-current" style="color:var(--text);font-weight:700"></span></div>
-          <div>Return <span id="eq-ret"></span></div>
-          <div>5-day DD <span id="eq-dd5"></span></div>
-          <div>20-day DD <span id="eq-dd20"></span></div>
-          <div>30-day DD <span id="eq-dd30"></span></div>
-          <div>Days <span id="eq-n" style="color:var(--muted)"></span></div>
+      <!-- Equity Curve -->
+      <div class="card" data-card-id="equity">
+        <div class="card-title">Equity Curve</div>
+        <div id="equity-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No equity history yet — first point lands at EOD (15:35 ET).</div>
+        <div id="equity-body" style="display:none">
+          <svg id="equity-spark" width="100%" height="48" viewBox="0 0 300 48" preserveAspectRatio="none" style="margin:6px 0;display:block"></svg>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:var(--fs-xs);font-family:var(--mono)">
+            <div>Equity <span id="eq-current" style="color:var(--text);font-weight:700"></span></div>
+            <div>Return <span id="eq-ret"></span></div>
+            <div>5-day DD <span id="eq-dd5"></span></div>
+            <div>20-day DD <span id="eq-dd20"></span></div>
+            <div>30-day DD <span id="eq-dd30"></span></div>
+            <div>Days <span id="eq-n" style="color:var(--muted)"></span></div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="card" data-card-id="slippage">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="card-title">Fill Slippage (entry, vs mid)</div>
-      <div id="slip-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No fills recorded yet.</div>
-      <div id="slip-body" style="display:none;font-size:var(--fs-xs);font-family:var(--mono)">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
-          <div>Avg (30) <span id="slip-avg" style="font-weight:700"></span></div>
-          <div>Trend <span id="slip-trend" style="font-weight:700"></span></div>
-          <div>Last <span id="slip-last"></span></div>
-          <div>Worst <span id="slip-worst"></span></div>
+      <!-- All Day Session -->
+      <div class="card session-card" data-card-id="session">
+        <div class="session-header">
+          <span class="session-name">All Day Session</span>
+          <span class="session-time">9:30 ET → end time</span>
         </div>
-        <div style="margin-top:4px;color:var(--muted);font-size:10px">+bps = paid up vs mid (the tax). Rising trend = fills degrading.</div>
+        <div class="session-desc">
+          ORB breakout · Gap fade · VWAP momentum<br/>
+          EMA9/21/200 · RSI · MACD · Bollinger · ATR<br/>
+          Tabs switch chart only — each symbol trades independently
+        </div>
+        <div class="time-row">
+          <span>End at</span>
+          <input class="time-input" type="time" id="session-end" value="15:45"
+                 min="09:30" max="16:00" onchange="setSessionEnd()"/>
+          <span>ET</span>
+        </div>
+        <div class="btn-row">
+          <button class="btn-run"  id="btn-start-all" onclick="startAllSessions()">▶▶ Start All</button>
+          <button class="btn-stop" id="btn-stop-all"  onclick="stopAllSessions()">■■ Stop All</button>
+          <button class="btn-neutral" id="btn-sync-positions" onclick="syncPositions()" title="Pull live positions from Alpaca — no restart needed">⟳ Sync Positions</button>
+        </div>
       </div>
-    </div>
 
-    <div class="card freshness-card" data-card-id="freshness">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="card-title">Data Freshness</div>
-      <div class="freshness-empty" id="freshness-empty">No data fetched yet.</div>
-      <table class="freshness-table" id="freshness-table" style="display:none">
-        <thead>
-          <tr><th>Source</th><th>Provider</th><th class="age-col">Age</th></tr>
-        </thead>
-        <tbody id="freshness-body"></tbody>
-      </table>
-    </div>
+      <!-- Open Positions -->
+      <div class="card" data-card-id="positions">
+        <div class="card-title">Open Positions</div>
+        <div id="positions-list">
+          <div class="pos-empty">No open positions</div>
+        </div>
+      </div>
 
-    <!-- All-day trading session -->
-    <div class="card session-card" data-card-id="session">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="session-header">
-        <span class="session-name">All Day Session</span>
-        <span class="session-time">9:30 ET → end time</span>
+      <!-- Fill Slippage -->
+      <div class="card" data-card-id="slippage">
+        <div class="card-title">Fill Slippage (entry, vs mid)</div>
+        <div id="slip-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No fills recorded yet.</div>
+        <div id="slip-body" style="display:none;font-size:var(--fs-xs);font-family:var(--mono)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
+            <div>Avg (30) <span id="slip-avg" style="font-weight:700"></span></div>
+            <div>Trend <span id="slip-trend" style="font-weight:700"></span></div>
+            <div>Last <span id="slip-last"></span></div>
+            <div>Worst <span id="slip-worst"></span></div>
+          </div>
+          <div style="margin-top:4px;color:var(--muted);font-size:10px">+bps = paid up vs mid (the tax). Rising trend = fills degrading.</div>
+        </div>
       </div>
-      <div class="session-desc">
-        ORB breakout · Gap fade · VWAP momentum<br/>
-        EMA9/21/200 · RSI · MACD · Bollinger · ATR<br/>
-        Tabs switch chart only — each symbol trades independently
-      </div>
-      <div class="time-row">
-        <span>End at</span>
-        <input class="time-input" type="time" id="session-end" value="15:45"
-               min="09:30" max="16:00" onchange="setSessionEnd()"/>
-        <span>ET</span>
-      </div>
-      <div class="btn-row">
-        <button class="btn-run"  id="btn-start-all" onclick="startAllSessions()">▶▶ Start All</button>
-        <button class="btn-stop" id="btn-stop-all"  onclick="stopAllSessions()">■■ Stop All</button>
-        <button class="btn-neutral" id="btn-sync-positions" onclick="syncPositions()" title="Pull live positions from Alpaca — no restart needed">⟳ Sync Positions</button>
-      </div>
-    </div>
 
-    <!-- Open Positions -->
-    <div class="card" data-card-id="positions">
-      <span class="drag-grip">⋮⋮</span>
-      <div class="card-title">Open Positions</div>
-      <div id="positions-list">
-        <div class="pos-empty">No open positions</div>
+    </div><!-- /s-col-mid -->
+
+    <!-- ── RIGHT COLUMN: Data Freshness ───────────────────────────────────── -->
+    <div class="s-col s-col-right">
+
+      <div class="card freshness-card" data-card-id="freshness">
+        <div class="card-title">Data Freshness</div>
+        <div class="freshness-empty" id="freshness-empty">No data fetched yet.</div>
+        <table class="freshness-table" id="freshness-table" style="display:none">
+          <thead>
+            <tr><th>Source</th><th>Provider</th><th class="age-col">Age</th></tr>
+          </thead>
+          <tbody id="freshness-body"></tbody>
+        </table>
       </div>
-    </div>
+
+    </div><!-- /s-col-right -->
 
   </div><!-- /left-panel -->
 
