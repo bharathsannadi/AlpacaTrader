@@ -23,6 +23,7 @@ import os
 import json
 import re
 import time
+import resource
 import threading
 import logging
 from datetime import datetime, timedelta, timezone, time as _dtime
@@ -34,6 +35,31 @@ import math
 import pandas as pd
 import numpy as np
 import yfinance as yf
+
+# ── Fix: [Errno 24] Too many open files ───────────────────────────────────────
+# yfinance 1.3 uses peewee ORM to manage two SQLite caches (tkr-tz.db and
+# cookies.db). Under eventlet, every greenlet gets its own peewee connection
+# that is never closed. Over hours this exhausts macOS's default per-process
+# FD limit (256). Fix has two layers:
+#   1. Replace both SQLite caches with yfinance's own dummy (no-op) impls.
+#      TZ lookups fall back to an HTTP call per symbol (acceptable — once/run).
+#      Cookie lookups regenerate on each fetch (acceptable — cookie TTL is long).
+#   2. Raise the soft FD limit to 10 000 as a belt-and-suspenders safety net.
+try:
+    import yfinance.cache as _yfcache
+    _yfcache._TzCacheManager._tz_cache         = _yfcache._TzCacheDummy()
+    _yfcache._CookieCacheManager._Cookie_cache  = _yfcache._CookieCacheDummy()
+    _yfcache._ISINCacheManager._isin_cache      = _yfcache._ISINCacheDummy()
+except Exception:
+    pass  # older yfinance versions without these classes — safe to skip
+
+try:
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if _soft < 10_000:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(10_000, _hard), _hard))
+except Exception:
+    pass
+# ─────────────────────────────────────────────────────────────────────────────
 
 from alpaca.trading.client          import TradingClient
 from alpaca.data.historical          import StockHistoricalDataClient
