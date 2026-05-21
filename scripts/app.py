@@ -1431,9 +1431,16 @@ def on_sync_positions():
 _VALID_INTERVALS  = frozenset({"1m", "5m", "15m", "30m", "1h", "1d"})
 _VALID_RANGES     = frozenset({"1D", "5D", "1M", "3M", "1Y", "5Y"})
 
-# Chart-bar cache: (symbol, timeframe) -> (bars_list, monotonic_ts)
-_chart_cache: dict[tuple[str, str], tuple[list, float]] = {}
+# Chart-bar cache: (symbol, interval, range) -> (bars_list, monotonic_ts)
+_chart_cache: dict[tuple[str, str, str], tuple[list, float]] = {}
 _chart_cache_lock = threading.Lock()
+
+# Overlay cache: same key/TTL as bar cache.
+# chart_overlays() calls fetch_daily_ema200 + fetch_prior_day_levels (both
+# now cached 1 h in spy_auto_trader), but even the pandas math (VWAP/EMAs)
+# adds ~5-20 ms per request — skip entirely when bars haven't changed.
+_overlay_cache: dict[tuple[str, str, str], tuple[dict, float]] = {}
+_overlay_cache_lock = threading.Lock()
 
 
 # Tracks the interval/range the user is actually viewing so the background
@@ -1471,7 +1478,32 @@ def _cached_chart_bars(interval: str, range_: str, symbol: str, force_refresh: b
     bars = trader.fetch_chart_bars(interval, range_, symbol)
     with _chart_cache_lock:
         _chart_cache[key] = (bars, now)
+    # Invalidate overlay cache when bars refresh so they stay in sync.
+    with _overlay_cache_lock:
+        _overlay_cache.pop(key, None)
     return bars
+
+
+def _cached_chart_overlays(interval: str, range_: str, symbol: str, bars: list) -> dict:
+    """Cache chart overlays alongside bars — same TTL.
+
+    chart_overlays() runs pandas VWAP/EMA math + two API calls (ema200, prior
+    levels). The API calls are individually cached in spy_auto_trader, but even
+    the pandas pass adds latency on every 15-second auto-refresh. Cache the
+    finished overlay dict so repeated fetches within the TTL window are instant.
+    """
+    if not bars:
+        return {}
+    key = (symbol, interval, range_)
+    now = time.monotonic()
+    with _overlay_cache_lock:
+        cached = _overlay_cache.get(key)
+        if cached and now - cached[1] < CHART_CACHE_TTL_SEC:
+            return cached[0]
+    overlays = trader.chart_overlays(bars, symbol)
+    with _overlay_cache_lock:
+        _overlay_cache[key] = (overlays, now)
+    return overlays
 
 
 @socketio.on("set_active_symbol")
@@ -1556,8 +1588,8 @@ def on_get_chart_data(data=None):
         with _state_lock:
             signals = [m for m in signal_history if m.get("symbol", "SPY") == symbol]
 
-        # Indicators + ORB + prior levels for the chart overlay
-        overlays = trader.chart_overlays(bars, symbol) if bars else {}
+        # Indicators + ORB + prior levels for the chart overlay (cached)
+        overlays = _cached_chart_overlays(interval, range_, symbol, bars)
 
         # Position overlay: every open position on this symbol, with stop/T1/T2/peak
         positions_for_symbol = [

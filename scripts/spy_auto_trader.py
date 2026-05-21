@@ -77,6 +77,14 @@ from alpaca.trading.enums            import (
 )
 
 
+# ── Chart data caches (prevent repeated slow API calls per chart refresh) ─────
+# fetch_daily_ema200: 400d yfinance fetch — only changes once/day.
+# fetch_prior_day_levels: Alpaca daily-bars call — only changes once/day.
+_EMA200_CACHE:        dict[str, tuple] = {}   # sym -> (value, mono_ts)
+_PRIOR_LEVELS_CACHE:  dict[str, tuple] = {}   # sym -> (dict,  mono_ts)
+_EMA200_TTL       = 3_600.0   # 1 h — daily value, stable all session
+_PRIOR_LEVELS_TTL = 3_600.0   # 1 h — prior-day H/L/C never changes intraday
+
 # ── Stop events & approval callback ───────────────────────────────────────────
 # Legacy names kept for import compatibility; app.py now uses per-symbol events.
 STOP_MORNING = threading.Event()
@@ -906,10 +914,12 @@ def chart_overlays(bars: list, symbol: str) -> dict:
             pl = {}
 
         def _series(col):
+            # Vectorized build — avoid iterrows() which is O(n) Python per row.
+            times = df["time"].to_numpy()
+            vals  = df[col].to_numpy(dtype=float, na_value=float("nan"))
             return [
-                {"time": int(row["time"]),
-                 "value": (None if pd.isna(row[col]) else round(float(row[col]), 4))}
-                for _, row in df.iterrows()
+                {"time": int(t), "value": None if v != v else round(float(v), 4)}
+                for t, v in zip(times, vals)
             ]
 
         return {
@@ -931,21 +941,30 @@ def chart_overlays(bars: list, symbol: str) -> dict:
 
 
 def fetch_prior_day_levels(symbol: str = "SPY"):
-    """Daily bars for prior trading day. Returns dict with H/L/C and pivot levels."""
+    """Daily bars for prior trading day. Returns dict with H/L/C and pivot levels.
+
+    Result is cached for _PRIOR_LEVELS_TTL seconds (1 h) — prior-day H/L/C is
+    immutable once the day closes, so repeated chart refreshes don't hit Alpaca.
+    """
     if not DATA_CLIENT:
         return {}
-    symbol = symbol.upper()
+    sym = symbol.upper()
+    now = time.monotonic()
+    cached = _PRIOR_LEVELS_CACHE.get(sym)
+    if cached and now - cached[1] < _PRIOR_LEVELS_TTL:
+        return cached[0]
     try:
         now_et = datetime.now(ET)
         request = StockBarsRequest(
-            symbol_or_symbols = [symbol],
+            symbol_or_symbols = [sym],
             timeframe         = TimeFrame.Day,
             start             = (now_et - timedelta(days=10)).astimezone(timezone.utc),
             feed              = "iex",
         )
         bars = DATA_CLIENT.get_stock_bars(request)
-        sym_bars = bars[symbol] if symbol in bars else []
+        sym_bars = bars[sym] if sym in bars else []
         if len(sym_bars) < 2:
+            _PRIOR_LEVELS_CACHE[sym] = ({}, now)
             return {}
 
         prev = sym_bars[-2]
@@ -960,12 +979,14 @@ def fetch_prior_day_levels(symbol: str = "SPY"):
             "s2":    round(pp - (ph - pl), 2),
         }
         log.info(
-            f"  {symbol} key levels — PrevH={ph:.2f}  PrevL={pl:.2f}  PrevC={pc:.2f}  "
+            f"  {sym} key levels — PrevH={ph:.2f}  PrevL={pl:.2f}  PrevC={pc:.2f}  "
             f"Pivot={pp:.2f}  R1={levels['r1']:.2f}  S1={levels['s1']:.2f}"
         )
+        _PRIOR_LEVELS_CACHE[sym] = (levels, now)
         return levels
     except Exception as e:
-        log.warning(f"Could not fetch prior day levels for {symbol}: {e}")
+        log.warning(f"Could not fetch prior day levels for {sym}: {e}")
+        _PRIOR_LEVELS_CACHE[sym] = ({}, now)
         return {}
 
 
@@ -1389,24 +1410,35 @@ def fetch_historical_vol_baseline(symbol: str, days: int = 5, interval_min: int 
 
 
 def fetch_daily_ema200(symbol: str) -> Optional[float]:
-    """Compute EMA200 from the last 300 daily closes.
+    """Compute EMA200 from the last 400 daily closes.
 
     Intraday 5-min bars only accumulate ~78 bars/day, so the rolling EMA200
     needs 13+ trading days to have any data and is distorted noise until then.
     A single daily EMA200 value is far more meaningful as a macro trend filter.
     Returns None if insufficient history is available.
+
+    Result is cached for _EMA200_TTL seconds (1 h) — the daily EMA200 is
+    stable all session, so repeated chart refreshes don't trigger yfinance fetches.
     """
+    sym = symbol.upper()
+    now = time.monotonic()
+    cached = _EMA200_CACHE.get(sym)
+    if cached and now - cached[1] < _EMA200_TTL:
+        return cached[0]
     try:
-        ticker = yf.Ticker(symbol.upper())
+        ticker = yf.Ticker(sym)
         df = ticker.history(period="400d", interval="1d")
         if len(df) < 201:
-            log.warning(f"fetch_daily_ema200({symbol}): only {len(df)} daily bars — need 201+")
+            log.warning(f"fetch_daily_ema200({sym}): only {len(df)} daily bars — need 201+")
+            _EMA200_CACHE[sym] = (None, now)
             return None
-        ema200 = float(df["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
-        log.info(f"  Daily EMA200 ({symbol}): ${ema200:.2f}")
-        return round(ema200, 2)
+        ema200 = round(float(df["Close"].ewm(span=200, adjust=False).mean().iloc[-1]), 2)
+        log.info(f"  Daily EMA200 ({sym}): ${ema200:.2f}")
+        _EMA200_CACHE[sym] = (ema200, now)
+        return ema200
     except Exception as e:
-        log.warning(f"fetch_daily_ema200({symbol}): {e}")
+        log.warning(f"fetch_daily_ema200({sym}): {e}")
+        _EMA200_CACHE[sym] = (None, now)   # cache failures to avoid hammering yfinance
         return None
 
 
