@@ -870,6 +870,380 @@ What to verify — mechanics only, P&L verdict comes later:
 
 ---
 
+## 20. Vertical Spread Greeks — Position Anatomy
+*Distilled from Saliba, "Option Spread Strategies" (2009) Ch. 2; Passarelli, "Trading Option Greeks" (2nd ed.)*
+
+### Spread Delta — The Central Metric
+
+A vertical spread's delta is the **sum** of the two component deltas (Saliba, p.37):
+
+```
+Bull call spread delta  = delta(long call) − delta(short call)
+Bear put spread delta   = delta(long put)  − delta(short put)   [both negative; result is negative]
+
+Example (from Saliba Ch.2):
+  Long 100 call, delta = 0.75
+  Short 105 call, delta = 0.25
+  Spread delta = 0.75 − 0.25 = 0.50
+```
+
+**Critical behaviour: delta returns to zero at the extremes.** When the underlying is far below both strikes (spread worthless, delta ≈ 0) or far above both strikes (spread at max value, delta ≈ 0 again — you've captured all the profit). The delta is **maximum when the underlying is between the two strikes**, near the long strike. This is where the spread is most sensitive and earns the fastest.
+
+**Delta evolution as underlying moves toward short strike:**
+- Underlying at long strike → spread delta is highest (~0.45–0.55 net)
+- Underlying halfway between strikes → spread delta begins to shrink
+- Underlying at short strike → spread delta collapses toward zero (spread near max value)
+- **Action signal:** when underlying reaches the short strike and delta collapses → EXIT the spread (maximum profit zone, nothing more to gain from holding)
+
+### Spread Gamma
+
+Net gamma of a debit spread = gamma(long leg) − gamma(short leg). Like delta, gamma returns to zero at the extremes and **peaks when the underlying is between the strikes** — specifically, it is most positive near the long strike and most negative near the short strike (Saliba, p.38):
+- Near long strike: positive gamma → spread gaining delta quickly on favorable move ✅
+- Near short strike: gamma of spread turns **negative** → delta is being stripped away by the short leg's increasing gamma → **spread is near max and will not gain further**
+
+**For our system:** positive gamma between the strikes = the spread is "earning its keep." Negative gamma at or past the short strike = **exit signal, you are working against yourself.**
+
+### Spread Theta (Time Decay)
+
+Spread theta = theta(long leg) + theta(short leg). Since long options have negative theta and short options have positive theta:
+- **Net theta of a debit spread is negative** — you pay time decay on net (the short leg partially offsets the long leg's decay)
+- **Key advantage over naked long options:** the sold leg contributes positive theta that reduces the overall drag. A debit spread's daily theta cost is **40–60% less** than holding the long leg naked (Saliba, p.40)
+
+Typical theta for a 21-DTE, $2-wide debit spread on a $200 underlying:
+- Long leg theta: ~−$0.06/day
+- Short leg theta: +$0.03/day (offset)
+- **Net spread theta: ~−$0.03/day** (vs. −$0.06/day naked)
+
+**For our system:** lower theta drag is the primary reason to use spreads when IVR is elevated. The sold leg is not just reducing cost — it is reducing the daily theta tax in half.
+
+### Spread Vega (IV Sensitivity)
+
+Net vega of a debit spread = vega(long leg) − vega(short leg). Both legs have positive vega (long premium), but the spread's net vega is **30–50% of the long leg alone:**
+- Long leg vega: ~0.12
+- Short leg vega: ~0.06 (offset, same expiry but further OTM)
+- **Net spread vega: ~0.06** (vs. 0.12 naked)
+
+**Two-sided implication:**
+1. If IV rises after entry → spread gains less than a naked long option would (you sold some vega)
+2. If IV falls after entry → spread loses less than a naked long option would (sold leg partly protects you)
+
+**For our system:** in high-IV environments (IVR > 40%), the spread's reduced vega is protective. You are not as exposed to IV crush. This is precisely why the IVR routing rule (§2/§5) switches from naked to spreads above 30%.
+
+### Quick Spread Greeks Reference Table
+
+| Condition | Net Delta | Net Gamma | Net Theta | Net Vega | Action |
+|-----------|-----------|-----------|-----------|----------|--------|
+| Underlying at long strike | Maximum | Positive | Most negative | Positive | Hold — earning fastest |
+| Underlying between strikes | Moderate | Near-zero | Moderate | Moderate | Hold — on track |
+| Underlying at short strike | Near zero | Negative | Near-zero | Near-zero | **EXIT — near max profit** |
+| Underlying below long strike | Minimal | Near-zero | Near-zero | Near-zero | **EXIT — approaching stop** |
+
+---
+
+## 21. Volatility Skew — Negative Skew in Indexes
+*Distilled from Natenberg, "Option Volatility and Pricing" Ch. 23–24; Hull, "Options, Futures and Other Derivatives"*
+
+### What the Skew Is (Natenberg, p.502–520)
+
+In a perfectly efficient Black-Scholes world, every option on the same underlying would have the same implied volatility regardless of strike. In reality, this **never happens.** The distribution of implied volatilities across strikes is called the **volatility skew** (or volatility smile/smirk depending on its shape).
+
+**Cause:** Most investors are long equity. They use OTM puts as insurance against a decline. This hedging demand drives OTM put prices (and therefore IV) higher than the model implies. There is no equivalent demand for OTM calls. Result: a persistent **downward-sloping skew** in stock indexes.
+
+### The Negative Skew — Empirical Data (Natenberg, p.512–515)
+
+Natenberg's direct market data for S&P 500 (FTSE 100 also shown as typical):
+- **Skewness = −0.536** (empirically measured in S&P 500 daily returns)
+- This means: the left tail (down moves) is longer than the right tail (up moves)
+- OTM puts are systematically priced with **higher IV than equidistant OTM calls**
+
+Practical illustration (approximate, from Ch. 24):
+```
+Strike (relative to ATM)  | Implied Vol
+ATM (100%)               | 20%  (baseline)
+5% OTM call (105%)       | 18%  (-2 vol pts — calls are "cheap")
+5% OTM put  ( 95%)       | 23%  (+3 vol pts — puts are "expensive")
+10% OTM call (110%)      | 16%  (-4 vol pts — further OTM calls even cheaper)
+10% OTM put  ( 90%)      | 27%  (+7 vol pts — puts become very expensive)
+```
+
+Lowell (p.218) confirms: "Ever since the market crash of 1987, the OTM put options in the Dow Jones, S&P, and NASDAQ have all exhibited a large reverse skew."
+
+### Practical Implications for Our System
+
+**1. Call spreads have a structural vol tailwind; put spreads have a structural headwind.**
+
+For a bull call spread (buy ATM, sell OTM call): you buy at the baseline IV and sell a call that is already priced at *below* baseline IV. The spread's vega cost is lower than a flat-vol model would suggest. **This is beneficial — you are not overpaying for the spread.**
+
+For a bear put spread (buy ATM put, sell OTM put): you buy at elevated IV (ATM put) and sell a put that is priced at *even higher* IV (OTM put is more expensive). The spread's net cost is actually reduced by the elevated short-leg premium. **The high skew makes put spreads naturally cheaper in dollar terms — but this is the market's pricing efficiency at work, not free money.**
+
+**2. The "skewed delta" effect (Natenberg, p.517).**
+
+Because OTM puts carry higher IV, their effective ("skewed") delta is larger than the standard Black-Scholes delta suggests. A put that B-S says has delta −0.20 might effectively behave like a −0.25 delta put because the IV input is higher. For our option system: when selecting put strikes for bear put spreads, the OTM short put leg has more delta exposure than you think. Do not go further OTM just because the nominal delta looks small.
+
+**3. Post-crash skew steepens; low-vol regimes flatten it.**
+
+- VIX > 25: skew steepens dramatically. OTM put IV can jump 5–10 vol points. This further inflates the cost of buying puts and rewards put sellers.
+- VIX < 15: skew flattens. OTM puts and calls are closer in vol. Better environment for buying put protection.
+
+**Rule: in low-vol regimes (VIX < 15), put protection is cheapest relative to calls — if you want directional put plays, enter them in low-vol environments.** In high-vol environments, the skew makes put buying expensive; prefer call buying on the upside recovery or use debit spreads.
+
+---
+
+## 22. Variance Risk Premium & Volatility Forecasting
+*Distilled from Sinclair, "Option Trading: Pricing and Volatility Strategies" (2010) Ch. 7–8; "Volatility Trading" (2013)*
+
+### The Variance Risk Premium (VRP) — Sinclair Ch. 8
+
+The **variance risk premium** is the persistent tendency for implied volatility to **exceed realized volatility**. It is the most structurally important fact in options for a long-premium trader to understand:
+
+- **Magnitude:** IV runs ~2–4 volatility points above subsequent realized vol on average for SPY/large-cap names.
+- **Frequency:** IV exceeds realized vol approximately **70% of trading months** (Sinclair's empirical measure).
+- **Direction:** the VRP is a structural premium earned by net vol sellers (credit spreads, naked puts) at the expense of net vol buyers (debit spreads, naked calls/puts).
+
+**What this means for our system (long premium, debit buyers):**
+The VRP is a **structural headwind** against long premium strategies. On average, you are paying ~2–4 vol points more than the underlying will actually move. For a 21-DTE debit spread costing $1.00, the VRP headwind might cost $0.08–0.15 of expected value.
+
+**How to overcome the VRP:**
+1. **Directional edge must be large enough** to overcome the VRP. The Connors RSI(2) strategy has a validated PF 1.31@3bp — this directional edge must carry the options trade.
+2. **Enter only when IV is below or near HV** (IVR < 30%): this is when the VRP headwind is smallest — you are buying when IV is already compressed, leaving less room for further compression.
+3. **Use spreads** to reduce vega exposure and thus VRP sensitivity.
+
+### Volatility Forecasting — Practical Blend (Sinclair Ch. 7)
+
+Sinclair's volatility forecasting hierarchy (best predictors of near-term realized vol):
+
+| Forecaster | Predictive power (5-day horizon) |
+|---|---|
+| Recent 5-day realized vol (GARCH effect) | ~45% |
+| 30-day implied vol (VIX-type measure) | ~35% |
+| Combination blend | ~55% (best available) |
+
+**Practical blend formula:**
+```
+Expected_5d_vol = 0.45 × HV5 + 0.35 × IV30 + 0.20 × HV30
+```
+Where HV5 = 5-day realized vol annualized, IV30 = current 30-day ATM implied vol, HV30 = 30-day historical realized vol.
+
+**For our system:** options are "cheap" (favourable entry) when `Expected_5d_vol > IV30`. This means the underlying is moving more than options currently imply.
+
+### GARCH Effect — Volatility Clustering (Sinclair Ch. 7)
+
+The single most actionable empirical finding from Sinclair:
+- **Vol clusters:** high-vol days follow high-vol days, low-vol days follow low-vol days.
+- If SPY has had ≥ 3 consecutive days with moves > 1%: probability next 5 days > 0.8% daily = ~65%
+- If SPY has had ≥ 5 consecutive days with moves < 0.4%: probability next week < 0.5% daily = ~70%
+
+**Rules for our system:**
+- **Entering AFTER 3+ high-vol days:** options are expensive (GARCH inflates IV expectations). Use debit spreads; reduce size. The current move is already "priced in."
+- **Entering AFTER 5+ low-vol days:** options are cheap relative to recent movement. Naked longs are acceptable if IVR < 30%. Best window for long premium entry.
+- **Vol clustering → trend persistence for our Connors strategy:** if we are in a high-vol cluster, the RSI(2) mean-reversion signal has stronger context. The mean-reversion from an oversold extreme is amplified when surrounding vol is high.
+
+### Term Structure — Contango vs. Backwardation (Sinclair Ch. 8)
+
+**Normal (contango):** front-month IV < back-month IV. Market is calm. Rolling options to later months is expensive (you pay up for time).
+
+**Inverted (backwardation):** front-month IV > back-month IV. Market is fearful about near-term events. The front month is being "bid up" due to hedging demand for the short-term period.
+
+**Reading term structure at entry:**
+- If 21-day IV significantly above 60-day IV → backwardation → near-term fear premium is elevated. For debit buyers: the options you want to buy are expensive. Consider buying the 45–60 day expiry instead (where IV is lower) even if it means more theta.
+- If 21-day IV approximately equal to 60-day IV → normal contango → buy the 21-30 day expiry as planned.
+- **Rule:** check IV at target DTE vs. next-month IV. If front-month IV is more than 3 vol points above next-month, you are buying at the wrong expiry — roll the entry to the calmer month.
+
+---
+
+## 23. Earnings & Event IV — Build/Crush Mechanics
+*Distilled from Lowell, "Get Rich With Options" (2009) p.45, 59–60; Benklifa, "Think Like an Option Trader"; Saliba, "Option Spread Strategies" Ch. 1*
+
+### The Earnings IV Buildup (Lowell, p.59–60)
+
+Lowell (former NYMEX floor trader): *"Have you ever bought call or put options right before a stock was about to have its earnings announced? I'm sure many of you thought that buying options as a fast-money play was going to be a quick and easy way to make a fortune. But in almost every instance, you saw the price of all options rise significantly before the announcement... The option market makers are no dummies. They will reprice the options based on the level of uncertainty of the earnings announcement."*
+
+**The pattern (applies to our 39-symbol universe):**
+1. **D-10 to D-5 before earnings:** IV begins rising steadily. The implied move (straddle price / stock price) starts to expand.
+2. **D-2 to D-1:** IV peaks. Market makers price in maximum uncertainty. This is the **most expensive time to buy options**.
+3. **Post-announcement (typically overnight or pre-market):** IV collapses immediately, often 30–55%. Even a large directional move is frequently priced in — you can be directionally right and LOSE money.
+
+**Why long premium fails into earnings:**
+- You buy at peak IV (D-1)
+- Stock moves, say, +5% as expected
+- IV collapses 40% on the open
+- Net result: option price unchanged or DOWN despite the directional win
+
+### IV Crush Magnitude by Event Type
+
+| Event | When IV spikes | Typical pre-event IV rise | Post-event IV crush | Duration of elevated IV |
+|-------|---------------|--------------------------|--------------------|-----------------------|
+| Quarterly earnings | 5-10 days before | +15–35% above normal | 30–55% immediately | 1–2 days before → 0 after |
+| FOMC decision | 1–2 days before | +10–25% | 10–25% after announcement | Day before → partial crush |
+| CPI release | Morning of | +8–15% | 8–15% after 8:30 AM ET | Single day |
+| NFP | Morning of | +8–15% | 8–15% after 8:30 AM ET | Single day |
+
+*Note: Our macro blackout calendar (§19) already blocks FOMC, CPI, NFP day entries. This table explains WHY.*
+
+### Rules for Existing Positions Approaching Earnings
+
+Our earnings exclusion blocks **new entries** within 2 days of earnings. But what about positions already held?
+
+**If an open position has earnings within its DTE window:**
+- D-5: monitor. If the position is profitable (+30% or more), consider closing.
+- D-2: **hard close trigger.** Close the position on D-2 before earnings regardless of P&L. You are about to hold through peak IV buildup that will invert when the event resolves.
+- **Exception:** if already at the profit target (80% of max spread value), close immediately regardless of DTE to earnings.
+
+**Rule: no position should be held through an earnings announcement unless the strategy was explicitly designed for it (e.g., an iron condor betting on IV crush — which this system does not run).**
+
+### Post-Earnings Re-Entry Window
+
+After earnings IV crush, options briefly become **underpriced** relative to normal levels (IV below 30-day moving average). This creates a 2–5 day window of favorable long-premium entry conditions.
+
+**Specific case for Connors RSI(2) signals post-earnings:**
+- A stock beaten down on earnings can trigger RSI(2) < 10
+- At the same time, IV has just crushed back to below-normal levels
+- This is a **double-quality entry signal**: directional mean-reversion setup + cheap premium
+- **Rule:** post-earnings RSI(2) < 10 + IV30 < 30-day HV = A-tier entry for debit spreads. Enter within 2 days of earnings release (not within 2 days of NEXT earnings).
+
+---
+
+## 24. Active Spread Management & Rolling Discipline
+*Distilled from Saliba, "Option Spread Strategies" (2009) Ch. 1–2; Fontanills, "The Options Course" Ch. 12; Lowell, "Get Rich With Options" p.82, 105*
+
+### The Core Principle: Active Management Is Mandatory
+
+Saliba (p.29): *"Regardless of whether one falls into the short-term or long-term, high-risk or low-risk category, one thing is for sure: After the trade is selected and executed, it will have to be managed."*
+
+Options are not "set and forget" positions. A vertical spread has Greeks that change every day as time passes and the underlying moves. Passive holding = guaranteed underperformance on losing trades and leaving profits on the table on winners.
+
+### Lowell's Cardinal Rule (p.82)
+
+*"DON'T HOLD THE OPTION TO EXPIRATION. SELL THE OPTION WHEN YOU HAVE A PROFIT!"*
+
+This principle from a former market maker is the single most important practical management rule. The reasons:
+1. Final-week theta decay is extreme — profits earned over 2 weeks can evaporate in 2 days
+2. Gamma risk spikes — small adverse moves cause large P&L swings
+3. Bid-ask widens — your exit price deteriorates as liquidity providers price in expiration risk
+4. Pin risk — underlying can "pin" at the short strike, creating unpredictable assignment outcomes
+
+**Rule: do not hold a debit spread to expiration. Take profit at 75–85% of max spread value and exit.**
+
+### The Spread Close Hierarchy — When to Close
+
+**Priority order (close at FIRST trigger hit):**
+
+| Trigger | Threshold | Why |
+|---------|-----------|-----|
+| Max profit | 80% of spread width − debit paid | Last 20% requires expiration; gamma risk not worth it (Lowell p.82) |
+| Scale-out T1 | +50% of debit paid | Half-position close; lock partial gain (Fontanills Ch.12) |
+| Stop loss | −50% of debit paid | Non-negotiable; prevents catastrophic losses |
+| Thesis broken | Underlying violates signal condition (RSI(2) > 70) | Signal resolved; don't hold for the trade to "come back" |
+| DTE countdown | 7 DTE | Gamma risk too high; close regardless (Saliba Ch.2 Greeks) |
+| Earnings approach | 2 days before earnings of underlying | IV build will inflate then crush (§23) |
+| Time stop | Hold time > 2× average Connors exit days | Stale thesis; exit and redeploy |
+
+### Rolling — When It Makes Sense vs. When It Doesn't
+
+Rolling = closing the current spread and opening a new spread at different strikes or expiry.
+
+**Roll when ALL three conditions are met (Saliba Ch.1 rolling examples, p.31–34):**
+1. **Thesis is still intact** — the directional signal has not reversed (RSI(2) still < 70, underlying still in uptrend)
+2. **Time remains** — there are at least 14 days until expiry; rolling to the next month adds meaningful time
+3. **Roll improves your position** — the credit/debit of the roll operation is net-neutral or better (not paying a large additional debit to extend)
+
+**Do NOT roll when:**
+- Thesis is broken (RSI(2) resolved, underlying broke the opposite direction) → **close, do not extend**
+- Position is −50% already → taking on more time adds capital at risk to a losing thesis
+- The roll costs more than 50% of the original debit paid → too expensive to justify
+
+**Rolling mechanics (Saliba p.31, rolling up example):**
+```
+Example: Bull call spread at 100/105, underlying moves to 106
+- Position near max profit (spread worth ~$4.50 on $5.00 wide spread)
+- To "roll up": buy the 100/105 spread to close ($4.50 debit to close), 
+  open a new 105/110 spread ($2.00 credit) in the same expiry
+- Net cost of roll: $4.50 − $2.00 = $2.50 debit → total cost basis rises
+- New spread gives 5 more points of upside if bullish thesis continues
+- Only makes sense if strong continued bullish conviction AND time remains
+```
+
+**Rule: rolling is a tool for extending profitable positions with intact thesis, NOT a way to avoid taking losses on broken trades. Saliba: "The downside risk must be managed ruthlessly so that when the forecast is proven wrong, the trader must exit or neutralize the position immediately."**
+
+---
+
+## 25. Options Liquidity, Strike Selection & Execution
+*Synthesized from McMillan, Saliba (p.10: "spread books"), OIC Quick Reference; applied to our 39-symbol universe*
+
+### Symbol Liquidity Tiers
+
+Not all 39 symbols in our universe have equally liquid options chains. Liquidity determines fill quality, bid-ask drag, and whether a spread order can be executed as a unit.
+
+**Tier 1 — Excellent (use freely, all strategies):**
+SPY, QQQ, AAPL, AMZN, GOOG, MSFT, NVDA, META, NFLX
+- ATM bid-ask: $0.01–0.05. OI at ATM strikes: 5,000–100,000+
+- Spread orders fill at mid within 30–90 seconds
+- All spread widths and strategies viable
+
+**Tier 2 — Good (debit spreads viable, verify each strike):**
+JPM, BAC, WFC, C, MA, V, AMD, PLTR, CRM, ADBE, CRWD, ORCL
+- ATM bid-ask: $0.05–0.20. OI at ATM strikes: 500–5,000
+- Spread orders fill at mid; may need 2–4 minutes
+- Check OI at BOTH legs before entering; if either leg < 500 OI, skip
+
+**Tier 3 — Moderate (single-leg checks required; spreads may gap):**
+INTC, LRCX, AVGO, TSM, ARM, IBM, TEAM, NET, NOW, UBER, NKE, IWM
+- ATM bid-ask: $0.10–0.40. OI: 200–1,000
+- Leg-by-leg OI check mandatory; if short-leg OI < 200, **skip options, use shares instead**
+- Per §5 transaction cost hierarchy: thin edge + illiquid options = negative expectancy
+
+**Tier 4 — Potentially illiquid (shares preferred over options):**
+SOFI, HOOD, CRWV, CBRE, GLW, C (small float names)
+- Options chains may be sparse; bid-ask often > 5–10% of mid
+- Cost of a round-trip in options can exceed the expected profit of the trade
+- **Rule:** for Tier 4 names, default to shares (§19 KB rule: "shares only; options costs destroy this edge for thin directional signals")
+
+### Strike Width by Price Level
+
+Spread WIDTH relative to underlying price determines the meaningful risk/reward:
+- Width < 0.5% of underlying price = too narrow (slippage eliminates edge)
+- Width 1–3% of underlying price = target zone
+- Width > 5% = overpaying for limited upside
+
+| Symbol range | Min width | Target width | Notes |
+|---|---|---|---|
+| SPY $500–600 | $1 | $2–3 | $1 wide is minimal; $3 wide is optimal |
+| AMZN, GOOG $150–220 | $1 | $2.50–5 | $1 wide is tight; prefer $5 |
+| NVDA $600–1200 | $5 | $10–20 | $5 wide on NVDA is ~0.5%; $10–20 is right |
+| META $400–600 | $2.50 | $5–10 | |
+| MSFT $380–450 | $2.50 | $5–7.50 | |
+| ARM $100–200 | $2.50 | $5 | |
+| JPM, BAC, WFC $40–200 | $1 | $2.50–5 | |
+
+**Rule: never trade a spread where the width is less than 3× the per-leg bid-ask spread. If the option bid-ask is $0.10 and the spread width is $0.50, slippage is 40% of max profit — not viable.**
+
+### Strike Selection — DTE-Matched for Our Strategy
+
+For the Connors RSI(2) daily-bar strategy with expected hold of 3–7 trading days:
+
+- **Optimal DTE at entry: 21–28 days** — provides enough time for the mean-reversion to complete without excessive theta drag; leaves 14–21 DTE when the typical exit fires (RSI(2) > 70)
+- **Acceptable DTE: 14–21 days** — higher theta exposure; trade must resolve in ≤ 5 days
+- **Avoid: < 14 DTE** — theta too punishing for a multi-day hold; 7-DTE close rule would force exit before the signal can resolve
+
+**Strike configuration (McMillan's optimal for directional debit spread):**
+- Long strike: ATM or 1 strike ITM (delta 0.50–0.60) — ensures maximum delta sensitivity at entry
+- Short strike: 1–2 strikes OTM (delta 0.25–0.35) — caps upside but sells enough premium to meaningfully reduce cost
+- **Break-even check:** debit paid should be ≤ 40% of spread width. If debit is > 45% of width, the risk/reward is unfavorable — skip or widen the spread.
+
+### Spread Order Execution
+
+Saliba (p.10): *"Electronic spread books are accessible through the same front-end systems offered by most brokers. If a broker doesn't offer direct access to the spread books, it is time to switch brokers."*
+
+**Always use a combo/spread order (not two separate legs):**
+- A single spread order eliminates "leg risk" (one side fills, the other doesn't)
+- In Alpaca: submit as a multi-leg option order with the natural mid price as the limit
+- **Natural price = ask(long leg) − bid(short leg)** for a debit spread
+- **Target fill price = mid = (ask(long) − bid(short) + bid(long) − ask(short)) / 2**
+- If unfilled at mid after 2 minutes, walk price by $0.02–0.05 toward natural
+- Hard cap: never pay more than the natural (ask of long − bid of short)
+
+---
+
 ## Appendix: Quick Rules Summary
 
 | Rule | Threshold | Action |
