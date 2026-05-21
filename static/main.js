@@ -1011,14 +1011,17 @@ class ChartPane {
              <span class="ind-label">${d.label}</span>
            </div>`
     ).join("");
-    // Wire checkbox events (clicking row also toggles)
+    // Wire checkbox events.
+    // Rule: only ONE handler fires per user action to avoid double-toggle.
+    //   • Click on label / row area  → row click handler: manually flips cb, calls toggleIndicator
+    //   • Click directly on checkbox → browser toggles cb, fires "change" → change handler calls toggleIndicator
+    //                                   row click also fires (bubble), but we early-return if target is INPUT
     indPanel.querySelectorAll(".ind-row").forEach(row => {
       row.addEventListener("click", e => {
+        if (e.target.tagName === "INPUT") return; // checkbox click handled by "change" below
         const key = row.dataset.ind;
-        if (e.target.tagName !== "INPUT") {
-          const cb = row.querySelector("input");
-          cb.checked = !cb.checked;
-        }
+        const cb = row.querySelector("input");
+        cb.checked = !cb.checked;   // visual sync (doesn't fire "change")
         this.toggleIndicator(key);
       });
     });
@@ -1208,6 +1211,17 @@ class ChartPane {
     if (this._stochBodyEl) this._stochBodyEl.style.display = this._ind.stoch ? "" : "none";
     // Re-render with cached bars
     if (this._lastBars) this._renderData(this._lastBars, this._lastOverlays);
+    // Sub-charts were just revealed from display:none — their LightweightCharts
+    // instance was sized at 0×0. Force a resize on the next frame after the
+    // browser has laid out the flex container so clientWidth/Height are correct.
+    requestAnimationFrame(() => {
+      if (this._ind.rsi   && this.rsiChart   && this._rsiBodyEl?.clientWidth)
+        this.rsiChart.applyOptions({ width: this._rsiBodyEl.clientWidth, height: this._rsiBodyEl.clientHeight || 80 });
+      if (this._ind.macd  && this.macdChart  && this._macdBodyEl?.clientWidth)
+        this.macdChart.applyOptions({ width: this._macdBodyEl.clientWidth, height: this._macdBodyEl.clientHeight || 80 });
+      if (this._ind.stoch && this.stochChart && this._stochBodyEl?.clientWidth)
+        this.stochChart.applyOptions({ width: this._stochBodyEl.clientWidth, height: this._stochBodyEl.clientHeight || 80 });
+    });
   }
 
   _applyIndicatorButtons() {
