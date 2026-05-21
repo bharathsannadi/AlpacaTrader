@@ -169,6 +169,9 @@ def add_signal_marker(direction: str, price: float, reason: str, symbol: str = "
     warning travels with every marker — meets the override impulse with
     evidence, every time."""
     _badge, _tip = _signal_verdict(symbol, direction)
+    side = "CALL" if direction == "bull" else "PUT"
+    log.info("SIGNAL %s %s @ $%.2f  trigger=%s  verdict=%s  |  %s",
+             symbol.upper(), side, price, reason, _badge, _tip)
     marker = {
         "time":      int(datetime.now(ET).timestamp()),
         "price":     float(price),

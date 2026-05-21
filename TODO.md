@@ -1011,3 +1011,41 @@ execution path and does NOT move the Edge score (only a cost-robust
 (else it's the ai-trading-claude trap with our logo on it).
 
 > **H-RUN reference impl (2026-05-19):** Turtle Trading (Donchian breakout + ATR sizing + ATR trailing stop) is a clean canonical reference for H-RUN's runner/ATR-trail exit. Doctrine already in KB §8 Covel/§11 Brooks; cited as an implementation reference, not new edge.
+
+---
+
+## 🆕 KB-COMPLY — KB Compliance Gaps (audited 2026-05-21)
+
+Full audit of `daily_trader.py` + `spy_auto_trader.py` against all 25 KB sections + Appendix.
+All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
+
+### 🔴 High — active position management, direct P&L impact
+
+| ID | Rule | KB Ref | File / Function | What to add |
+|----|------|--------|-----------------|-------------|
+| **KB-1** | **80% max profit close on spreads** | §24 (Lowell p.82) | `daily_trader.py` → `generate_signals()` exit loop + `run_morning()` stop-check block | Morning routine: for each open spread, fetch live long-leg mid; if `long_mid / entry_debit ≥ 1.80` **OR** `(long_mid - short_mid) / width ≥ 0.80`, set `exit_pending` with reason `profit_target_80pct`. Include in `generate_signals()` EOD check too. |
+| **KB-2** | **7-DTE gamma risk close** | §24, §1 | `daily_trader.py` → `run_morning()` and/or `generate_signals()` | For each open options position, compute `days_left = (date.fromisoformat(p["expiry"]) - date.today()).days`. If `days_left <= 7`, set `exit_pending` with reason `dte_close_7d`. |
+| **KB-3** | **D-2 earnings close for OPEN positions** | §23, §24 | `daily_trader.py` → `generate_signals()` exit loop | In the exit loop (alongside RSI/time-cap checks), call `_days_to_earnings(pos["sym"])`. If `earn_days <= 2`, add exit with reason `earnings_d2`. Currently only blocks *new entries*; existing positions are unprotected. |
+
+### 🟠 Medium — risk exposure / sizing
+
+| ID | Rule | KB Ref | File / Function | What to add |
+|----|------|--------|-----------------|-------------|
+| **KB-4** | **VIX gate in daily_trader** | Appendix | `daily_trader.py` → `run_eod()` and `run_morning()` | `run_eod()`: call `fetch_vix_or_proxy()` (reuse `spy_auto_trader.fetch_vix_live()` or yfinance `^VIX`); if VIX > 30, skip new entry signals (log warning). `run_morning()`: same gate before submitting orders. |
+| **KB-5** | **Max 3 correlated (same-direction) positions** | §4, Appendix | `daily_trader.py` → `generate_signals()` entry block | Count open positions with `direction == "bull"`. If count ≥ 3, block additional bull entries. Add constant `MAX_CORRELATED = 3`. |
+| **KB-6** | **Scale-out T1: close half at +50% gain** | §24, Appendix | `daily_trader.py` → `run_morning()` | If `long_mid / entry_debit >= 1.50` AND `contracts >= 2`, submit close for half the contracts. Requires `contracts >= 2` to be meaningful — currently signals always set `contracts=1`. Either bump default to 2 or note T1 is dormant until multi-contract is wired. |
+
+### 🟡 Low — execution quality / calibration
+
+| ID | Rule | KB Ref | File / Function | What to add |
+|----|------|--------|-----------------|-------------|
+| **KB-7** | **Combo/spread order (single multi-leg)** | §25 (Saliba p.10) | `daily_trader.py` → `place_option_entry()` | Alpaca supports `MultiLegOptionOrderRequest`. Submitting as one order eliminates leg risk (one side fills, other doesn't). Note: Alpaca paper may have multi-leg limitations — test first. |
+| **KB-8** | **Width < 3× per-leg bid-ask check** | §25 | `daily_trader.py` → `_get_option_context()` | After computing `width` and `atm_bid_ask`, add: `if width < 3 * atm_bid_ask: continue  # KB §25: slippage > 33% of max profit`. Prevents trades where round-trip drag eats the edge. |
+| **KB-9** | **Prefer DTE ≥ 21 (optimal window 21–28)** | §25 | `daily_trader.py` → `_get_option_context()` | Current range is 14–30. Change sort to prefer expiries ≥ 21 DTE: `min((d,e) for d,e in valid if d >= 21, default=min(valid))`. Graceful fallback to 14–20 DTE if no 21+ available. |
+| **KB-10** | **After VIX spike > 5 pts/day → spreads only** | Appendix | `daily_trader.py` → `_get_option_context()` or `generate_signals()` | Track prior-day VIX (persist in `daily_positions.json` or a sidecar). If `vix_today - vix_yesterday > 5`, force `structure = "spread"` regardless of IVR. |
+| **KB-11** | **OI threshold: code uses 200 vs KB Appendix 500** | §9, Appendix | `daily_trader.py` → `OPT_MIN_OI` constant | Consider raising `OPT_MIN_OI` to 300–500 for Tier 1–2 symbols (SPY, AAPL, NVDA, etc.) while keeping 200 floor for Tier 3 names. Or document explicitly that 200 is an intentional relaxation for equity single-names. |
+
+### Status key: ⬜ TODO · 🔄 In progress · ✅ Done
+
+**Suggested sequence:** KB-2 (7-DTE, 5 lines) → KB-3 (D-2 earnings, 3 lines) → KB-1 (80% profit, needs live quote fetch) → KB-4 (VIX gate) → KB-5 (correlated cap) → rest.
+KB-2 and KB-3 are trivially small and protect against real position-management failures.
