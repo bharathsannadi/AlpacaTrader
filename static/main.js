@@ -810,14 +810,18 @@ const _DEFAULT_SYMS = {
 // Legacy compat — pane 0's symbol tracks currentSymbol
 let currentSymbol = localStorage.getItem("chart_pane_0_sym") || "SPY";
 
-// ── Timeframe presets (interval + look-back range) ────────────────────────────
+// ── Timeframe presets — keyed by RANGE label, maps to bar interval + server range
+// 1D = today's intraday session (5-min bars)
+// 5D = rolling 5 trading days (15-min bars)
+// 1M = 1 month of hourly bars
+// 3M = 3 months of hourly bars
+// 1Y = 1 year of daily bars
 const TIMEFRAMES = {
-  "1m":  { interval: "1m",  range: "1D"  },
-  "5m":  { interval: "5m",  range: "5D"  },
-  "15m": { interval: "15m", range: "1D"  },
-  "30m": { interval: "30m", range: "5D"  },
-  "1h":  { interval: "1h",  range: "1M"  },
-  "1D":  { interval: "1d",  range: "1Y"  },
+  "1D": { interval: "5m",  range: "1D" },
+  "5D": { interval: "15m", range: "5D" },
+  "1M": { interval: "1h",  range: "1M" },
+  "3M": { interval: "1h",  range: "3M" },
+  "1Y": { interval: "1d",  range: "1Y" },
 };
 
 // ── ChartPane: one independent LightweightCharts instance ────────────────────
@@ -827,8 +831,8 @@ class ChartPane {
     this.sym = localStorage.getItem(`chart_pane_${id}_sym`) || "SPY";
     // Timeframe: new key preferred, fall back to old iv key
     this.tf  = localStorage.getItem(`chart_pane_${id}_tf`) ||
-               this._tfFromIv(localStorage.getItem(`chart_pane_${id}_iv`) || "15m");
-    const tfMap   = TIMEFRAMES[this.tf] || TIMEFRAMES["15m"];
+               this._tfFromIv(localStorage.getItem(`chart_pane_${id}_iv`) || "1D");
+    const tfMap   = TIMEFRAMES[this.tf] || TIMEFRAMES["1D"];
     this.interval = tfMap.interval;
     this.range    = tfMap.range;
     this._seq          = 0;
@@ -884,7 +888,8 @@ class ChartPane {
 
   // ── localStorage helpers ───────────────────────────────────────────────────
   _tfFromIv(iv) {
-    return { "1m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"1h","1d":"1D" }[iv] || "15m";
+    // Map old interval-key localStorage values → new range-key TIMEFRAMES
+    return { "1m":"1D","5m":"5D","15m":"1D","30m":"5D","1h":"1M","1d":"1Y","1D":"1Y" }[iv] || "1D";
   }
 
   _loadIndicators() {
@@ -1008,6 +1013,25 @@ class ChartPane {
     mainBody.className = "pane-main-body";
     mainBody.id        = `pane-main-${pid}`;
 
+    // Watermark — symbol name as faint background text
+    const wm = document.createElement("div");
+    wm.className = "chart-watermark";
+    wm.id        = `pane-wm-${pid}`;
+    wm.textContent = this.sym;
+    mainBody.appendChild(wm);
+
+    // OHLC legend — top-left, updates on crosshair move
+    const ohlcBar = document.createElement("div");
+    ohlcBar.className = "pane-ohlc-bar";
+    ohlcBar.id        = `pane-ohlc-${pid}`;
+    ohlcBar.innerHTML =
+      `<span class="ol">O</span><span class="ov" id="po-o-${pid}">—</span>` +
+      `<span class="ol">H</span><span class="ov" id="po-h-${pid}">—</span>` +
+      `<span class="ol">L</span><span class="ov" id="po-l-${pid}">—</span>` +
+      `<span class="ol">C</span><span class="ov" id="po-c-${pid}">—</span>` +
+      `<span class="ol">Vol</span><span class="ov" id="po-v-${pid}">—</span>`;
+    mainBody.appendChild(ohlcBar);
+
     const rsiBody   = document.createElement("div");
     rsiBody.className = "pane-sub-body";
     rsiBody.id        = `pane-rsi-${pid}`;
@@ -1098,6 +1122,13 @@ class ChartPane {
       if (this.chart && container.clientWidth && container.clientHeight)
         this.chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
     }).observe(container);
+
+    // Crosshair → update OHLC legend on hover
+    this.chart.subscribeCrosshairMove(param => {
+      if (!param || !param.time || !this._lastBars) return;
+      const bar = this._lastBars.find(b => b.time === param.time);
+      if (bar) this._updateOHLC(bar);
+    });
   }
 
   _initSubCharts() {
@@ -1204,6 +1235,9 @@ class ChartPane {
   setSymbol(sym) {
     this.sym = sym;
     localStorage.setItem(`chart_pane_${this.id}_sym`, sym);
+    // Update watermark
+    const wmEl = document.getElementById(`pane-wm-${this.id}`);
+    if (wmEl) wmEl.textContent = sym;
     // Update badge label
     const badgeSym = this.paneEl.querySelector(".pane-badge-sym");
     if (badgeSym) badgeSym.textContent = sym;
@@ -1219,7 +1253,7 @@ class ChartPane {
   setTimeframe(tf) {
     this.tf = tf;
     localStorage.setItem(`chart_pane_${this.id}_tf`, tf);
-    const map = TIMEFRAMES[tf] || TIMEFRAMES["15m"];
+    const map = TIMEFRAMES[tf] || TIMEFRAMES["1D"];
     this.interval = map.interval;
     this.range    = map.range;
     this._lastBars = null;
@@ -1285,6 +1319,28 @@ class ChartPane {
       chgEl.textContent  = `${up?"+":""}${chg.toFixed(2)} (${up?"+":""}${pct.toFixed(2)}%)`;
       chgEl.className    = `pane-badge-chg${up ? "" : " down"}`;
     }
+  }
+
+  // ── OHLC legend update ────────────────────────────────────────────────────
+  _updateOHLC(bar) {
+    const pid = this.id;
+    const f  = n  => (n  != null) ? n.toFixed(2) : "—";
+    const fv = n  => {
+      if (n == null || n === 0) return "—";
+      if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+      if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
+      return String(Math.round(n));
+    };
+    const o = document.getElementById(`po-o-${pid}`);
+    const h = document.getElementById(`po-h-${pid}`);
+    const l = document.getElementById(`po-l-${pid}`);
+    const c = document.getElementById(`po-c-${pid}`);
+    const v = document.getElementById(`po-v-${pid}`);
+    if (o) o.textContent = f(bar.open);
+    if (h) h.textContent = f(bar.high);
+    if (l) l.textContent = f(bar.low);
+    if (c) { c.textContent = f(bar.close); c.className = `ov ${bar.close >= bar.open ? "up" : "dn"}`; }
+    if (v) v.textContent = fv(bar.volume);
   }
 
   // ── Core render ────────────────────────────────────────────────────────────
@@ -1430,7 +1486,11 @@ class ChartPane {
       if (this.stochChart) this.stochChart.timeScale().fitContent();
     } else if (this.stochKSeries) OFF(this.stochKSeries, this.stochDSeries);
 
-    if (n > 0) this.chart.timeScale().fitContent();
+    if (n > 0) {
+      this.chart.timeScale().fitContent();
+      // Seed OHLC bar with the most-recent candle (crosshair will update it on hover)
+      this._updateOHLC(bars[n - 1]);
+    }
   }
 
   // ── Socket data handler ────────────────────────────────────────────────────
