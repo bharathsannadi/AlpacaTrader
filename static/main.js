@@ -585,7 +585,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Drag-drop layout (reorder within / between panels)
   restoreCardOrder();
+  restoreCardSizes();
   initDragDrop();
+  initCardResize();
   updateGridLayout();
 
   // Panel resize divider
@@ -593,9 +595,42 @@ document.addEventListener("DOMContentLoaded", () => {
   initPanelResize();
 });
 
-// ── Drag-and-drop card reordering ─────────────────────────────────────────────
-const STORAGE_KEY = "spyTraderCardOrder";
-let draggedCard   = null;
+// ── Card layout persistence (order + size) ────────────────────────────────────
+const STORAGE_KEY      = "spyTraderCardOrder";
+const CARD_SIZES_KEY   = "spyTraderCardSizes";
+let draggedCard        = null;
+let _resizeSaveTimer   = null;
+
+function saveCardSizes() {
+  const sizes = {};
+  document.querySelectorAll(".left-panel .card[data-card-id]").forEach(card => {
+    const w = card.style.width;
+    const h = card.style.height;
+    if (w || h) sizes[card.dataset.cardId] = { w, h };
+  });
+  localStorage.setItem(CARD_SIZES_KEY, JSON.stringify(sizes));
+}
+
+function restoreCardSizes() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CARD_SIZES_KEY) || "{}");
+    Object.entries(saved).forEach(([id, sz]) => {
+      const card = document.querySelector(`[data-card-id="${id}"]`);
+      if (!card) return;
+      if (sz.w) card.style.width  = sz.w;
+      if (sz.h) card.style.height = sz.h;
+    });
+  } catch (_) {}
+}
+
+// Attach a single ResizeObserver on all settings cards so any resize is saved
+function initCardResize() {
+  const ro = new ResizeObserver(() => {
+    clearTimeout(_resizeSaveTimer);
+    _resizeSaveTimer = setTimeout(saveCardSizes, 350);
+  });
+  document.querySelectorAll(".left-panel .card[data-card-id]").forEach(c => ro.observe(c));
+}
 
 function initDragDrop() {
   document.querySelectorAll(".card[data-card-id]").forEach(card => {
@@ -697,8 +732,9 @@ function restoreCardOrder() {
 }
 
 function resetLayout() {
-  if (!confirm("Reset all card positions to defaults? Your custom layout will be lost.")) return;
+  if (!confirm("Reset all card positions and sizes to defaults?")) return;
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(CARD_SIZES_KEY);
   localStorage.removeItem("spyTraderLayout_v2");
   localStorage.removeItem("spyTraderLayoutLocked");
   localStorage.removeItem(PANEL_WIDTH_KEY);
