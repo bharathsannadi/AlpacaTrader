@@ -15,7 +15,7 @@ OPTIONS_SAMPLE — 8 deliberately diverse names for the options-route
 """
 from __future__ import annotations
 
-EXISTING = ["SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"]
+EXISTING = ["SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META", "IWM"]
 
 NEW = [
     "CBRE", "GLW", "QQQ", "NFLX", "CRWV", "NET", "AAPL", "NOW", "SOFI",

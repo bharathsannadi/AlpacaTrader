@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 import spy_auto_trader as trader
 import news_filter
 import daily_trader as dtrad
+from universe import ALL as _UNIVERSE_ALL
 from security import (
     get_or_create_secret_key,
     LoginTracker,
@@ -72,8 +73,8 @@ POSITION_MONITOR_SEC     = 10        # position monitor poll interval (10s for t
 LOGIN_RATE_LIMIT         = "10 per minute"
 API_STATUS_RATE_LIMIT    = "30 per minute"
 MAX_SIGNAL_HISTORY       = 50
-VALID_SYMBOLS            = frozenset({"SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"})
-_SYMBOLS_ORDERED         = ["SPY", "AMZN", "GOOG", "MSFT", "NVDA", "META"]
+_SYMBOLS_ORDERED         = _UNIVERSE_ALL          # all 40 (39 universe + IWM)
+VALID_SYMBOLS            = frozenset(_SYMBOLS_ORDERED)
 SESSION_AUTO_START       = (9, 30)   # ET hour, minute to auto-fire all-day sessions
 
 # ── Concurrency ───────────────────────────────────────────────────────────────
