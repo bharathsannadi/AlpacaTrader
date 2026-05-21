@@ -23,7 +23,7 @@ socket.on("login_result", (r) => {
     document.getElementById("login-overlay").classList.add("hidden");
     appendLog("Connected successfully.", "INFO");
     socket.emit("refresh");
-    initChart();                  // Build chart and load default 1D bars
+    gridManager.init();           // Build multi-pane chart grid
     requestExecBrief();           // Load exec narrative on login
   } else {
     document.getElementById("login-error").textContent = r.error || "Login failed.";
@@ -218,19 +218,10 @@ function updateUI(s) {
     setEl("hdr-risk", fmt(s.account_value * riskPct));
   }
 
-  // Active symbol — sync tab highlight + header ticker + chart title
-  if (s.active_symbol && s.active_symbol !== currentSymbol) {
+  // Active symbol — sync ticker display
+  if (s.active_symbol) {
     currentSymbol = s.active_symbol;
     setEl("ticker-symbol", s.active_symbol);
-    setEl("chart-title",   s.active_symbol);
-    document.querySelectorAll(".symbol-tab").forEach(tab =>
-      tab.classList.toggle("active", tab.dataset.symbol === s.active_symbol));
-    _fetchChart(false);  // chart must match the new symbol
-  } else if (s.active_symbol) {
-    setEl("ticker-symbol", s.active_symbol);
-    setEl("chart-title",   s.active_symbol);
-    document.querySelectorAll(".symbol-tab").forEach(tab =>
-      tab.classList.toggle("active", tab.dataset.symbol === s.active_symbol));
   }
 
   // Per-symbol session dots in tab bar + Start/Stop All button enable-state
@@ -796,302 +787,755 @@ function updateGridLayout() {
   dashboard.classList.toggle("no-right", rightCount === 0);
 }
 
-// ── Chart (lightweight-charts) ────────────────────────────────────────────────
-let chart             = null;
-let candleSeries      = null;
-let chartInitialized  = false;
-let chartRefreshTimer = null;
-let _chartSeq         = 0;
-let currentSymbol     = "SPY";
+// ── Multi-Pane Chart Grid ─────────────────────────────────────────────────────
 
-// ── Persistent interval + range (survive page reload via localStorage) ────────
-const _IV_DEFAULT  = "15m";
-const _RNG_DEFAULT = "1D";
-// Live ranges: auto-refresh every N ms. Historical ranges don't change intraday.
+const SYMBOLS = [
+  "SPY","AMZN","GOOG","MSFT","NVDA","META","IWM",
+  "CBRE","GLW","QQQ","NFLX","CRWV","NET","AAPL","NOW","SOFI",
+  "HOOD","UNH","MU","AMD","ARM","TSM","LRCX","AVGO","IBM",
+  "PLTR","CRM","ORCL","NKE","TEAM","UBER","CRWD","ADBE","INTC",
+  "MA","V","WFC","C","BAC","JPM",
+];
+
 const LIVE_RANGES        = new Set(["1D", "5D"]);
 const CHART_AUTO_REFRESH = 15_000;
 
-let currentInterval = localStorage.getItem("chart_iv")  || _IV_DEFAULT;
-let currentRange    = localStorage.getItem("chart_rng") || _RNG_DEFAULT;
+const _DEFAULT_SYMS = {
+  1: ["SPY"],
+  2: ["SPY","QQQ"],
+  4: ["SPY","QQQ","NVDA","AAPL"],
+  6: ["SPY","QQQ","NVDA","AAPL","META","AMZN"],
+  8: ["SPY","QQQ","NVDA","AAPL","META","AMZN","MSFT","GOOG"],
+};
 
-// ── Single fetch entry-point ──────────────────────────────────────────────────
-function _fetchChart(force) {
-  if (!chartInitialized) return;
-  const seq = ++_chartSeq;
-  socket.emit("get_chart_data", {
-    interval:      currentInterval,
-    range:         currentRange,
-    symbol:        currentSymbol,
-    force_refresh: !!force,
-    _seq:          seq,
-  });
-}
+// Legacy compat — pane 0's symbol tracks currentSymbol
+let currentSymbol = localStorage.getItem("chart_pane_0_sym") || "SPY";
 
-function startChartAutoRefresh() {
-  stopChartAutoRefresh();
-  chartRefreshTimer = setInterval(() => {
-    if (LIVE_RANGES.has(currentRange)) _fetchChart(false);
-  }, CHART_AUTO_REFRESH);
-}
-function stopChartAutoRefresh() {
-  if (chartRefreshTimer) { clearInterval(chartRefreshTimer); chartRefreshTimer = null; }
-}
+// ── Timeframe presets (interval + look-back range) ────────────────────────────
+const TIMEFRAMES = {
+  "1m":  { interval: "1m",  range: "1D"  },
+  "5m":  { interval: "5m",  range: "5D"  },
+  "15m": { interval: "15m", range: "1D"  },
+  "30m": { interval: "30m", range: "5D"  },
+  "1h":  { interval: "1h",  range: "1M"  },
+  "1D":  { interval: "1d",  range: "1Y"  },
+};
 
-// ── Sync button highlights ────────────────────────────────────────────────────
-function _syncIvBtns(iv) {
-  document.querySelectorAll("[data-iv]").forEach(b =>
-    b.classList.toggle("iv-active", b.dataset.iv === iv));
-}
-function _syncRngBtns(rng) {
-  document.querySelectorAll("[data-rng]").forEach(b =>
-    b.classList.toggle("rng-active", b.dataset.rng === rng));
-}
+// ── ChartPane: one independent LightweightCharts instance ────────────────────
+class ChartPane {
+  constructor(id, gridEl) {
+    this.id  = id;
+    this.sym = localStorage.getItem(`chart_pane_${id}_sym`) || "SPY";
+    // Timeframe: new key preferred, fall back to old iv key
+    this.tf  = localStorage.getItem(`chart_pane_${id}_tf`) ||
+               this._tfFromIv(localStorage.getItem(`chart_pane_${id}_iv`) || "15m");
+    const tfMap   = TIMEFRAMES[this.tf] || TIMEFRAMES["15m"];
+    this.interval = tfMap.interval;
+    this.range    = tfMap.range;
+    this._seq          = 0;
+    this._refreshTimer = null;
+    this._lastClose    = null;
+    this._prevClose    = null;
+    this._lastBars     = null;
+    this._lastOverlays = {};
+    this._indPanelOpen = false;
 
-// ── Public setters (called by button onclick) ─────────────────────────────────
-function setInterval_(iv) {
-  if (!iv) return;
-  currentInterval = iv;
-  localStorage.setItem("chart_iv", iv);
-  _syncIvBtns(iv);
-  _fetchChart(true);
-  if (LIVE_RANGES.has(currentRange)) startChartAutoRefresh(); else stopChartAutoRefresh();
-}
-function setRange(rng) {
-  if (!rng) return;
-  currentRange = rng;
-  localStorage.setItem("chart_rng", rng);
-  _syncRngBtns(rng);
-  _fetchChart(true);
-  if (LIVE_RANGES.has(rng)) startChartAutoRefresh(); else stopChartAutoRefresh();
-}
+    // Indicator toggle state
+    this._ind = this._loadIndicators();
 
-// ── Chart init ────────────────────────────────────────────────────────────────
-// Overlay handles (so we can update without re-creating)
-let vwapSeries     = null;
-let ema9Series     = null;
-let ema21Series    = null;
-let ema200Series   = null;
-let volumeSeries   = null;
-// Price lines created on candleSeries — store the priceLine handles for cleanup
-let _priceLines    = [];
-// Signal time → {tip, badge}: the real-data "why not to buy" that travels
-// with every advisory marker, shown on hover via the crosshair tooltip.
-let _signalTips    = {};
-// Position lines (stop/T1/T2) — same idea but tracked separately so position
-// updates don't clobber prior-day / ORB lines
-let _positionLines = [];
+    // Main chart LWC handles
+    this.chart          = null;
+    this.candleSeries   = null;
+    this.vwapSeries     = null;
+    this.ema9Series     = null;
+    this.ema21Series    = null;
+    this.ema200Series   = null;
+    this.volumeSeries   = null;
+    this.bbUpperSeries  = null;
+    this.bbMidSeries    = null;
+    this.bbLowerSeries  = null;
 
-function _clearPriceLines() {
-  if (!candleSeries) return;
-  _priceLines.forEach(pl => { try { candleSeries.removePriceLine(pl); } catch (e) {} });
-  _priceLines = [];
-}
-function _clearPositionLines() {
-  if (!candleSeries) return;
-  _positionLines.forEach(pl => { try { candleSeries.removePriceLine(pl); } catch (e) {} });
-  _positionLines = [];
-}
+    // Sub-chart LWC handles (RSI / MACD)
+    this.rsiChart         = null;
+    this.rsiSeries        = null;
+    this.macdChart        = null;
+    this.macdFastSeries   = null;
+    this.macdSignalSeries = null;
+    this.macdHistSeries   = null;
 
-function initChart() {
-  if (chartInitialized) {
-    _syncIvBtns(currentInterval);
-    _syncRngBtns(currentRange);
-    _fetchChart(false);
-    startChartAutoRefresh();
-    return;
+    this._priceLines = [];
+    this._posLines   = [];
+    this._signalTips = {};
+    this._shadeEls   = [];
+
+    this._buildDOM(gridEl);
+    this._initChart();
+    this._initSubCharts();
+    this._applyIndicatorButtons();
+    this.fetch(false);
+    this._startAutoRefresh();
   }
-  const container = document.getElementById("chart-container");
-  if (!container || typeof LightweightCharts === "undefined") return;
 
-  chart = LightweightCharts.createChart(container, {
-    width:  container.clientWidth,
-    height: container.clientHeight || 280,
-    layout: {
-      background: { type: "solid", color: "#04070e" },
-      textColor:  "#7a96b8",
-      fontSize:   10,
-      fontFamily: "JetBrains Mono, monospace",
-    },
-    grid: {
-      vertLines: { color: "rgba(21,32,53,0.6)" },
-      horzLines: { color: "rgba(21,32,53,0.6)" },
-    },
-    rightPriceScale: {
-      borderColor:  "#152035",
-      textColor:    "#4a6280",
-      scaleMargins: { top: 0.05, bottom: 0.14 },  // tighter top + volume room (~14%)
-    },
-    timeScale: {
-      borderColor:     "#152035",
-      textColor:       "#4a6280",
-      timeVisible:     true,
-      secondsVisible:  false,
-      rightOffset:     5,
-      barSpacing:      8,
-      minBarSpacing:   3,
-      // Don't lock the left edge — lets the time scale collapse the gaps where
-      // there are no bars (lunch lull, after-hours, weekends).
-      fixLeftEdge:     false,
-      fixRightEdge:    false,
-      lockVisibleTimeRangeOnResize: false,
-    },
-    crosshair: {
-      mode: 1,
-      vertLine: { color: "#22d3ee", width: 1, style: 3, labelBackgroundColor: "#0f3040" },
-      horzLine: { color: "#22d3ee", width: 1, style: 3, labelBackgroundColor: "#0f3040" },
-    },
-    handleScroll: true,
-    handleScale:  true,
-  });
-
-  candleSeries = chart.addCandlestickSeries({
-    upColor:          "#00e5a0",
-    downColor:        "#ff3d68",
-    borderUpColor:    "#00e5a0",
-    borderDownColor:  "#ff3d68",
-    wickUpColor:      "#00e5a055",
-    wickDownColor:    "#ff3d6855",
-    priceLineVisible: false,   // we'll show our own — engine's last is noisy here
-  });
-
-  // VWAP — orange, the most-watched intraday line
-  vwapSeries = chart.addLineSeries({
-    color: "#f59e0b", lineWidth: 2, priceLineVisible: false,
-    lastValueVisible: true, title: "VWAP",
-  });
-
-  // EMAs
-  ema9Series  = chart.addLineSeries({
-    color: "#22d3ee", lineWidth: 1, priceLineVisible: false,
-    lastValueVisible: false, title: "EMA9",
-  });
-  ema21Series = chart.addLineSeries({
-    color: "#a78bfa", lineWidth: 1, priceLineVisible: false,
-    lastValueVisible: false, title: "EMA21",
-  });
-  ema200Series = chart.addLineSeries({
-    color: "#f43f5e", lineWidth: 1, lineStyle: 2, priceLineVisible: false,
-    lastValueVisible: false, title: "EMA200d",
-  });
-
-  // Volume histogram — separate price scale anchored at the bottom
-  volumeSeries = chart.addHistogramSeries({
-    priceFormat: { type: "volume" },
-    priceScaleId: "vol",
-    color: "#3b82f660",
-  });
-  chart.priceScale("vol").applyOptions({
-    scaleMargins: { top: 0.88, bottom: 0 },   // volume occupies bottom ~12%
-    borderVisible: false,
-  });
-
-  new ResizeObserver(() => {
-    if (chart && container.clientWidth && container.clientHeight)
-      chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
-  }).observe(container);
-
-  // Crosshair hover → tooltip with all indicator values
-  chart.subscribeCrosshairMove((param) => _onCrosshairMove(param));
-
-  chartInitialized = true;
-  _syncIvBtns(currentInterval);
-  _syncRngBtns(currentRange);
-  _fetchChart(false);
-  startChartAutoRefresh();
-}
-
-function _onCrosshairMove(param) {
-  const tip = document.getElementById("chart-tooltip");
-  if (!tip) return;
-  if (!param.time || !param.seriesPrices) { tip.style.display = "none"; return; }
-  const candle = param.seriesPrices.get(candleSeries);
-  if (!candle) { tip.style.display = "none"; return; }
-  const vwap  = param.seriesPrices.get(vwapSeries);
-  const ema9  = param.seriesPrices.get(ema9Series);
-  const ema21 = param.seriesPrices.get(ema21Series);
-  const fmt = v => (v == null ? "–" : v.toFixed(2));
-  let html =
-    `O ${fmt(candle.open)} · H ${fmt(candle.high)} · L ${fmt(candle.low)} · C ${fmt(candle.close)}` +
-    `<br>VWAP ${fmt(vwap)} · EMA9 ${fmt(ema9)} · EMA21 ${fmt(ema21)}`;
-  // If a signal marker sits at/near this time, show its real-data
-  // why-not-to-buy verdict prominently (within ±1 bar tolerance).
-  const sig = _signalTips[param.time] ||
-              _signalTips[param.time - 300] || _signalTips[param.time + 300];
-  if (sig && sig.tip) {
-    html += `<br><span style="color:#ff9d3d;font-weight:600">⚠ ${sig.tip}</span>`;
+  // ── localStorage helpers ───────────────────────────────────────────────────
+  _tfFromIv(iv) {
+    return { "1m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"1h","1d":"1D" }[iv] || "15m";
   }
-  tip.innerHTML = html;
-  tip.style.display = "block";
-  const x = Math.min(param.point.x + 12, document.getElementById("chart-container").clientWidth - 240);
-  const y = Math.max(12, param.point.y - 60);
-  tip.style.left = x + "px";
-  tip.style.top  = y + "px";
+
+  _loadIndicators() {
+    try {
+      const s = localStorage.getItem(`chart_pane_${this.id}_ind`);
+      if (s) return JSON.parse(s);
+    } catch (_) {}
+    return { ema9: false, ema21: false, ema200: true, vwap: true, bb: false, rsi: false, macd: false };
+  }
+
+  _saveIndicators() {
+    localStorage.setItem(`chart_pane_${this.id}_ind`, JSON.stringify(this._ind));
+  }
+
+  // ── DOM construction ───────────────────────────────────────────────────────
+  _buildDOM(gridEl) {
+    const pid = this.id;
+
+    const pane = document.createElement("div");
+    pane.className = "chart-pane";
+    pane.id        = `pane-${pid}`;
+
+    // ── Header ──────────────────────────────────────────────────────────────
+    const hdr = document.createElement("div");
+    hdr.className = "pane-header";
+    hdr.innerHTML = `
+      <span class="pane-source">Alpaca</span>
+      <select class="pane-sym-select" id="pane-sym-${pid}">
+        ${SYMBOLS.map(s => `<option value="${s}"${s===this.sym?" selected":""}>${s}</option>`).join("")}
+      </select>
+      <select class="pane-tf-select" id="pane-tf-${pid}">
+        ${Object.keys(TIMEFRAMES).map(tf =>
+          `<option value="${tf}"${tf===this.tf?" selected":""}>${tf}</option>`
+        ).join("")}
+      </select>
+      <button class="pane-ind-btn" id="pane-ind-btn-${pid}">INDICATORS</button>
+      <div class="pane-price-badge">
+        <span class="pane-badge-sym">${this.sym}</span>
+        <span class="pane-badge-price" id="pane-badge-price-${pid}">—</span>
+        <span class="pane-badge-chg"  id="pane-badge-chg-${pid}">—</span>
+      </div>
+    `;
+    hdr.querySelector(".pane-sym-select").addEventListener("change", e => this.setSymbol(e.target.value));
+    hdr.querySelector(".pane-tf-select").addEventListener("change", e => this.setTimeframe(e.target.value));
+    hdr.querySelector(".pane-ind-btn").addEventListener("click", () => this.toggleIndicatorsPanel());
+
+    // ── Indicators panel (slides in from left) ──────────────────────────────
+    const IND_DEFS = [
+      { section: "MOVING AVERAGES" },
+      { key: "ema9",   color: "#22d3ee", label: "EMA (9)" },
+      { key: "ema21",  color: "#a78bfa", label: "EMA (21)" },
+      { key: "ema200", color: "#f43f5e", label: "EMA (200)" },
+      { key: "vwap",   color: "#f59e0b", label: "VWAP" },
+      { section: "BANDS & CHANNELS" },
+      { key: "bb",     color: "#60a5fa", label: "Bollinger (20, 2)" },
+      { section: "OSCILLATORS" },
+      { key: "rsi",    color: "#a78bfa", label: "RSI (14)" },
+      { key: "macd",   color: "#22d3ee", label: "MACD (12, 26, 9)" },
+    ];
+    const indPanel = document.createElement("div");
+    indPanel.className = "indicators-panel";
+    indPanel.id        = `ind-panel-${pid}`;
+    indPanel.innerHTML = IND_DEFS.map(d =>
+      d.section
+        ? `<div class="ind-section">${d.section}</div>`
+        : `<div class="ind-row" data-ind="${d.key}">
+             <input type="checkbox" data-ind="${d.key}"${this._ind[d.key]?" checked":""}>
+             <span class="ind-dot" style="background:${d.color}"></span>
+             <span class="ind-label">${d.label}</span>
+           </div>`
+    ).join("");
+    // Wire checkbox events (clicking row also toggles)
+    indPanel.querySelectorAll(".ind-row").forEach(row => {
+      row.addEventListener("click", e => {
+        const key = row.dataset.ind;
+        if (e.target.tagName !== "INPUT") {
+          const cb = row.querySelector("input");
+          cb.checked = !cb.checked;
+        }
+        this.toggleIndicator(key);
+      });
+    });
+    indPanel.querySelectorAll("input[type=checkbox]").forEach(cb =>
+      cb.addEventListener("change", () => this.toggleIndicator(cb.dataset.ind))
+    );
+
+    // ── Content area ────────────────────────────────────────────────────────
+    const content   = document.createElement("div");
+    content.className = "pane-content";
+
+    const chartArea = document.createElement("div");
+    chartArea.className = "pane-chart-area";
+
+    const mainBody  = document.createElement("div");
+    mainBody.className = "pane-main-body";
+    mainBody.id        = `pane-main-${pid}`;
+
+    const rsiBody   = document.createElement("div");
+    rsiBody.className = "pane-sub-body";
+    rsiBody.id        = `pane-rsi-${pid}`;
+    rsiBody.style.display = this._ind.rsi ? "" : "none";
+
+    const macdBody  = document.createElement("div");
+    macdBody.className = "pane-sub-body";
+    macdBody.id        = `pane-macd-${pid}`;
+    macdBody.style.display = this._ind.macd ? "" : "none";
+
+    chartArea.appendChild(mainBody);
+    chartArea.appendChild(rsiBody);
+    chartArea.appendChild(macdBody);
+
+    content.appendChild(indPanel);
+    content.appendChild(chartArea);
+
+    pane.appendChild(hdr);
+    pane.appendChild(content);
+    gridEl.appendChild(pane);
+
+    this.paneEl      = pane;
+    this._bodyEl     = mainBody;
+    this._rsiBodyEl  = rsiBody;
+    this._macdBodyEl = macdBody;
+  }
+
+  // ── Chart initialization ───────────────────────────────────────────────────
+  _initChart() {
+    const container = this._bodyEl;
+    if (!container || typeof LightweightCharts === "undefined") return;
+
+    const baseOpts = {
+      width:  container.clientWidth  || 300,
+      height: container.clientHeight || 200,
+      layout: { background: { type: "solid", color: "#04070e" }, textColor: "#7a96b8", fontSize: 10, fontFamily: "JetBrains Mono, monospace" },
+      grid:   { vertLines: { color: "rgba(21,32,53,0.6)" }, horzLines: { color: "rgba(21,32,53,0.6)" } },
+      rightPriceScale: { borderColor: "#152035", textColor: "#4a6280", scaleMargins: { top: 0.05, bottom: 0.14 } },
+      timeScale: { borderColor: "#152035", textColor: "#4a6280", timeVisible: true, secondsVisible: false, rightOffset: 5, barSpacing: 8, minBarSpacing: 3, fixLeftEdge: false, fixRightEdge: false },
+      crosshair: { mode: 1, vertLine: { color: "#22d3ee", width: 1, style: 3, labelBackgroundColor: "#0f3040" }, horzLine: { color: "#22d3ee", width: 1, style: 3, labelBackgroundColor: "#0f3040" } },
+      handleScroll: true, handleScale: true,
+    };
+
+    this.chart = LightweightCharts.createChart(container, baseOpts);
+
+    this.candleSeries = this.chart.addCandlestickSeries({
+      upColor: "#00e5a0", downColor: "#ff3d68", borderUpColor: "#00e5a0", borderDownColor: "#ff3d68",
+      wickUpColor: "#00e5a055", wickDownColor: "#ff3d6855", priceLineVisible: false,
+    });
+    this.vwapSeries   = this.chart.addLineSeries({ color: "#f59e0b", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,  title: "VWAP"    });
+    this.ema9Series   = this.chart.addLineSeries({ color: "#22d3ee", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "EMA9"    });
+    this.ema21Series  = this.chart.addLineSeries({ color: "#a78bfa", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "EMA21"   });
+    this.ema200Series = this.chart.addLineSeries({ color: "#f43f5e", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, title: "EMA200d" });
+    // Bollinger Bands (hidden until enabled)
+    this.bbUpperSeries = this.chart.addLineSeries({ color: "#60a5fa66", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    this.bbMidSeries   = this.chart.addLineSeries({ color: "#60a5fa99", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    this.bbLowerSeries = this.chart.addLineSeries({ color: "#60a5fa66", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+
+    this.volumeSeries = this.chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", color: "#3b82f660" });
+    this.chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.88, bottom: 0 }, borderVisible: false });
+
+    new ResizeObserver(() => {
+      if (this.chart && container.clientWidth && container.clientHeight)
+        this.chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+    }).observe(container);
+  }
+
+  _initSubCharts() {
+    if (typeof LightweightCharts === "undefined") return;
+
+    const subBase = {
+      layout: { background: { type: "solid", color: "#04070e" }, textColor: "#7a96b8", fontSize: 9, fontFamily: "JetBrains Mono, monospace" },
+      grid:   { vertLines: { color: "rgba(21,32,53,0.25)" }, horzLines: { color: "rgba(21,32,53,0.35)" } },
+      rightPriceScale: { borderColor: "#152035", textColor: "#4a6280", scaleMargins: { top: 0.1, bottom: 0.1 } },
+      timeScale: { visible: false },
+      handleScroll: false, handleScale: false,
+      crosshair: { mode: 1 },
+    };
+
+    // RSI sub-chart
+    if (this._rsiBodyEl) {
+      this.rsiChart = LightweightCharts.createChart(this._rsiBodyEl, {
+        ...subBase, width: this._rsiBodyEl.clientWidth || 300, height: this._rsiBodyEl.clientHeight || 80,
+      });
+      this.rsiSeries = this.rsiChart.addLineSeries({ color: "#a78bfa", lineWidth: 1, priceLineVisible: false, lastValueVisible: true });
+      // OB / OS reference lines
+      this.rsiSeries.createPriceLine({ price: 70, color: "#ff3d6855", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "OB" });
+      this.rsiSeries.createPriceLine({ price: 30, color: "#00e5a055", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "OS" });
+      new ResizeObserver(() => {
+        if (this.rsiChart && this._rsiBodyEl.clientWidth)
+          this.rsiChart.applyOptions({ width: this._rsiBodyEl.clientWidth, height: this._rsiBodyEl.clientHeight });
+      }).observe(this._rsiBodyEl);
+    }
+
+    // MACD sub-chart (shows time axis since it's the bottom-most)
+    if (this._macdBodyEl) {
+      this.macdChart = LightweightCharts.createChart(this._macdBodyEl, {
+        ...subBase,
+        width: this._macdBodyEl.clientWidth || 300, height: this._macdBodyEl.clientHeight || 80,
+        timeScale: { visible: true, borderColor: "#152035", textColor: "#4a6280" },
+      });
+      this.macdHistSeries   = this.macdChart.addHistogramSeries({ priceLineVisible: false });
+      this.macdFastSeries   = this.macdChart.addLineSeries({ color: "#22d3ee", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "MACD"   });
+      this.macdSignalSeries = this.macdChart.addLineSeries({ color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "Signal" });
+      new ResizeObserver(() => {
+        if (this.macdChart && this._macdBodyEl.clientWidth)
+          this.macdChart.applyOptions({ width: this._macdBodyEl.clientWidth, height: this._macdBodyEl.clientHeight });
+      }).observe(this._macdBodyEl);
+    }
+  }
+
+  // ── Indicator panel controls ───────────────────────────────────────────────
+  toggleIndicatorsPanel() {
+    this._indPanelOpen = !this._indPanelOpen;
+    const panel = document.getElementById(`ind-panel-${this.id}`);
+    if (panel) panel.classList.toggle("open", this._indPanelOpen);
+    const btn = document.getElementById(`pane-ind-btn-${this.id}`);
+    if (btn) btn.classList.toggle("panel-open", this._indPanelOpen);
+  }
+
+  toggleIndicator(key) {
+    this._ind[key] = !this._ind[key];
+    this._saveIndicators();
+    this._applyIndicatorButtons();
+    // Show/hide sub-chart containers
+    if (this._rsiBodyEl)  this._rsiBodyEl.style.display  = this._ind.rsi  ? "" : "none";
+    if (this._macdBodyEl) this._macdBodyEl.style.display = this._ind.macd ? "" : "none";
+    // Re-render with cached bars
+    if (this._lastBars) this._renderData(this._lastBars, this._lastOverlays);
+  }
+
+  _applyIndicatorButtons() {
+    const anyOn = Object.values(this._ind).some(Boolean);
+    const btn = document.getElementById(`pane-ind-btn-${this.id}`);
+    if (btn) btn.classList.toggle("active", anyOn);
+  }
+
+  // ── Data fetch ─────────────────────────────────────────────────────────────
+  fetch(force = false) {
+    this._seq++;
+    socket.emit("get_chart_data", {
+      interval:      this.interval,
+      range:         this.range,
+      symbol:        this.sym,
+      force_refresh: !!force,
+      _seq:          this._seq,
+      pane_id:       this.id,
+    });
+  }
+
+  // ── Symbol / timeframe setters ─────────────────────────────────────────────
+  setSymbol(sym) {
+    this.sym = sym;
+    localStorage.setItem(`chart_pane_${this.id}_sym`, sym);
+    // Update badge label
+    const badgeSym = this.paneEl.querySelector(".pane-badge-sym");
+    if (badgeSym) badgeSym.textContent = sym;
+    if (this.id === 0) {
+      currentSymbol = sym;
+      setEl("ticker-symbol", sym);
+      socket.emit("set_active_symbol", { symbol: sym });
+    }
+    this._lastClose = null; this._prevClose = null; this._lastBars = null;
+    this.fetch(true);
+  }
+
+  setTimeframe(tf) {
+    this.tf = tf;
+    localStorage.setItem(`chart_pane_${this.id}_tf`, tf);
+    const map = TIMEFRAMES[tf] || TIMEFRAMES["15m"];
+    this.interval = map.interval;
+    this.range    = map.range;
+    this._lastBars = null;
+    this.fetch(true);
+    if (LIVE_RANGES.has(this.range)) this._startAutoRefresh(); else this._stopAutoRefresh();
+  }
+
+  // ── Auto-refresh ───────────────────────────────────────────────────────────
+  _startAutoRefresh() {
+    this._stopAutoRefresh();
+    this._refreshTimer = setInterval(() => {
+      if (LIVE_RANGES.has(this.range)) this.fetch(false);
+    }, CHART_AUTO_REFRESH);
+  }
+  _stopAutoRefresh() {
+    if (this._refreshTimer) { clearInterval(this._refreshTimer); this._refreshTimer = null; }
+  }
+
+  // ── Price line helpers ─────────────────────────────────────────────────────
+  _clearPriceLines() {
+    if (!this.candleSeries) return;
+    this._priceLines.forEach(pl => { try { this.candleSeries.removePriceLine(pl); } catch (_) {} });
+    this._priceLines = [];
+  }
+  _clearPosLines() {
+    if (!this.candleSeries) return;
+    this._posLines.forEach(pl => { try { this.candleSeries.removePriceLine(pl); } catch (_) {} });
+    this._posLines = [];
+  }
+  _clearShades() {
+    this._shadeEls.forEach(el => el.remove());
+    this._shadeEls = [];
+  }
+
+  _flash(dir) {
+    if (!this.paneEl) return;
+    this.paneEl.classList.remove("flash-green", "flash-red");
+    void this.paneEl.offsetWidth;
+    if (dir === "green") this.paneEl.classList.add("flash-green");
+    else if (dir === "red")  this.paneEl.classList.add("flash-red");
+  }
+
+  // ── Price badge ────────────────────────────────────────────────────────────
+  _updateBadge(price, prevClose) {
+    const priceEl = document.getElementById(`pane-badge-price-${this.id}`);
+    const chgEl   = document.getElementById(`pane-badge-chg-${this.id}`);
+    if (!priceEl || price == null) return;
+    priceEl.textContent = price.toFixed(2);
+    if (chgEl && prevClose && prevClose > 0) {
+      const chg = price - prevClose;
+      const pct = (chg / prevClose) * 100;
+      const up  = chg >= 0;
+      chgEl.textContent  = `${up?"+":""}${chg.toFixed(2)} (${up?"+":""}${pct.toFixed(2)}%)`;
+      chgEl.className    = `pane-badge-chg${up ? "" : " down"}`;
+    }
+  }
+
+  // ── Core render ────────────────────────────────────────────────────────────
+  _renderData(bars, ov) {
+    if (!this.candleSeries) return;
+    const newClose = bars.length ? bars[bars.length-1].close : null;
+    const clean    = arr => (arr || []).filter(p => p && p.value != null);
+
+    this.candleSeries.setData(bars);
+    if (this.volumeSeries)
+      this.volumeSeries.setData(bars.map(b => ({
+        time: b.time, value: b.volume,
+        color: (b.close >= b.open) ? "#00e5a055" : "#ff3d6855",
+      })));
+
+    // Overlays from server — gated by indicator toggles
+    if (this.vwapSeries)   this.vwapSeries.setData(  this._ind.vwap  ? clean(ov.vwap)  : []);
+    if (this.ema9Series)   this.ema9Series.setData(   this._ind.ema9  ? clean(ov.ema9)  : []);
+    if (this.ema21Series)  this.ema21Series.setData(  this._ind.ema21 ? clean(ov.ema21) : []);
+    if (this.ema200Series) {
+      const e200 = ov.ema200d;
+      if (this._ind.ema200 && e200 && newClose && Math.abs((e200-newClose)/newClose) <= 0.03)
+        this.ema200Series.setData(bars.map(b => ({ time: b.time, value: e200 })));
+      else
+        this.ema200Series.setData([]);
+    }
+
+    // Bollinger Bands (computed client-side)
+    if (this._ind.bb && bars.length >= 20) {
+      const { upper, mid, lower } = ChartPane._computeBB(bars);
+      if (this.bbUpperSeries) this.bbUpperSeries.setData(upper);
+      if (this.bbMidSeries)   this.bbMidSeries.setData(mid);
+      if (this.bbLowerSeries) this.bbLowerSeries.setData(lower);
+    } else {
+      if (this.bbUpperSeries) this.bbUpperSeries.setData([]);
+      if (this.bbMidSeries)   this.bbMidSeries.setData([]);
+      if (this.bbLowerSeries) this.bbLowerSeries.setData([]);
+    }
+
+    // RSI sub-chart
+    if (this._ind.rsi && this.rsiSeries && bars.length > 15) {
+      this.rsiSeries.setData(ChartPane._computeRSI(bars));
+      if (this.rsiChart) this.rsiChart.timeScale().fitContent();
+    } else if (this.rsiSeries) {
+      this.rsiSeries.setData([]);
+    }
+
+    // MACD sub-chart
+    if (this._ind.macd && this.macdFastSeries && bars.length > 27) {
+      const { macdData, signalData, histData } = ChartPane._computeMACD(bars);
+      this.macdFastSeries.setData(macdData);
+      this.macdSignalSeries.setData(signalData);
+      this.macdHistSeries.setData(histData);
+      if (this.macdChart) this.macdChart.timeScale().fitContent();
+    } else if (this.macdFastSeries) {
+      this.macdFastSeries.setData([]); this.macdSignalSeries.setData([]); this.macdHistSeries.setData([]);
+    }
+
+    if (bars.length > 0) this.chart.timeScale().fitContent();
+  }
+
+  // ── Socket data handler ────────────────────────────────────────────────────
+  onData(d) {
+    if (!this.candleSeries || !d.bars) return;
+    if (d._seq     && d._seq     < this._seq)        return;  // stale response
+    if (d.symbol   && d.symbol   !== this.sym)       return;
+    if (d.interval && d.interval !== this.interval)  return;
+    if (d.range    && d.range    !== this.range)     return;
+
+    const ov       = d.overlays || {};
+    const newClose = d.bars.length ? d.bars[d.bars.length-1].close : null;
+
+    // Price flash on tick
+    if (newClose != null && this._lastClose != null) {
+      if      (newClose > this._lastClose) this._flash("green");
+      else if (newClose < this._lastClose) this._flash("red");
+    }
+    this._lastClose = newClose;
+
+    // Price badge: use prev_close from server overlays for change %
+    const pc = (ov.prior_levels || {}).prev_close;
+    if (pc) this._prevClose = pc;
+    this._updateBadge(newClose, this._prevClose);
+
+    // Cache for re-render on indicator toggle
+    this._lastBars    = d.bars;
+    this._lastOverlays = ov;
+
+    // Render candles + indicators
+    this._renderData(d.bars, ov);
+
+    // ORB / prior-level price lines
+    this._clearPriceLines();
+    this._clearPosLines();
+    const orb    = ov.orb          || {};
+    const pl     = ov.prior_levels || {};
+    const within = (lvl, pct=0.05) => newClose && lvl ? Math.abs((lvl-newClose)/newClose) <= pct : false;
+
+    if (orb.high)          this._priceLines.push(this.candleSeries.createPriceLine({ price: orb.high,  color: "#22d3ee", lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "ORB H" }));
+    if (orb.low)           this._priceLines.push(this.candleSeries.createPriceLine({ price: orb.low,   color: "#22d3ee", lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "ORB L" }));
+    if (within(pl.prev_high))  this._priceLines.push(this.candleSeries.createPriceLine({ price: pl.prev_high,  color: "#7a96b8", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "PDH" }));
+    if (within(pl.prev_low))   this._priceLines.push(this.candleSeries.createPriceLine({ price: pl.prev_low,   color: "#7a96b8", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "PDL" }));
+    if (within(pl.prev_close)) this._priceLines.push(this.candleSeries.createPriceLine({ price: pl.prev_close, color: "#4a6280", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "PDC" }));
+
+    // Position lines
+    (d.position_overlay || []).forEach(p => {
+      if (!newClose || Math.abs((p.entry_price-newClose)/newClose) > 0.10) return;
+      const dry = p.is_dry_run ? " [DRY]" : "";
+      this._posLines.push(this.candleSeries.createPriceLine({ price: p.entry_price, color: "#fbbf24", lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: `Entry ${p.remaining}x${dry}` }));
+      this._posLines.push(this.candleSeries.createPriceLine({ price: p.stop_price,  color: "#ff3d68", lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `Stop${p.partial_done?" (trail)":""}` }));
+      if (!p.partial_done) this._posLines.push(this.candleSeries.createPriceLine({ price: p.target_50, color: "#fbbf24", lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: "T1" }));
+      this._posLines.push(this.candleSeries.createPriceLine({ price: p.target_75, color: "#00e5a0", lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: "T2" }));
+    });
+
+    // Signal markers
+    this._signalTips = {};
+    const sigMarks = (d.signals || []).map(s => {
+      if (s.tip) this._signalTips[s.time] = { tip: s.tip };
+      const side = s.direction === "bull" ? "▲ CALL" : "▼ PUT";
+      return { time: s.time, position: s.direction==="bull"?"belowBar":"aboveBar", color: s.direction==="bull"?"#00e5a0":"#ff3d68", shape: s.direction==="bull"?"arrowUp":"arrowDown", text: s.badge?`${side} ${s.badge}`:side };
+    });
+    const closeMarks = (d.closes || []).map(c => ({
+      time: c.time, position: "inBar", color: (c.pnl_pct||0)>=0?"#00e5a0":"#ff3d68", shape: "circle",
+      text: `${(c.pnl_pct||0).toFixed(0)}% ${c.reason||""}`.slice(0,40),
+    }));
+    this.candleSeries.setMarkers([...sigMarks,...closeMarks].sort((a,b)=>a.time-b.time));
+
+    // Blocked-window shading
+    this._clearShades();
+    if (d.blocked_windows && d.blocked_windows.length && this.chart) {
+      const ts = this.chart.timeScale();
+      d.blocked_windows.forEach(w => {
+        const x1 = ts.timeToCoordinate(w.start);
+        const x2 = ts.timeToCoordinate(w.end);
+        if (x1 == null || x2 == null) return;
+        const div = document.createElement("div");
+        div.style.cssText = `position:absolute;left:${Math.min(x1,x2)}px;top:0;width:${Math.abs(x2-x1)}px;bottom:20px;background:rgba(122,150,184,0.06);border-left:1px dashed rgba(122,150,184,0.25);border-right:1px dashed rgba(122,150,184,0.25);pointer-events:none;z-index:1`;
+        div.title = w.label;
+        this._bodyEl.appendChild(div);
+        this._shadeEls.push(div);
+      });
+    }
+  }
+
+  addSignalMarker(s) {
+    if (!this.candleSeries || !s) return;
+    if (s.symbol && s.symbol !== this.sym) return;
+    if (s.tip) this._signalTips[s.time] = { tip: s.tip };
+    const side = s.direction === "bull" ? "CALL" : "PUT";
+    const ex   = this.candleSeries.markers ? this.candleSeries.markers() : [];
+    this.candleSeries.setMarkers([...ex, { time: s.time, position: s.direction==="bull"?"belowBar":"aboveBar", color: s.direction==="bull"?"#00d88a":"#ff4560", shape: s.direction==="bull"?"arrowUp":"arrowDown", text: s.badge?`${side} ${s.badge}`:side }]);
+  }
+
+  destroy() {
+    this._stopAutoRefresh();
+    this._clearShades();
+    if (this.rsiChart)  { try { this.rsiChart.remove();  } catch (_) {} this.rsiChart  = null; }
+    if (this.macdChart) { try { this.macdChart.remove(); } catch (_) {} this.macdChart = null; }
+    if (this.chart)     { try { this.chart.remove();     } catch (_) {} this.chart     = null; }
+    if (this.paneEl)    { this.paneEl.remove(); this.paneEl = null; }
+  }
+
+  // ── Client-side indicator computation ──────────────────────────────────────
+  static _ema(values, period) {
+    const k = 2 / (period + 1);
+    const result = new Array(values.length).fill(null);
+    if (values.length < period) return result;
+    result[period - 1] = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < values.length; i++)
+      result[i] = values[i] * k + result[i-1] * (1 - k);
+    return result;
+  }
+
+  static _computeRSI(bars, period = 14) {
+    if (bars.length < period + 1) return [];
+    const c = bars.map(b => b.close);
+    let avgG = 0, avgL = 0;
+    for (let i = 1; i <= period; i++) {
+      const d = c[i] - c[i-1];
+      if (d > 0) avgG += d; else avgL -= d;
+    }
+    avgG /= period; avgL /= period;
+    const out = [];
+    for (let i = period + 1; i <= bars.length; i++) {
+      const d = c[i-1] - c[i-2];
+      avgG = (avgG * (period-1) + Math.max(d, 0)) / period;
+      avgL = (avgL * (period-1) + Math.max(-d,0)) / period;
+      const rs = avgL === 0 ? 100 : avgG / avgL;
+      out.push({ time: bars[i-1].time, value: 100 - 100/(1+rs) });
+    }
+    return out;
+  }
+
+  static _computeMACD(bars, fast=12, slow=26, signal=9) {
+    const c    = bars.map(b => b.close);
+    const emaF = ChartPane._ema(c, fast);
+    const emaS = ChartPane._ema(c, slow);
+    const line = [];
+    for (let i = 0; i < bars.length; i++)
+      if (emaF[i] != null && emaS[i] != null)
+        line.push({ time: bars[i].time, value: emaF[i]-emaS[i] });
+    const sigEMA = ChartPane._ema(line.map(m => m.value), signal);
+    const macdData   = line.map(m => ({ time: m.time, value: m.value }));
+    const signalData = line.map((m,j) => sigEMA[j] != null ? { time: m.time, value: sigEMA[j] } : null).filter(Boolean);
+    const histData   = line.map((m,j) => sigEMA[j] != null ? {
+      time: m.time, value: m.value - sigEMA[j],
+      color: (m.value - sigEMA[j]) >= 0 ? "#00e5a055" : "#ff3d6855",
+    } : null).filter(Boolean);
+    return { macdData, signalData, histData };
+  }
+
+  static _computeBB(bars, period=20, mult=2) {
+    const c = bars.map(b => b.close);
+    const upper=[], mid=[], lower=[];
+    for (let i = period-1; i < bars.length; i++) {
+      const sl = c.slice(i-period+1, i+1);
+      const mn = sl.reduce((a,b)=>a+b,0)/period;
+      const sd = Math.sqrt(sl.reduce((a,b)=>a+(b-mn)**2,0)/period);
+      upper.push({ time: bars[i].time, value: mn+mult*sd });
+      mid.push(  { time: bars[i].time, value: mn });
+      lower.push({ time: bars[i].time, value: mn-mult*sd });
+    }
+    return { upper, mid, lower };
+  }
 }
 
-function zoomIn() {
-  if (!chart) return;
-  const lr = chart.timeScale().getVisibleLogicalRange();
-  if (!lr) return;
-  const delta = (lr.to - lr.from) * 0.2;
-  chart.timeScale().setVisibleLogicalRange({ from: lr.from + delta, to: lr.to - delta });
+// ── Grid Manager ──────────────────────────────────────────────────────────────
+const gridManager = {
+  panes: [],
+  count: 0,
+
+  init() {
+    const saved = parseInt(localStorage.getItem("chart_grid_count")) || 1;
+    this.setGridCount(saved);
+  },
+
+  setGridCount(n) {
+    // Destroy existing panes
+    this.panes.forEach(p => p.destroy());
+    this.panes = [];
+    this.count = n;
+    localStorage.setItem("chart_grid_count", n);
+
+    const grid = document.getElementById("chart-grid");
+    if (!grid) return;
+    grid.className = `chart-grid grid-${n}`;
+
+    const defaults = _DEFAULT_SYMS[n] || ["SPY"];
+    for (let i = 0; i < n; i++) {
+      if (!localStorage.getItem(`chart_pane_${i}_sym`)) {
+        localStorage.setItem(`chart_pane_${i}_sym`, defaults[i] || "SPY");
+      }
+      this.panes.push(new ChartPane(i, grid));
+    }
+
+    // Sync grid count buttons
+    document.querySelectorAll(".grid-btn").forEach(b => {
+      b.classList.toggle("active", parseInt(b.dataset.count) === n);
+    });
+
+    // Keep currentSymbol in sync with pane 0
+    if (this.panes[0]) currentSymbol = this.panes[0].sym;
+  },
+};
+
+function setGridCount(n) {
+  gridManager.setGridCount(n);
+  _setViewMode("chart");
 }
 
-function zoomOut() {
-  if (!chart) return;
-  const lr = chart.timeScale().getVisibleLogicalRange();
-  if (!lr) return;
-  const delta = (lr.to - lr.from) * 0.3;
-  chart.timeScale().setVisibleLogicalRange({ from: lr.from - delta, to: lr.to + delta });
-}
-
-function resetZoom() {
-  if (!chart) return;
-  chart.timeScale().fitContent();
-}
-
-function refreshChart() { _fetchChart(true); }
-
+// ── View mode ─────────────────────────────────────────────────────────────────
 function _setViewMode(mode) {
-  // mode: "chart" | "settings" | "log"
   document.body.classList.remove("view-chart", "view-settings", "view-log");
   document.body.classList.add("view-" + mode);
-  // clear all special tab highlights
-  document.querySelectorAll("#tab-settings, #tab-log, .bt-tab").forEach(t => t.classList.remove("active"));
-  // Trigger chart resize when switching to chart view
+  document.querySelectorAll("#tab-chart, #tab-settings, #tab-log, .bt-tab").forEach(t => t.classList.remove("active"));
   if (mode === "chart") {
-    setTimeout(() => { if (window._chart) window._chart.timeScale().fitContent(); }, 50);
+    const tc = document.getElementById("tab-chart");
+    if (tc) tc.classList.add("active");
+    setTimeout(() => {
+      gridManager.panes.forEach(p => { if (p.chart) p.chart.timeScale().fitContent(); });
+    }, 50);
   }
+}
+
+function showCharts() {
+  _setViewMode("chart");
+  // Ensure pane 0 shows SPY if nothing has been set yet
+  if (gridManager.panes[0] && !localStorage.getItem("chart_pane_0_sym")) {
+    gridManager.panes[0].setSymbol("SPY");
+  }
+  const bp = document.getElementById("backtest-panel");
+  const gw = document.getElementById("chart-grid-wrapper");
+  if (bp) bp.style.display = "none";
+  if (gw) gw.style.display = "";
 }
 
 function setActiveSymbol(symbol) {
   _setViewMode("chart");
-  // hide backtest, show chart
   const bp = document.getElementById("backtest-panel");
-  const cc = document.querySelector(".chart-card");
+  const gw = document.getElementById("chart-grid-wrapper");
   if (bp) bp.style.display = "none";
-  if (cc) cc.style.display = "";
+  if (gw) gw.style.display = "";
   currentSymbol = symbol;
-  // deactivate all tabs, activate the clicked one
-  document.querySelectorAll(".symbol-tab, .settings-tab").forEach(t => t.classList.remove("active"));
-  document.querySelectorAll(".symbol-tab").forEach(tab =>
-    tab.classList.toggle("active", tab.dataset.symbol === symbol));
   setEl("ticker-symbol", symbol);
-  setEl("chart-title",   symbol);
+  if (gridManager.panes[0]) gridManager.panes[0].setSymbol(symbol);
   socket.emit("set_active_symbol", { symbol });
-  _fetchChart(false);
 }
 
 function showSettings() {
   _setViewMode("settings");
-  document.querySelectorAll(".symbol-tab[data-symbol]").forEach(t => t.classList.remove("active"));
   document.getElementById("tab-settings").classList.add("active");
 }
 
 function showLog() {
   _setViewMode("log");
-  document.querySelectorAll(".symbol-tab[data-symbol]").forEach(t => t.classList.remove("active"));
   document.getElementById("tab-log").classList.add("active");
 }
+
+// ── Zoom / refresh (all panes) ────────────────────────────────────────────────
+function zoomIn() {
+  gridManager.panes.forEach(p => {
+    if (!p.chart) return;
+    const lr = p.chart.timeScale().getVisibleLogicalRange();
+    if (lr) { const d = (lr.to-lr.from)*0.2; p.chart.timeScale().setVisibleLogicalRange({from:lr.from+d,to:lr.to-d}); }
+  });
+}
+function zoomOut() {
+  gridManager.panes.forEach(p => {
+    if (!p.chart) return;
+    const lr = p.chart.timeScale().getVisibleLogicalRange();
+    if (lr) { const d = (lr.to-lr.from)*0.3; p.chart.timeScale().setVisibleLogicalRange({from:lr.from-d,to:lr.to+d}); }
+  });
+}
+function resetZoom() { gridManager.panes.forEach(p => p.chart && p.chart.timeScale().fitContent()); }
+function refreshChart() { gridManager.panes.forEach(p => p.fetch(true)); }
 
 // ── Backtest UI ───────────────────────────────────────────────────────────────
 let _btDays = 7;
@@ -1099,20 +1543,18 @@ let _btDays = 7;
 function showBacktest() {
   _setViewMode("chart");
   document.getElementById("backtest-panel").style.display = "";
-  document.querySelector(".chart-card").style.display = "none";
-  document.querySelectorAll(".symbol-tab, .settings-tab").forEach(t => t.classList.remove("active"));
+  const gw = document.getElementById("chart-grid-wrapper");
+  if (gw) gw.style.display = "none";
+  document.querySelectorAll(".grid-btn, #tab-settings, #tab-log").forEach(t => t.classList.remove("active"));
   document.getElementById("tab-backtest").classList.add("active");
 }
 
 function hideBacktest() {
   const bp = document.getElementById("backtest-panel");
-  const cc = document.querySelector(".chart-card");
   if (bp) bp.style.display = "none";
-  if (cc) cc.style.display = "";
+  const gw = document.getElementById("chart-grid-wrapper");
+  if (gw) gw.style.display = "";
   document.getElementById("tab-backtest").classList.remove("active");
-  // restore active symbol tab
-  document.querySelectorAll(".symbol-tab[data-symbol]").forEach(t =>
-    t.classList.toggle("active", t.dataset.symbol === currentSymbol));
 }
 
 function setBtDays(d) {
@@ -1201,267 +1643,22 @@ socket.on("backtest_results", (d) => {
   resEl.style.display = "";
 });
 
+// ── Route chart_data to the correct pane ─────────────────────────────────────
 socket.on("chart_data", (d) => {
-  if (!candleSeries || !d.bars) return;
-  // Drop stale out-of-order responses
-  if (d._seq && d._seq < _chartSeq) return;
-  // Drop if symbol, interval, or range no longer matches what the user has selected
-  if (d.symbol   && d.symbol   !== currentSymbol)   return;
-  if (d.interval && d.interval !== currentInterval) return;
-  if (d.range    && d.range    !== currentRange)    return;
-
-  candleSeries.setData(d.bars);
-
-  // ── Volume histogram (color-coded by candle direction) ─────────────────────
-  const volData = d.bars.map(b => ({
-    time:  b.time,
-    value: b.volume,
-    color: (b.close >= b.open) ? "#00e5a055" : "#ff3d6855",
-  }));
-  if (volumeSeries) volumeSeries.setData(volData);
-
-  // ── Indicator overlays (VWAP / EMAs) ───────────────────────────────────────
-  const overlays = d.overlays || {};
-  const cleanLine = arr => (arr || []).filter(p => p && p.value != null);
-  if (vwapSeries)  vwapSeries.setData(cleanLine(overlays.vwap));
-  if (ema9Series)  ema9Series.setData(cleanLine(overlays.ema9));
-  if (ema21Series) ema21Series.setData(cleanLine(overlays.ema21));
-  if (ema200Series) {
-    // EMA200d is a single daily value — render as a flat line across the chart
-    // BUT only if it's within range of current price. Otherwise it crushes the
-    // y-axis (e.g. SPY $737 with EMA200d $667 = -9.5% → candles become invisible).
-    // When too far, hide the line but surface the value+distance in a badge so
-    // the trader still knows the macro level.
-    const FAR_PCT = 0.03;   // 3% — beyond this, hide
-    const lastClose = (d.bars && d.bars.length) ? d.bars[d.bars.length - 1].close : null;
-    const ema200 = overlays.ema200d;
-    if (ema200 && lastClose) {
-      const distFrac = (ema200 - lastClose) / lastClose;
-      if (Math.abs(distFrac) <= FAR_PCT) {
-        const flat = d.bars.map(b => ({ time: b.time, value: ema200 }));
-        ema200Series.setData(flat);
-      } else {
-        ema200Series.setData([]);
-      }
-      _renderEma200Badge(ema200, distFrac);
-    } else {
-      ema200Series.setData([]);
-      _renderEma200Badge(null, null);
-    }
-  }
-
-  // ── ORB high/low + prior day H/L/C + position lines ────────────────────────
-  _clearPriceLines();
-  _clearPositionLines();
-
-  const orb = overlays.orb || {};
-  if (orb.high) _priceLines.push(candleSeries.createPriceLine({
-    price: orb.high, color: "#22d3ee", lineWidth: 1, lineStyle: 0,
-    axisLabelVisible: true, title: "ORB H",
-  }));
-  if (orb.low) _priceLines.push(candleSeries.createPriceLine({
-    price: orb.low, color: "#22d3ee", lineWidth: 1, lineStyle: 0,
-    axisLabelVisible: true, title: "ORB L",
-  }));
-  const pl = overlays.prior_levels || {};
-  // Clip prior-day levels that are too far from current price — same reason
-  // as EMA200d: they compress the y-axis and bury the candles.
-  const _lastClose = (d.bars && d.bars.length) ? d.bars[d.bars.length - 1].close : null;
-  const _within = (lvl) => {
-    if (!_lastClose || !lvl) return false;
-    return Math.abs((lvl - _lastClose) / _lastClose) <= 0.05;  // 5% band
-  };
-  if (_within(pl.prev_high))  _priceLines.push(candleSeries.createPriceLine({
-    price: pl.prev_high, color: "#7a96b8", lineWidth: 1, lineStyle: 2,
-    axisLabelVisible: true, title: "PDH",
-  }));
-  if (_within(pl.prev_low))   _priceLines.push(candleSeries.createPriceLine({
-    price: pl.prev_low, color: "#7a96b8", lineWidth: 1, lineStyle: 2,
-    axisLabelVisible: true, title: "PDL",
-  }));
-  if (_within(pl.prev_close)) _priceLines.push(candleSeries.createPriceLine({
-    price: pl.prev_close, color: "#4a6280", lineWidth: 1, lineStyle: 2,
-    axisLabelVisible: true, title: "PDC",
-  }));
-
-  // ── Open positions: entry / stop / T1 / T2 ────────────────────────────────
-  // CRITICAL: entry/stop/T1/T2 are OPTION premium prices (e.g. $5.75 stop on a
-  // SPY 737P), NOT underlying prices. Drawing them as priceLines on the
-  // underlying-symbol chart crushes the y-axis (e.g. SPY $737 + option $3 →
-  // scale spans $3-$740, candles become invisible).
-  //
-  // Solution: only render position lines if they fall within ±10% of the
-  // current underlying price (which would be the unusual case of plotting an
-  // option chart directly). Otherwise summarize positions in a side badge.
-  const positions = d.position_overlay || [];
-  const _within10 = (price) => {
-    if (!_lastClose || !price) return false;
-    return Math.abs((price - _lastClose) / _lastClose) <= 0.10;
-  };
-  positions.forEach(p => {
-    if (!_within10(p.entry_price)) return;  // it's an option-priced position
-    const dryTag = p.is_dry_run ? " [DRY]" : "";
-    _positionLines.push(candleSeries.createPriceLine({
-      price: p.entry_price, color: "#fbbf24", lineWidth: 2, lineStyle: 0,
-      axisLabelVisible: true, title: `Entry ${p.remaining}x${dryTag}`,
-    }));
-    _positionLines.push(candleSeries.createPriceLine({
-      price: p.stop_price, color: "#ff3d68", lineWidth: 1, lineStyle: 1,
-      axisLabelVisible: true, title: `Stop${p.partial_done ? " (trail)" : ""}`,
-    }));
-    if (!p.partial_done) {
-      _positionLines.push(candleSeries.createPriceLine({
-        price: p.target_50, color: "#fbbf24", lineWidth: 1, lineStyle: 1,
-        axisLabelVisible: true, title: "T1",
-      }));
-    }
-    _positionLines.push(candleSeries.createPriceLine({
-      price: p.target_75, color: "#00e5a0", lineWidth: 1, lineStyle: 1,
-      axisLabelVisible: true, title: "T2",
-    }));
-  });
-
-  // ── Live P&L badge for the active symbol's position ────────────────────────
-  _renderPnlBadge(positions, d.bars);
-
-  // ── Signal markers + close markers (with reason in tooltip text) ───────────
-  const sigMarks = (d.signals || []).map(s => {
-    if (s.tip) _signalTips[s.time] = { tip: s.tip, badge: s.badge || "" };
-    const side = s.direction === "bull" ? "▲ CALL" : "▼ PUT";
-    return {
-      time:     s.time,
-      position: s.direction === "bull" ? "belowBar"  : "aboveBar",
-      color:    s.direction === "bull" ? "#00e5a0"   : "#ff3d68",
-      shape:    s.direction === "bull" ? "arrowUp"   : "arrowDown",
-      text:     s.badge ? `${side} ${s.badge}` : side,
-    };
-  });
-  const closeMarks = (d.closes || []).map(c => ({
-    time:     c.time,
-    position: "inBar",
-    color:    (c.pnl_pct || 0) >= 0 ? "#00e5a0" : "#ff3d68",
-    shape:    "circle",
-    text:     `${(c.pnl_pct || 0).toFixed(0)}% ${c.reason || ""}`.slice(0, 40),
-  }));
-  candleSeries.setMarkers([...sigMarks, ...closeMarks].sort((a,b) => a.time - b.time));
-
-  // ── Blocked windows: render via background line series with shaded regions ─
-  _renderBlockedWindows(d.blocked_windows || [], d.bars);
-
-  const empty  = document.getElementById("chart-empty");
-  const detail = document.getElementById("chart-empty-detail");
-  if (empty) {
-    if (d.bars.length === 0) {
-      if (detail) detail.textContent =
-        `No data · ${d.symbol || currentSymbol} ${d.interval || currentInterval} / ${d.range || currentRange}. ` +
-        `Try ↻ or a different interval.`;
-      empty.classList.remove("hidden");
-    } else {
-      empty.classList.add("hidden");
-      chart.timeScale().fitContent();
-    }
-  } else if (d.bars.length > 0) {
-    chart.timeScale().fitContent();
+  if (d.pane_id != null) {
+    const pane = gridManager.panes[d.pane_id];
+    if (pane) pane.onData(d);
+  } else {
+    // Legacy fallback (no pane_id): route to pane 0
+    if (gridManager.panes[0]) gridManager.panes[0].onData(d);
   }
 });
 
-function _renderEma200Badge(value, distFrac) {
-  const badge = document.getElementById("chart-ema200-badge");
-  if (!badge) return;
-  if (value == null) { badge.style.display = "none"; return; }
-  const pctStr = ((distFrac >= 0) ? "+" : "") + (distFrac * 100).toFixed(1) + "%";
-  const near = Math.abs(distFrac) <= 0.03;
-  badge.style.display = "inline-block";
-  badge.style.color = near ? "#f43f5e" : "#7a96b8";
-  badge.style.borderColor = (near ? "#f43f5e" : "#7a96b8") + "66";
-  badge.textContent = `EMA200d $${value.toFixed(2)} (${pctStr})` + (near ? "" : " · off-chart");
-}
-
-function _renderPnlBadge(positions, bars) {
-  const badge = document.getElementById("chart-pnl-badge");
-  if (!badge) return;
-  if (!positions.length || !bars.length) { badge.style.display = "none"; return; }
-
-  // Summary across all open positions on this symbol. We can't compute true
-  // option-premium P&L from underlying bars alone — the engine knows that and
-  // updates the positions table separately. Here we show direction + an
-  // "underlying is moving X% in/against your favor since open" hint.
-  let bulls = 0, bears = 0, totalContracts = 0, anyDry = false;
-  positions.forEach(p => {
-    if (p.direction === "bull") bulls += p.remaining; else bears += p.remaining;
-    totalContracts += p.remaining;
-    if (p.is_dry_run) anyDry = true;
-  });
-  // Use the active session's opening bar as the reference for "favor" gauge
-  const opened = bars[0].close;
-  const lastClose = bars[bars.length - 1].close;
-  const undMovePct = ((lastClose - opened) / opened) * 100;
-  // Net directional exposure: positive = bullish bias, negative = bearish bias
-  const net = bulls - bears;
-  const movedWith = (net > 0 && undMovePct > 0) || (net < 0 && undMovePct < 0);
-  const movedSize = Math.abs(undMovePct);
-  const color = (net === 0) ? "#7a96b8" : (movedWith ? "#00e5a0" : "#ff3d68");
-  const dirLabel = net > 0 ? "▲" : (net < 0 ? "▼" : "•");
-  badge.style.color = color;
-  badge.style.borderColor = color + "66";
-  badge.style.display = "inline-block";
-  badge.title = "Underlying move since open (option P&L is in the positions table)";
-  badge.textContent =
-    `${totalContracts}x ${dirLabel}` +
-    `  und ${undMovePct >= 0 ? "+" : ""}${undMovePct.toFixed(2)}%` +
-    (anyDry ? "  [DRY]" : "");
-}
-
-// Track shading overlay divs so we can remove them on each update
-let _shadeEls = [];
-
-function _renderBlockedWindows(windows, bars) {
-  const container = document.getElementById("chart-container");
-  if (!container || !chart) return;
-  _shadeEls.forEach(el => el.remove());
-  _shadeEls = [];
-  if (!windows.length || !bars.length) return;
-
-  const timeScale = chart.timeScale();
-  windows.forEach(w => {
-    const x1 = timeScale.timeToCoordinate(w.start);
-    const x2 = timeScale.timeToCoordinate(w.end);
-    if (x1 == null || x2 == null) return;
-    const div = document.createElement("div");
-    div.style.position = "absolute";
-    div.style.left = Math.min(x1, x2) + "px";
-    div.style.top = "0";
-    div.style.width = Math.abs(x2 - x1) + "px";
-    div.style.bottom = "20px";  // leave time axis visible
-    div.style.background = "rgba(122, 150, 184, 0.06)";
-    div.style.borderLeft = "1px dashed rgba(122,150,184,0.25)";
-    div.style.borderRight = "1px dashed rgba(122,150,184,0.25)";
-    div.style.pointerEvents = "none";
-    div.style.zIndex = "1";
-    div.title = w.label;
-    container.appendChild(div);
-    _shadeEls.push(div);
-  });
-}
-
-// Real-time signal marker — push directly when one fires.
-// Skip if the marker is for a different symbol than the user is viewing.
+// ── Real-time signal markers (broadcast to all matching panes) ────────────────
 socket.on("chart_signal", (s) => {
-  if (!candleSeries || !s) return;
-  if (s.symbol && s.symbol !== currentSymbol) return;
-  if (s.tip) _signalTips[s.time] = { tip: s.tip, badge: s.badge || "" };
-  const side = s.direction === "bull" ? "CALL" : "PUT";
-  const existing = candleSeries.markers ? candleSeries.markers() : [];
-  const newMark  = {
-    time: s.time,
-    position: s.direction === "bull" ? "belowBar" : "aboveBar",
-    color:    s.direction === "bull" ? "#00d88a" : "#ff4560",
-    shape:    s.direction === "bull" ? "arrowUp" : "arrowDown",
-    text:     s.badge ? `${side} ${s.badge}` : side,
-  };
-  candleSeries.setMarkers([...existing, newMark]);
-  // Also surface the plain why-not-to-buy in the Last-Signal banner so it's
-  // readable without hovering — meets the override impulse with evidence.
+  if (!s) return;
+  gridManager.panes.forEach(p => p.addSignalMarker(s));
+  // Surface in Last-Signal banner
   const sb = document.getElementById("signal-banner");
   const st = document.getElementById("signal-text");
   if (sb && st && s.tip) { st.textContent = s.tip; sb.classList.add("show"); }

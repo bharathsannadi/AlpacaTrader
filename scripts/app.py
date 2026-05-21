@@ -1421,6 +1421,7 @@ def on_get_chart_data(data=None):
     range_   = data.get("range",    "1D")
     force    = bool(data.get("force_refresh", False))
     seq      = data.get("_seq")
+    pane_id  = data.get("pane_id")
 
     if interval not in _VALID_INTERVALS: interval = "15m"
     if range_   not in _VALID_RANGES:    range_   = "1D"
@@ -1475,6 +1476,7 @@ def on_get_chart_data(data=None):
             "range":    range_,
             "symbol":   symbol,
             "_seq":     seq,
+            "pane_id":  pane_id,
             "overlays":         overlays,
             "position_overlay": position_overlay,
             "blocked_windows":  blocked_windows,
@@ -1483,7 +1485,7 @@ def on_get_chart_data(data=None):
         log.warning(f"Chart data error: {e}", exc_info=True)
         socketio.emit("chart_data", {
             "bars": [], "signals": [], "interval": interval, "range": range_,
-            "symbol": symbol, "_seq": seq,
+            "symbol": symbol, "_seq": seq, "pane_id": pane_id,
         })
 
 

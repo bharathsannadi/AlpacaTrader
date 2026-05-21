@@ -426,7 +426,8 @@
   body.view-chart .left-panel    { display: none !important; }
   body.view-chart .panel-divider { display: none !important; }
   body.view-chart .right-panel   { flex: 1; min-height: 0; padding-left: 0; display: flex; flex-direction: column; }
-  body.view-chart .chart-card    { flex: 1; min-height: 0; }
+  body.view-chart .chart-grid-card { flex: 1; min-height: 0; }
+  body.view-chart .chart-card      { flex: 1; min-height: 0; }
   body.view-chart #chart-container { flex: 1; min-height: 0; }
 
   /* Settings view — left panel fills screen as a responsive card grid */
@@ -880,16 +881,114 @@
   /* Divider */
   .divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 
-  /* Chart card */
-  .chart-card { display: flex; flex-direction: column; min-height: 0; padding: 8px 10px; }
-  .chart-header {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 6px; padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
+  /* Chart grid card */
+  .chart-grid-card { display: flex; flex-direction: column; min-height: 0; padding: 4px 6px; }
+
+  /* Multi-pane grid layouts */
+  .chart-grid { flex: 1; display: grid; gap: 4px; min-height: 0; overflow: hidden; }
+  .chart-grid.grid-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .chart-grid.grid-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+  .chart-grid.grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .chart-grid.grid-6 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .chart-grid.grid-8 { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+  /* ── Individual pane ── */
+  .chart-pane {
+    background: #060d18; border: 1px solid #152035; border-radius: 4px;
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
   }
-  .chart-title  { font-size: 13px; font-weight: 700; color: var(--text); font-family: var(--mono); min-width: 42px; }
-  .chart-legend { font-size: 10px; color: var(--muted); display: flex; gap: 8px; font-family: var(--mono); }
+  @keyframes flashGreen { 0%{box-shadow:inset 0 0 0 1px rgba(0,229,160,0.6)} 100%{box-shadow:none} }
+  @keyframes flashRed   { 0%{box-shadow:inset 0 0 0 1px rgba(255,61,104,0.6)} 100%{box-shadow:none} }
+  .chart-pane.flash-green { animation: flashGreen .5s ease forwards; }
+  .chart-pane.flash-red   { animation: flashRed   .5s ease forwards; }
+
+  /* ── Pane header — matches video style ── */
+  .pane-header {
+    display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 38px;
+    flex-shrink: 0; background: #091422; border-bottom: 1px solid #152035;
+    overflow: hidden;
+  }
+  .pane-source {
+    font-size: 10px; color: var(--muted); font-family: var(--mono);
+    padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px;
+    white-space: nowrap; cursor: default; flex-shrink: 0;
+  }
+  .pane-sym-select {
+    background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
+    border-radius: 4px; padding: 3px 6px; font-family: var(--mono); font-size: 12px;
+    font-weight: 700; cursor: pointer; min-width: 60px; flex-shrink: 0;
+  }
+  .pane-sym-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(34,211,238,0.25); }
+  .pane-tf-select {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 3px 5px; font-family: var(--mono); font-size: 11px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .pane-tf-select:focus { outline: none; border-color: var(--cyan); }
+  .pane-ind-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 4px; padding: 3px 10px; font-family: var(--mono); font-size: 10px;
+    font-weight: 600; letter-spacing: .6px; cursor: pointer; transition: all .2s; flex-shrink: 0;
+  }
+  .pane-ind-btn:hover  { border-color: var(--cyan); color: var(--cyan); }
+  .pane-ind-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(34,211,238,0.1); }
+  .pane-ind-btn.panel-open { border-color: var(--cyan); background: rgba(34,211,238,0.08); }
+
+  /* Price badge (right side of header) */
+  .pane-price-badge {
+    margin-left: auto; display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono); flex-shrink: 0;
+  }
+  .pane-badge-sym   { font-size: 10px; color: var(--muted); }
+  .pane-badge-price { font-size: 13px; font-weight: 700; color: var(--text); }
+  .pane-badge-chg   {
+    font-size: 10px; padding: 2px 7px; border-radius: 3px;
+    background: rgba(0,229,160,0.15); color: var(--green); white-space: nowrap;
+  }
+  .pane-badge-chg.down { background: rgba(255,61,104,0.15); color: var(--red); }
+
+  /* ── Pane content area (indicators panel + chart stack) ── */
+  .pane-content     { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }
+  .pane-chart-area  { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .pane-main-body   { flex: 3; min-height: 0; position: relative; }
+  .pane-sub-body    {
+    flex: 1; min-height: 0; position: relative;
+    border-top: 1px solid #152035;
+  }
+
+  /* ── Indicators sliding panel ── */
+  .indicators-panel {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 210px;
+    background: rgba(6,13,24,0.97); border-right: 1px solid var(--border-strong);
+    z-index: 20; overflow-y: auto; overflow-x: hidden;
+    transform: translateX(-100%); transition: transform .2s ease;
+    padding: 8px 0 16px;
+  }
+  .indicators-panel.open { transform: translateX(0); }
+  .ind-section {
+    padding: 8px 12px 3px; font-size: 9px; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted); font-family: var(--mono);
+  }
+  .ind-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+    cursor: pointer; transition: background .15s;
+  }
+  .ind-row:hover { background: rgba(77,158,255,0.05); }
+  .ind-row input[type=checkbox] {
+    cursor: pointer; width: 13px; height: 13px; flex-shrink: 0;
+    accent-color: var(--cyan);
+  }
+  .ind-dot  { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .ind-label { font-family: var(--mono); font-size: 11px; color: var(--text); user-select: none; }
+
+  /* Tab grid label */
+  .tab-grid-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); padding: 0 4px; white-space: nowrap;
+  }
+
+  /* Legacy .chart-card kept in case backtest panel references it */
+  .chart-card { display: flex; flex-direction: column; min-height: 0; padding: 8px 10px; }
   #chart-container { flex: 1; min-height: 240px; width: 100%; position: relative; }
   .chart-empty {
     position: absolute; inset: 0;
@@ -1029,12 +1128,13 @@
 <div class="tab-bar">
   <button class="symbol-tab settings-tab active" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
   <div class="tab-divider"></div>
-  <button class="symbol-tab" data-symbol="SPY"  onclick="setActiveSymbol('SPY')"><span class="tab-dot" id="tab-dot-SPY"></span>SPY</button>
-  <button class="symbol-tab" data-symbol="AMZN" onclick="setActiveSymbol('AMZN')"><span class="tab-dot" id="tab-dot-AMZN"></span>AMZN</button>
-  <button class="symbol-tab" data-symbol="GOOG" onclick="setActiveSymbol('GOOG')"><span class="tab-dot" id="tab-dot-GOOG"></span>GOOG</button>
-  <button class="symbol-tab" data-symbol="MSFT" onclick="setActiveSymbol('MSFT')"><span class="tab-dot" id="tab-dot-MSFT"></span>MSFT</button>
-  <button class="symbol-tab" data-symbol="NVDA" onclick="setActiveSymbol('NVDA')"><span class="tab-dot" id="tab-dot-NVDA"></span>NVDA</button>
-  <button class="symbol-tab" data-symbol="META" onclick="setActiveSymbol('META')"><span class="tab-dot" id="tab-dot-META"></span>META</button>
+  <button class="symbol-tab" id="tab-chart" onclick="showCharts()">Charts</button>
+  <span class="tab-grid-label">Grid</span>
+  <button class="symbol-tab grid-btn" id="grid-btn-1" data-count="1" onclick="setGridCount(1)">1</button>
+  <button class="symbol-tab grid-btn" id="grid-btn-2" data-count="2" onclick="setGridCount(2)">2</button>
+  <button class="symbol-tab grid-btn" id="grid-btn-4" data-count="4" onclick="setGridCount(4)">4</button>
+  <button class="symbol-tab grid-btn" id="grid-btn-6" data-count="6" onclick="setGridCount(6)">6</button>
+  <button class="symbol-tab grid-btn" id="grid-btn-8" data-count="8" onclick="setGridCount(8)">8</button>
   <div class="tab-divider"></div>
   <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
@@ -1281,69 +1381,11 @@
       <span id="signal-text">—</span>
     </div>
 
-    <!-- SPY/NVDA/etc chart -->
-    <div class="card chart-card" data-card-id="chart">
+    <!-- Multi-pane chart grid -->
+    <div class="card chart-grid-card" id="chart-grid-wrapper" data-card-id="chart">
       <span class="drag-grip">⋮⋮</span>
-      <div class="chart-header">
-        <span class="chart-title" id="chart-title">SPY</span>
-
-        <!-- Interval group: bar granularity -->
-        <div class="tf-group" id="iv-group" title="Bar interval — how much time per candle">
-          <span class="tf-group-label">Bar</span>
-          <button class="tf-btn" data-iv="1m"  onclick="setInterval_('1m')">1m</button>
-          <button class="tf-btn" data-iv="5m"  onclick="setInterval_('5m')">5m</button>
-          <button class="tf-btn iv-active" data-iv="15m" onclick="setInterval_('15m')">15m</button>
-          <button class="tf-btn" data-iv="30m" onclick="setInterval_('30m')">30m</button>
-          <button class="tf-btn" data-iv="1h"  onclick="setInterval_('1h')">1h</button>
-          <button class="tf-btn" data-iv="1d"  onclick="setInterval_('1d')">1D</button>
-        </div>
-
-        <!-- Range group: how far back to show -->
-        <div class="tf-group" id="rng-group" title="Time range — how far back to display">
-          <span class="tf-group-label">Range</span>
-          <button class="tf-btn rng-active" data-rng="1D"  onclick="setRange('1D')">1D</button>
-          <button class="tf-btn" data-rng="5D"  onclick="setRange('5D')">5D</button>
-          <button class="tf-btn" data-rng="1M"  onclick="setRange('1M')">1M</button>
-          <button class="tf-btn" data-rng="3M"  onclick="setRange('3M')">3M</button>
-          <button class="tf-btn" data-rng="1Y"  onclick="setRange('1Y')">1Y</button>
-          <button class="tf-btn" data-rng="5Y"  onclick="setRange('5Y')">5Y</button>
-        </div>
-
-        <div class="zoom-btns">
-          <button class="zoom-btn" onclick="zoomIn()"    title="Zoom in">+</button>
-          <button class="zoom-btn" onclick="resetZoom()" title="Fit all">⊡</button>
-          <button class="zoom-btn" onclick="zoomOut()"   title="Zoom out">−</button>
-        </div>
-        <span class="chart-legend">
-          <span style="color:var(--green)">▲ Call</span>
-          <span style="color:var(--red)">▼ Put</span>
-          <span style="color:#f59e0b">VWAP</span>
-          <span style="color:#22d3ee">EMA9</span>
-          <span style="color:#a78bfa">EMA21</span>
-          <span style="color:#f43f5e">EMA200d</span>
-        </span>
-        <span id="chart-pnl-badge" style="
-          display:none; margin-left:8px; padding:2px 8px; border:1px solid;
-          border-radius:4px; font-family:var(--mono); font-size:11px; font-weight:700;
-        "></span>
-        <span id="chart-ema200-badge" style="
-          display:none; margin-left:8px; padding:2px 8px; border:1px solid;
-          border-radius:4px; font-family:var(--mono); font-size:10px; font-weight:600;
-        "></span>
-        <button class="clear-btn" onclick="refreshChart()" style="margin-left:auto" title="Force refresh">↻</button>
-      </div>
-      <div id="chart-container">
-        <div id="chart-empty" class="chart-empty hidden">
-          <div class="chart-empty-title">No data available</div>
-          <div id="chart-empty-detail">Try pressing ↻ or switching timeframe.</div>
-        </div>
-        <div id="chart-tooltip" style="
-          display:none; position:absolute; pointer-events:none;
-          background:rgba(4,7,14,0.95); border:1px solid #152035;
-          color:#a8c0dc; font-family:var(--mono); font-size:10px;
-          padding:6px 8px; border-radius:4px; z-index:10; line-height:1.45;
-          max-width:340px; white-space:normal; word-break:break-word;
-        "></div>
+      <div id="chart-grid" class="chart-grid grid-1">
+        <!-- ChartPane instances are created dynamically by gridManager.init() -->
       </div>
     </div>
 
