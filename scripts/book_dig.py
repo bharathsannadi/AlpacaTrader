@@ -21,7 +21,7 @@ from pypdf import PdfReader
 # sub-collections under /books/Trading. Supplementary roots retained so
 # earlier-cited books outside /Trading still resolve.
 BOOK_ROOTS = [
-    Path("/Users/bsannadi/Desktop/books"),   # consolidated single root (recursive)
+    Path("/Users/bsannadi/Desktop/bharath/books"),   # consolidated single root (recursive)
 ]
 CTX = 480   # chars of context around each hit
 
