@@ -1862,9 +1862,9 @@ function setGridCount(n) {
 
 // ── View mode ─────────────────────────────────────────────────────────────────
 function _setViewMode(mode) {
-  document.body.classList.remove("view-chart", "view-settings", "view-log");
+  document.body.classList.remove("view-chart", "view-settings", "view-log", "view-screener");
   document.body.classList.add("view-" + mode);
-  document.querySelectorAll("#tab-chart, #tab-settings, #tab-log, .bt-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll("#tab-chart, #tab-settings, #tab-log, #tab-screener, .bt-tab").forEach(t => t.classList.remove("active"));
   if (mode === "chart") {
     const tc = document.getElementById("tab-chart");
     if (tc) tc.classList.add("active");
@@ -1907,6 +1907,96 @@ function showLog() {
   _setViewMode("log");
   document.getElementById("tab-log").classList.add("active");
 }
+
+// ── Screener tab ──────────────────────────────────────────────────────────────
+function showScreener() {
+  _setViewMode("screener");
+  document.getElementById("tab-screener").classList.add("active");
+  // Request data — serve from cache immediately, refresh if stale
+  socket.emit("get_screener", {});
+}
+
+function _scr_chgClass(v) {
+  return v > 0 ? "scr-up" : v < 0 ? "scr-down" : "scr-flat";
+}
+
+function _scr_setupBadge(setup) {
+  const colors = {
+    "Momentum":    "#22c55e",
+    "Gap+Vol":     "#eab308",
+    "Breakout":    "#3b82f6",
+    "VWAP Bounce": "#22d3ee",
+    "RSI Dip":     "#f97316",
+    "Neutral":     "#475569",
+  };
+  const c = colors[setup] || "#475569";
+  return `<span class="scr-badge" style="background:${c}22;color:${c};border:1px solid ${c}44">${setup}</span>`;
+}
+
+function _scr_optBadge(badge) {
+  const isDaily = badge.includes("Daily");
+  const c = isDaily ? "#a78bfa" : "#22c55e";
+  return `<span class="scr-badge" style="background:${c}22;color:${c};border:1px solid ${c}44">${badge}</span>`;
+}
+
+socket.on("screener_data", function(data) {
+  const dtRows  = data.dt      || [];
+  const optRows = data.options || [];
+  const updEl   = document.getElementById("scr-updated");
+  const mktEl   = document.getElementById("scr-mkt-status");
+  if (updEl)  updEl.textContent = "Updated " + (data.updated_at || "—");
+  if (mktEl)  mktEl.textContent = data.market_open ? "🟢 Market Open" : "🔴 Market Closed";
+
+  // ── Day Trading table ─────────────────────────────────────────────────────
+  const dtBody = document.getElementById("scr-dt-tbody");
+  if (dtBody) {
+    if (!dtRows.length) {
+      dtBody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">Loading data…</td></tr>';
+    } else {
+      dtBody.innerHTML = dtRows.map((r, i) => {
+        const chgSign  = r.chg_pct >= 0 ? "+" : "";
+        const vwapSign = r.vwap_diff >= 0 ? "▲" : "▼";
+        const vwapCls  = r.vwap_diff >= 0 ? "scr-up" : "scr-down";
+        const rvCls    = r.rel_vol >= 1.5 ? "scr-up" : r.rel_vol < 0.8 ? "scr-down" : "";
+        const rsiCls   = r.rsi14 >= 60 ? "scr-up" : r.rsi14 <= 35 ? "scr-down" : "";
+        return `<tr class="scr-row" title="${r.citation || ''}">
+          <td class="scr-rank">${i+1}</td>
+          <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector||''}</span></td>
+          <td class="scr-price">$${r.price.toFixed(2)}</td>
+          <td class="${_scr_chgClass(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
+          <td class="${rvCls}">${r.rel_vol.toFixed(2)}×</td>
+          <td class="${rsiCls}">${r.rsi14.toFixed(0)}</td>
+          <td class="${vwapCls}">${vwapSign} ${Math.abs(r.vwap_diff).toFixed(1)}%</td>
+          <td>${r.day_range.toFixed(1)}%</td>
+          <td>${r.hv20}%</td>
+          <td>${_scr_setupBadge(r.setup)}</td>
+        </tr>`;
+      }).join("");
+    }
+  }
+
+  // ── Options table ─────────────────────────────────────────────────────────
+  const optBody = document.getElementById("scr-opt-tbody");
+  if (optBody) {
+    if (!optRows.length) {
+      optBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">No active opportunities — market may be closed or no signals today</td></tr>';
+    } else {
+      optBody.innerHTML = optRows.map(o => {
+        const confCls = o.confidence && o.confidence.startsWith("High") ? "scr-up" : "scr-flat";
+        return `<tr class="scr-row" title="${(o.citation||'').replace(/"/g,"'")}">
+          <td>${_scr_optBadge(o.badge)}</td>
+          <td class="scr-sym"><b>${o.sym}</b></td>
+          <td class="scr-up">${o.signal}</td>
+          <td>${o.structure}</td>
+          <td>${o.expiry}<br><span class="scr-sector">${o.dte}d DTE</span></td>
+          <td>${o.ivr !== "—" ? "IVR "+o.ivr : "—"}</td>
+          <td>$${(o.max_risk||400).toLocaleString()}</td>
+          <td class="${confCls}" style="font-size:10px;max-width:180px;white-space:normal">${o.confidence||''}</td>
+        </tr>`;
+      }).join("");
+    }
+  }
+});
 
 // ── Zoom / refresh (all panes) ────────────────────────────────────────────────
 function zoomIn() {

@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 import spy_auto_trader as trader
 import news_filter
 import daily_trader as dtrad
+import screener_engine as screener
 from universe import ALL as _UNIVERSE_ALL
 from security import (
     get_or_create_secret_key,
@@ -1193,11 +1194,13 @@ def _run_daily_morning() -> None:
 def scheduler():
     """Background task: auto-start all-day sessions at 9:30 ET on weekdays,
     fire end-of-day learning review at 15:35 ET, and run the Connors RSI(2)
-    daily-bar strategy EOD/morning routines."""
+    daily-bar strategy EOD/morning routines. Also refreshes the Screener tab
+    every 90s during market hours."""
     session_fired_on       = None
     eod_fired_on           = None
     daily_eod_fired_on     = None
     daily_morning_fired_on = None
+    _screener_last_refresh = 0.0
 
     while True:
         socketio.sleep(15)
@@ -1251,6 +1254,13 @@ def scheduler():
             daily_eod_fired_on = today
             socketio.start_background_task(_run_daily_eod)
 
+        # Screener auto-refresh — every 90s during market hours
+        import time as _time
+        _screener_age = _time.time() - _screener_last_refresh
+        if market_open and _screener_age >= screener.CACHE_TTL_MARKET:
+            _screener_last_refresh = _time.time()
+            socketio.start_background_task(_refresh_screener_bg)
+
 
 @socketio.on("daily_status")
 @require_auth
@@ -1261,6 +1271,48 @@ def on_daily_status():
         socketio.emit("daily_positions", {"positions": positions}, to=request.sid)
     except Exception as e:
         log.warning(f"daily_status failed: {e}")
+
+
+# ── Screener tab ──────────────────────────────────────────────────────────────
+_screener_refresh_lock = threading.Lock()
+
+def _refresh_screener_bg():
+    """Background task: refresh screener data and broadcast to all clients."""
+    if not _screener_refresh_lock.acquire(blocking=False):
+        return  # already refreshing
+    try:
+        positions = []
+        try:
+            positions = dtrad._load_positions()
+        except Exception:
+            pass
+        data = screener.refresh_screener(positions)
+        socketio.emit("screener_data", data)
+        log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
+                 f"{len(data.get('options',[]))} options")
+    except Exception as e:
+        log.warning(f"Screener refresh failed: {e}")
+    finally:
+        _screener_refresh_lock.release()
+
+
+@socketio.on("get_screener")
+@require_auth
+def on_get_screener(data=None):
+    """Client requests screener data. Return cache immediately, then refresh."""
+    force = bool((data or {}).get("force", False))
+    cached = screener.get_cached()
+    if cached.get("dt"):
+        socketio.emit("screener_data", cached, to=request.sid)
+    if force or not cached.get("dt"):
+        socketio.start_background_task(_refresh_screener_bg)
+    else:
+        # Serve cache; schedule background refresh if stale
+        import time as _time
+        age = _time.time() - cached.get("ts", 0)
+        ttl = screener.CACHE_TTL_MARKET if screener._is_market_open() else screener.CACHE_TTL_CLOSED
+        if age > ttl:
+            socketio.start_background_task(_refresh_screener_bg)
 
 
 @socketio.on("daily_eod_now")

@@ -458,6 +458,38 @@
   body.view-log .dashboard  { display: none !important; }
   body.view-log .log-panel  { display: flex; }
 
+  /* Screener view */
+  .screener-panel { display: none; flex-direction: column; height: calc(100vh - 56px - 36px - 38px); overflow-y: auto; padding: var(--s-3) var(--s-4); gap: 12px; }
+  body.view-screener .dashboard      { display: none !important; }
+  body.view-screener .log-panel      { display: none !important; }
+  body.view-screener .screener-panel { display: flex; }
+
+  /* Screener tab style */
+  .screener-tab { color: #f59e0b !important; }
+  .screener-tab.active { background: rgba(245,158,11,0.08) !important; border-bottom-color: #f59e0b !important; text-shadow: 0 0 16px rgba(245,158,11,0.5) !important; }
+
+  /* Screener table styles */
+  .scr-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .scr-title  { font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: .04em; text-transform: uppercase; }
+  .scr-meta   { font-size: 11px; color: var(--muted); }
+  .scr-table  { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .scr-table th { padding: 5px 8px; text-align: left; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .scr-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; white-space: nowrap; }
+  .scr-row:hover td { background: rgba(255,255,255,0.025); cursor: default; }
+  .scr-rank   { color: var(--muted); font-size: 10px; width: 28px; }
+  .scr-sym    { font-size: 12px; line-height: 1.3; }
+  .scr-sym b  { color: var(--text); }
+  .scr-sector { font-size: 10px; color: var(--muted); }
+  .scr-price  { color: var(--text); font-weight: 600; }
+  .scr-up     { color: #22c55e; }
+  .scr-down   { color: #f43f5e; }
+  .scr-flat   { color: var(--muted); }
+  .scr-badge  { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .03em; white-space: nowrap; }
+  .scr-citation { font-size: 10px; color: var(--muted); font-style: italic; padding: 0 8px 6px; }
+  .scr-refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 3px 9px; border-radius: 5px; font-size: 11px; cursor: pointer; transition: color .15s, border-color .15s; }
+  .scr-refresh-btn:hover { color: var(--text); border-color: var(--text); }
+  .scr-note { font-size: 10px; color: var(--muted); padding: 4px 0 0; font-style: italic; }
+
   /* Settings / Log tab styles */
   .settings-tab { color: var(--purple) !important; }
   .settings-tab.active { background: rgba(167,139,250,0.08) !important; border-bottom-color: var(--purple) !important; text-shadow: 0 0 16px rgba(167,139,250,0.5) !important; }
@@ -1168,6 +1200,7 @@
   </select>
   <div class="tab-divider"></div>
   <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
+  <button class="symbol-tab screener-tab" id="tab-screener" onclick="showScreener()">🔍 Screener</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
 </div>
 
@@ -1496,6 +1529,112 @@
 
   </div><!-- /right-panel -->
 </div><!-- /dashboard -->
+
+<!-- ── Screener panel (shown when Screener tab is active) ─────────────────── -->
+<div class="screener-panel" id="screener-panel">
+
+  <!-- Header -->
+  <div class="scr-header">
+    <span class="scr-title">🔍 Live Screener</span>
+    <span class="scr-meta" id="scr-updated">Click Refresh to load</span>
+    <span class="scr-meta" id="scr-mkt-status"></span>
+    <button class="scr-refresh-btn" onclick="socket.emit('get_screener',{force:true})">↻ Refresh</button>
+    <span class="scr-note">Auto-refreshes every 90 s during market hours · 25-stock S&amp;P 500 universe · book-sourced criteria</span>
+  </div>
+
+  <!-- ── Section 1: Day Trading Watchlist ───────────────────────────────── -->
+  <div class="card" style="padding:10px 12px">
+    <div class="card-title" style="margin-bottom:8px">
+      Day Trading Watchlist
+      <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:8px">
+        Aziz · Elder · O'Neil · Livermore · Master Traders
+      </span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="scr-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Symbol</th>
+            <th>Price</th>
+            <th title="Daily change vs prior close">Chg%</th>
+            <th title="Today volume vs 30-day avg (Aziz p.31 — ≥1.5× = Stocks in Play)">Rel.Vol</th>
+            <th title="RSI(14) — momentum indicator (Elder p.212)">RSI14</th>
+            <th title="Price vs VWAP — Elder p.212 institutional benchmark">vs VWAP</th>
+            <th title="Today high-low / price">Range%</th>
+            <th title="20-day annualised historical volatility">HV20</th>
+            <th title="Book-sourced setup classification">Setup</th>
+          </tr>
+        </thead>
+        <tbody id="scr-dt-tbody">
+          <tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">
+            Click <b>↻ Refresh</b> or open this tab to load live data
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="scr-note" style="margin-top:6px">
+      Setup badges: <span style="color:#22c55e">■ Momentum</span> (RSI14&gt;60 + above VWAP + chg&gt;1%) ·
+      <span style="color:#eab308">■ Gap+Vol</span> (gap≥1% + rel-vol≥1.5×, Aziz p.31) ·
+      <span style="color:#3b82f6">■ Breakout</span> (rel-vol≥2×) ·
+      <span style="color:#22d3ee">■ VWAP Bounce</span> (Elder p.212) ·
+      <span style="color:#f97316">■ RSI Dip</span> (RSI14&lt;35, Connors mean-revert)
+    </div>
+  </div>
+
+  <!-- ── Section 2: Options Opportunities ───────────────────────────────── -->
+  <div class="card" style="padding:10px 12px">
+    <div class="card-title" style="margin-bottom:8px">
+      Options Opportunities
+      <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:8px">
+        KB §2 IVR routing · KB-9 DTE 21-28 (Saliba) · Get Rich w/Options p.48
+      </span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="scr-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Symbol</th>
+            <th>Signal</th>
+            <th title="Suggested option structure (KB §2: naked if IVR<30, spread if IVR≥30)">Structure</th>
+            <th title="Expiry date + DTE (KB-9 Saliba: prefer 21-28 DTE)">Expiry / DTE</th>
+            <th title="Implied Volatility Rank — KB §2 routing gate">IVR</th>
+            <th title="Maximum risk per trade ($400 = ½-Kelly from backtest)">Max Risk</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody id="scr-opt-tbody">
+          <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">
+            No active opportunities — refresh to check signals
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="scr-note" style="margin-top:6px">
+      <b>⭐ Daily Strategy</b> = Connors RSI(2)&lt;10 signal (backtested PF 1.32) ·
+      <b>📈 Momentum</b> = intraday trend-following call (medium confidence, discretionary) ·
+      Structure: naked call if IVR&lt;30, debit spread if IVR≥30 or HV&gt;50%
+    </div>
+  </div>
+
+  <!-- Book source summary -->
+  <div class="card" style="padding:10px 14px;font-size:11px;color:var(--muted)">
+    <b style="color:var(--text)">📚 Book Sources (8 books read cover-to-cover for this screener)</b><br>
+    <span style="color:#eab308">Day Trading:</span>
+    Aziz "Advanced Techniques in Day Trading" (Stocks in Play = high rel-vol) ·
+    Elder "Come Into My Trading Room" (VWAP + price ≥ $20 + ADV) ·
+    O'Neil Disciple (ADV ≥ millions, institutional quality) ·
+    Livermore "Trade Like Jesse Livermore" (leaders of the leading group) ·
+    Master Traders (high-beta sectors: semis, tech, biotech, energy)<br>
+    <span style="color:#a78bfa">Options:</span>
+    "Get Rich With Options" p.48 (buy calls when IV is LOW) ·
+    KB §2 (IVR routing: naked&lt;30, spread≥30) ·
+    KB-9 Saliba (prefer DTE 21-28) ·
+    "Think Like an Option Trader" (direction must be proven, not guessed)
+  </div>
+
+</div><!-- /screener-panel -->
 
 <!-- ── Log panel (shown when Log tab is active) ──────────────────────────── -->
 <div class="log-panel" id="log-panel">
