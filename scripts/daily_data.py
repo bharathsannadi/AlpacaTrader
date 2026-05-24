@@ -5,7 +5,7 @@ daily_data.py — yfinance daily OHLC fetcher with on-disk parquet cache.
 Replaces the Polygon 5-min dependency for the daily-bar frame-shift (Path A).
 yfinance gives 5+ years of daily OHLC free; cache is permanent (re-run is $0).
 
-Cache location: ~/Desktop/AlpacaTrader_Data/daily_cache/{SYMBOL}.parquet
+Cache location: ~/Desktop/bharath/AlpacaTrader_Data/daily_cache/{SYMBOL}.parquet
 Columns: date (datetime64, tz-naive), open, high, low, close, volume (float64)
 
 Usage:
@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore")
 
 import pandas as pd
 
-CACHE_DIR = Path.home() / "Desktop" / "AlpacaTrader_Data" / "daily_cache"
+CACHE_DIR = Path.home() / "Desktop" / "bharath" / "AlpacaTrader_Data" / "daily_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # CSV is the cache format — no extra deps (no pyarrow/fastparquet required)

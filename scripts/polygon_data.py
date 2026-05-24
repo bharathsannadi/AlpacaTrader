@@ -35,7 +35,7 @@ _BASE = "https://api.polygon.io"
 # subscription. Override with POLYGON_CACHE_DIR if ever needed.
 _CACHE = Path(os.environ.get(
     "POLYGON_CACHE_DIR",
-    os.path.expanduser("~/Desktop/AlpacaTrader_Data/polygon_cache")))
+    os.path.expanduser("~/Desktop/bharath/AlpacaTrader_Data/polygon_cache")))
 _CACHE.mkdir(parents=True, exist_ok=True)
 ET = "America/New_York"
 
