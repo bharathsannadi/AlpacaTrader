@@ -55,8 +55,14 @@ RSI_EXIT       = 70.0  # exit: RSI(2) > this → sell at next open
 ATR_WIN        = 14     # ATR smoothing (shares-mode stop)
 ATR_STOP_M     = 2.0   # shares stop distance = 2 × ATR14
 TIME_CAP_DAYS  = 10    # max hold in trading days
-RISK_BUDGET    = 500.0 # $ max loss per trade — 10% of $5K account (user: 2026-05-20)
-MAX_CONCURRENT = 5     # cap open positions (20% portfolio / 4% per trade)
+RISK_BUDGET      = 500.0 # $ max loss per trade — 10% of $5K account (user: 2026-05-20)
+MAX_CONCURRENT   = 5     # cap open positions (20% portfolio / 4% per trade)
+MAX_CORRELATED   = 3     # KB §4, Appendix: max 3 same-direction (bull) positions at once
+OPT_PROFIT_T2    = 0.80  # KB §24 Lowell p.82: close spread at 80% of max profit (width − debit)
+OPT_PROFIT_T1    = 0.50  # KB §24 Appendix: T1 partial exit at +50% gain (requires contracts ≥ 2)
+VIX_BLOCK_ABOVE  = 30    # KB Appendix: VIX > 30 → skip all new entries
+VIX_SPIKE_DAILY  = 5.0   # KB Appendix: VIX spike > 5 pts/day → force spread structure only
+OPT_MIN_DTE_PREF = 21    # KB §25 Saliba: prefer DTE ≥ 21 (optimal 21–28 window)
 UNIVERSE       = list(ALL)
 
 # ── Instrument selector ────────────────────────────────────────────────────────
@@ -66,7 +72,8 @@ INSTRUMENT = "options"   # "options" | "shares"
 OPT_DTE_MIN          = 14    # KB §1: never hold 7-DTE overnight for a swing trade
 OPT_DTE_MAX          = 30    # cap vega cost; DTE beyond 30 adds unnecessary vega bleed
 OPT_STOP_PCT         = 0.50  # KB §9: exit if premium drops to 50% of entry debit
-OPT_MIN_OI           = 200   # KB §9: OI > 500 for ETFs; relaxed for single names
+OPT_MIN_OI           = 200   # KB §9/Appendix: OI ≥ 500 for ETFs; deliberately relaxed to 200
+                              # for equity single-names where chain depth is thinner
 OPT_MAX_BID_ASK_PCT  = 0.05  # KB §9: bid-ask < 5% of mid
 OPT_IV_HV_NAKED_MAX  = 0.80  # KB §2: IV < 80% of HV = cheap → naked OK
 OPT_IV_HV_EXPENSIVE  = 1.50  # KB §2: IV > 1.5× HV = overpriced → spread only
@@ -235,6 +242,18 @@ def _macro_event_on(check_date: date) -> str | None:
     return _MACRO_DATES_2026.get(check_date)
 
 
+def _fetch_vix() -> tuple[float | None, float | None]:
+    """Return (today_vix, yesterday_vix). Used for KB-4 VIX gate and KB-10 spike detection."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("^VIX").history(period="5d")
+        if len(hist) < 2:
+            return None, None
+        return float(hist["Close"].iloc[-1]), float(hist["Close"].iloc[-2])
+    except Exception:
+        return None, None
+
+
 # ── IVR proxy helper ──────────────────────────────────────────────────────────
 def _compute_ivr_proxy(atm_iv: float, hv252_min: float, hv252_max: float) -> float:
     """KB §2 Appendix IVR proxy using 252-day rolling HV range as reference.
@@ -249,7 +268,8 @@ def _compute_ivr_proxy(atm_iv: float, hv252_min: float, hv252_max: float) -> flo
 # ── Options contract selection (KB §1, §2, §5, §9) ───────────────────────────
 def _get_option_context(sym: str, spot: float, hv21: float,
                         hv252_min: float = float("nan"),
-                        hv252_max: float = float("nan")) -> dict | None:
+                        hv252_max: float = float("nan"),
+                        vix_spike: bool = False) -> dict | None:
     """
     Select the best option structure for a Connors RSI(2) bull entry.
 
@@ -277,7 +297,9 @@ def _get_option_context(sym: str, spot: float, hv21: float,
     if not valid:
         return None
 
-    dte, expiry_str = min(valid)  # nearest valid expiry
+    # KB §25 Saliba: prefer DTE ≥ 21 (optimal 21–28 window); fall back to nearest if unavailable
+    preferred = [(d, e) for d, e in valid if d >= OPT_MIN_DTE_PREF]
+    dte, expiry_str = min(preferred) if preferred else min(valid)
 
     try:
         chain = yf.Ticker(sym).option_chain(expiry_str)
@@ -321,8 +343,12 @@ def _get_option_context(sym: str, spot: float, hv21: float,
         print(f"  {sym}: IVR={ivr:.0f}% > 80 — premium too expensive, skip (KB §2)")
         return None
 
+    # KB-10: VIX spike > 5 pts/day → spread structure only regardless of IVR (KB Appendix)
+    if vix_spike:
+        print(f"  {sym}: VIX spike today — forcing spread structure (KB Appendix KB-10)")
+
     # ── Naked: IVR < 30 → IV historically cheap (KB §2 Appendix) ────────────
-    if ivr < 30 and atm_mid * 100 <= RISK_BUDGET:
+    if ivr < 30 and not vix_spike and atm_mid * 100 <= RISK_BUDGET:
         return {
             "structure":    "naked",
             "expiry":       expiry_str,
@@ -363,6 +389,10 @@ def _get_option_context(sym: str, spot: float, hv21: float,
         if not (OPT_SPREAD_RATIO_LO <= ratio <= OPT_SPREAD_RATIO_HI):
             continue  # KB §5: "30–40% of spread width"
 
+        # KB §25 KB-8: spread width must be > 3× per-leg bid-ask (else slippage > 33% of profit)
+        if width < 3 * (atm_ask - atm_bid):
+            continue
+
         if net_debit * 100 > RISK_BUDGET:
             continue  # KB §4, §9: max loss = debit paid
 
@@ -402,7 +432,9 @@ def _save_positions(positions: list[dict]) -> None:
 
 # ── Signal generation ──────────────────────────────────────────────────────────
 def generate_signals(indicators: dict[str, dict],
-                     open_positions: list[dict]) -> dict[str, list[dict]]:
+                     open_positions: list[dict],
+                     vix_block: bool = False,
+                     vix_spike: bool = False) -> dict[str, list[dict]]:
     """
     Return exit and entry signals based on Connors RSI(2) rules.
     Options entries include contract context from _get_option_context().
@@ -420,17 +452,33 @@ def generate_signals(indicators: dict[str, dict],
         if pos["status"] not in ("open", "pending", "signal"):
             continue
         ind = indicators.get(pos["sym"])
-        if ind is None:
-            continue
 
         entry_dt  = pd.Timestamp(pos["entry_date"])
         days_held = len(pd.bdate_range(entry_dt, pd.Timestamp(today_str))) - 1
 
         reason = None
-        if ind["rsi2"] >= RSI_EXIT:
-            reason = f"mean_revert (RSI2={ind['rsi2']:.1f}≥{RSI_EXIT})"
-        elif days_held >= TIME_CAP_DAYS:
-            reason = f"time_cap ({days_held}d≥{TIME_CAP_DAYS})"
+
+        # Primary strategy exits (require indicators)
+        if ind is not None:
+            if ind["rsi2"] >= RSI_EXIT:
+                reason = f"mean_revert (RSI2={ind['rsi2']:.1f}≥{RSI_EXIT})"
+            elif days_held >= TIME_CAP_DAYS:
+                reason = f"time_cap ({days_held}d≥{TIME_CAP_DAYS})"
+
+        # KB-2: 7-DTE gamma risk (KB §24/§1) — never hold options into gamma danger zone
+        if reason is None and pos.get("instrument") == "options" and pos.get("expiry"):
+            try:
+                days_left = (date.fromisoformat(pos["expiry"]) - date.today()).days
+                if days_left <= 7:
+                    reason = f"dte_close_7d (DTE={days_left})"
+            except Exception:
+                pass
+
+        # KB-3: close open positions 2 days before earnings (KB §23/§24)
+        if reason is None:
+            earn_days = _days_to_earnings(pos["sym"])
+            if earn_days <= 2:
+                reason = f"earnings_d2 ({earn_days}d to earnings)"
 
         if reason:
             exits.append({
@@ -461,7 +509,15 @@ def generate_signals(indicators: dict[str, dict],
     if macro_block:
         print(f"  ⚠ Macro blackout: {macro_block} — no new entries (KB §3/Cofnas)")
 
-    if free_slots > 0 and not macro_block:
+    # KB-5: max 3 same-direction (bull) positions — KB §4 Appendix
+    bull_open = sum(1 for p in open_positions
+                    if p["status"] in ("open", "pending", "signal")
+                    and p.get("direction") == "bull")
+    if bull_open >= MAX_CORRELATED:
+        print(f"  ⚠ Correlated cap: {bull_open}/{MAX_CORRELATED} bull positions open "
+              f"— no new entries (KB §4 KB-5)")
+
+    if free_slots > 0 and not macro_block and not vix_block and bull_open < MAX_CORRELATED:
         candidates = []
         for sym, ind in indicators.items():
             if sym in open_syms or sym in exiting_syms:
@@ -494,6 +550,7 @@ def generate_signals(indicators: dict[str, dict],
                         ind.get("hv21",      float("nan")),
                         ind.get("hv252_min", float("nan")),
                         ind.get("hv252_max", float("nan")),
+                        vix_spike=vix_spike,
                     )
                     if opt is None:
                         print(f"  {sym}: RSI2={ind['rsi2']:.1f} — no option passes KB gates, skip")
@@ -788,6 +845,16 @@ def run_eod(dry_run: bool = False) -> dict:
             indicators[sym] = ind
     print(f"  {len(indicators)}/{len(UNIVERSE)} symbols OK\n")
 
+    # KB-4/KB-10: fetch VIX for entry gate and spike detection
+    vix_now, vix_prev = _fetch_vix()
+    vix_block = vix_now is not None and vix_now > VIX_BLOCK_ABOVE
+    vix_spike = (vix_now is not None and vix_prev is not None
+                 and vix_now - vix_prev > VIX_SPIKE_DAILY)
+    if vix_now is not None:
+        spike_str = f"  spike +{vix_now - vix_prev:.1f} → SPREADS ONLY" if vix_spike else ""
+        block_str = "  → NO NEW ENTRIES" if vix_block else ""
+        print(f"VIX: {vix_now:.1f} (prev {vix_prev:.1f}){spike_str}{block_str}\n")
+
     # 2. Load positions
     positions = _load_positions()
     open_pos  = [p for p in positions if p["status"] in ("open", "pending", "signal")]
@@ -807,7 +874,8 @@ def run_eod(dry_run: bool = False) -> dict:
 
     # 3. Generate signals
     print()
-    signals = generate_signals(indicators, open_pos)
+    signals = generate_signals(indicators, open_pos,
+                               vix_block=vix_block, vix_spike=vix_spike)
 
     # 4. Process exits
     if signals["exits"]:
@@ -921,6 +989,12 @@ def run_morning(dry_run: bool = False) -> None:
     now = datetime.now(ET)
     print(f"\nDaily Trader MORNING — {now:%Y-%m-%d %H:%M ET}  [{INSTRUMENT.upper()}]")
 
+    # KB-4: VIX gate — skip NEW option entries if VIX > VIX_BLOCK_ABOVE
+    vix_now, _vix_prev = _fetch_vix()
+    vix_block = vix_now is not None and vix_now > VIX_BLOCK_ABOVE
+    if vix_block:
+        print(f"  ⚠ VIX={vix_now:.1f} > {VIX_BLOCK_ABOVE} — new entries deferred (KB-4 Appendix)")
+
     positions = _load_positions()
 
     if dry_run:
@@ -949,6 +1023,9 @@ def run_morning(dry_run: bool = False) -> None:
 
         # ── Submit option entry orders (signal → pending) ────────────────────
         if p["status"] == "signal" and instr == "options":
+            if vix_block:
+                print(f"  Holding {p['sym']} signal: VIX too high — order deferred (KB-4)")
+                continue
             result = place_option_entry(client, opt_client, p, dry_run)
             if result.get("long_order_id"):
                 p["status"]          = "pending"
@@ -976,12 +1053,15 @@ def run_morning(dry_run: bool = False) -> None:
                 except Exception as e:
                     print(f"  Error checking option fill {p['sym']}: {e}")
 
-        # ── Check 50% premium stop on open options (KB §9) ───────────────────
+        # ── Check stops and profit targets on open options ────────────────────
         elif p["status"] == "open" and instr == "options":
-            long_occ   = p.get("long_occ")
-            stop_debit = p.get("stop_debit")
-            if long_occ and stop_debit:
+            long_occ    = p.get("long_occ")
+            stop_debit  = p.get("stop_debit")
+            entry_debit = p.get("entry_debit")
+            if long_occ and stop_debit and entry_debit:
                 cur_mid = _live_option_mid(opt_client, long_occ)
+
+                # KB §9: 50% premium stop
                 if cur_mid is not None and cur_mid <= stop_debit:
                     print(f"  ⚠ PREMIUM STOP: {p['sym']}  mid=${cur_mid:.2f} "
                           f"≤ stop_debit=${stop_debit:.2f} — closing")
@@ -989,11 +1069,45 @@ def run_morning(dry_run: bool = False) -> None:
                         client, opt_client, p,
                         reason=f"premium_stop (mid=${cur_mid:.2f})"
                     )
-                    p["status"]                  = "exit_pending"
-                    p["exit_reason"]             = f"premium_stop (mid=${cur_mid:.2f})"
-                    p["exit_date"]               = str(date.today())
-                    p["exit_long_order_id"]      = result.get("long_order_id")
-                    p["exit_short_order_id"]     = result.get("short_order_id")
+                    p["status"]              = "exit_pending"
+                    p["exit_reason"]         = f"premium_stop (mid=${cur_mid:.2f})"
+                    p["exit_date"]           = str(date.today())
+                    p["exit_long_order_id"]  = result.get("long_order_id")
+                    p["exit_short_order_id"] = result.get("short_order_id")
+
+                elif cur_mid is not None:
+                    structure = p.get("structure", "naked")
+
+                    # KB-1: 80% of max profit close for spreads (KB §24 Lowell p.82)
+                    if structure == "spread" and p.get("short_occ") and p.get("width"):
+                        short_mid  = _live_option_mid(opt_client, p["short_occ"]) or 0.0
+                        spread_val = cur_mid - short_mid
+                        max_profit = float(p["width"]) - float(entry_debit)
+                        if (max_profit > 0
+                                and spread_val - float(entry_debit) >= OPT_PROFIT_T2 * max_profit):
+                            print(f"  ★ PROFIT TARGET 80%: {p['sym']} spread → closing (KB-1)")
+                            result = place_option_exit(
+                                client, opt_client, p, reason="profit_target_80pct"
+                            )
+                            p["status"]              = "exit_pending"
+                            p["exit_reason"]         = "profit_target_80pct"
+                            p["exit_date"]           = str(date.today())
+                            p["exit_long_order_id"]  = result.get("long_order_id")
+                            p["exit_short_order_id"] = result.get("short_order_id")
+
+                    # KB-6: T1 partial at +50% gain (requires contracts ≥ 2)
+                    elif (p.get("contracts", 1) >= 2
+                            and cur_mid >= float(entry_debit) * (1 + OPT_PROFIT_T1)):
+                        half = p["contracts"] // 2
+                        print(f"  ★ T1 PARTIAL +50%: {p['sym']} — closing {half}/{p['contracts']} "
+                              f"contracts (KB-6)")
+                        p_half = dict(p)
+                        p_half["contracts"] = half
+                        result = place_option_exit(
+                            client, opt_client, p_half, reason="t1_partial_50pct"
+                        )
+                        if result.get("long_order_id"):
+                            p["contracts"] -= half
 
         # ── Submit and confirm option exits (exit_pending → closed) ──────────
         elif p["status"] == "exit_pending" and instr == "options":
