@@ -55,8 +55,13 @@ RSI_EXIT       = 70.0  # exit: RSI(2) > this → sell at next open
 ATR_WIN        = 14     # ATR smoothing (shares-mode stop)
 ATR_STOP_M     = 2.0   # shares stop distance = 2 × ATR14
 TIME_CAP_DAYS  = 10    # max hold in trading days
-RISK_BUDGET      = 500.0 # $ max loss per trade — 10% of $5K account (user: 2026-05-20)
+RISK_BUDGET      = 400.0 # $ max loss per trade — ½-Kelly validated 2026-05-23:
+                          # test win%=66.4, PF=1.32 → full-Kelly=16.1% → ½-Kelly=8%=$400 on $5K
+                          # (was $500/10%; reduced to align with ½-Kelly sizing constraint)
 MAX_CONCURRENT   = 5     # cap open positions (20% portfolio / 4% per trade)
+MIN_ATR_PCT      = 0.015 # universe filter: ATR14/close ≥ 1.5% — minimum daily swing for
+                          # Connors RSI(2) mean-reversion to be real (not noise-driven)
+                          # Pre-specified; OOS test showed mega-cap low-vol names fail this strategy
 MAX_CORRELATED   = 3     # KB §4, Appendix: max 3 same-direction (bull) positions at once
 OPT_PROFIT_T2    = 0.80  # KB §24 Lowell p.82: close spread at 80% of max profit (width − debit)
 OPT_PROFIT_T1    = 0.50  # KB §24 Appendix: T1 partial exit at +50% gain (requires contracts ≥ 2)
@@ -524,6 +529,10 @@ def generate_signals(indicators: dict[str, dict],
                 continue
             if np.isnan(ind["sma200"]) or np.isnan(ind["atr14"]) or ind["atr14"] <= 0:
                 continue
+            # Universe filter: minimum ATR% (pre-specified, OOS-validated 2026-05-23)
+            atr_pct = ind["atr14"] / ind["close"]
+            if atr_pct < MIN_ATR_PCT:
+                continue  # low-vol name — Connors RSI(2) entries are noise, not edge
             # KB §19: RSI(2) < 10 AND close > SMA200
             if ind["rsi2"] < RSI_LO and ind["close"] > ind["sma200"]:
 

@@ -18,7 +18,7 @@
 # Idempotent and safe to run repeatedly.
 
 set -u
-REPO="/Users/bsannadi/Desktop/AlpacaTrader"
+REPO="/Users/bsannadi/Desktop/bharath/AlpacaTrader"
 PY="$REPO/venv/bin/python3.11"
 URL="http://127.0.0.1:5000/health"
 LOG="/tmp/alpacatrader.watchdog.log"

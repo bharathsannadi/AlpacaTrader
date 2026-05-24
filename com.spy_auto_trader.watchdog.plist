@@ -9,11 +9,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/bsannadi/Desktop/AlpacaTrader/scripts/watchdog.sh</string>
+        <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/scripts/watchdog.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/bsannadi/Desktop/AlpacaTrader</string>
+    <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader</string>
 
     <!-- Run every 60s. The watchdog itself requires 3 consecutive
          failures (~3 min) before acting, so a single blip won't restart. -->

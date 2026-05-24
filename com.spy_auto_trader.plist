@@ -8,12 +8,12 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/bsannadi/Desktop/AlpacaTrader/venv/bin/python3.11</string>
-        <string>/Users/bsannadi/Desktop/AlpacaTrader/scripts/app.py</string>
+        <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/venv/bin/python3.11</string>
+        <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/scripts/app.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/bsannadi/Desktop/AlpacaTrader</string>
+    <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -40,7 +40,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/bsannadi/Desktop/AlpacaTrader/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
     <!-- Run as the logged-in user (not as launchd's daemon context).
