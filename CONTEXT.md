@@ -154,13 +154,15 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
 - ✅ Pushed commit `2bd3934` — paper incubation clock starts tonight's 4:10 PM ET EOD
 
 **Pending next steps (ordered, pre-specified):**
-- [ ] **Max-DD sign-off**: owner must initial the GO_LIVE_CHECKLIST threshold-change note
-- [ ] Universe filter: pre-specified ATR%/liquidity rule to address 16/39 losers — OOS test
-- [ ] Kelly sizing: ½-Kelly ~7% → $350/trade (vs current $200) — validate math
-- [ ] Paper incubation ≥4 weeks — CLOCK RUNNING (start date 2026-05-20)
+- [ ] **Max-DD sign-off**: owner must initial the GO_LIVE_CHECKLIST threshold-change note (user action only)
+- [x] **Universe filter**: `MIN_ATR_PCT=1.5%` wired in `generate_signals()` — DONE 2026-05-23. OOS backtest to confirm improvement still TODO.
+- [x] **Kelly sizing**: validated 2026-05-23 — win%=66.4, PF=1.32 → full-Kelly=16.1% → ½-Kelly=8%=$400/trade. `RISK_BUDGET` $500→$400 committed.
+- [ ] **Paper incubation** ≥4 weeks — CLOCK RUNNING (start date 2026-05-20, day 3 of 28)
   Track: mechanics correct, fills confirmed, stops activating, no crashes
-- [ ] GO_LIVE_CHECKLIST §2-5: operational checks (watchdog, equity-curve, error webhook,
-  24hr stability, PDT note for daily-bar swings, operator readiness boxes)
+- [x] **GO_LIVE_CHECKLIST §2 — process supervision**: watchdog plist installed & verified 2026-05-23 (paths fixed for new machine path).
+- [ ] **GO_LIVE_CHECKLIST §2 remaining**: equity-curve ≥5 EOD points, ERROR webhook test, 24hr stability run
+- [ ] **GO_LIVE_CHECKLIST §3-5**: risk-controls verification + operator readiness boxes (user actions)
+- [x] **KB-COMPLY**: 10/11 gaps shipped 2026-05-23 — KB-2 7-DTE exit, KB-3 D-2 earnings exit, KB-1 80% profit close, KB-4 VIX gate, KB-5 correlated cap, KB-6 T1 partial, KB-8 bid-ask width, KB-9 prefer DTE≥21, KB-10 VIX spike→spread, KB-11 documented. KB-7 deferred.
 
 ---
 
