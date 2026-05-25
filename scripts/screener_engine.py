@@ -115,6 +115,39 @@ TOP_PERFORMERS = {
 # Validated = backtested PF > 1.2  (Bull Flag PF=1.44 confirmed 2026-05-24)
 VALID_SETUPS = {"Breakout", "RSI Dip", "Gap+Vol", "Bull Flag"}
 
+# ── Intraday strategy per setup (from Polygon 5yr backtest §BT1) ──────────────
+SETUP_STRATEGY = {
+    "Breakout": (
+        "SAME-DAY edge (signal-day PF=28.42, next-day PF=0.84 — edge gone by tomorrow). "
+        "Enter intraday NOW while breakout is in progress. "
+        "Hold 60–90 min from entry. "
+        "Stop 1–1.5% below entry. Target 2–3%. "
+        "60% hit +1% within 30min, 80% within 60min."
+    ),
+    "Bull Flag": (
+        "Intraday 5-min setup — buy the tight consolidation after a surge day. "
+        "Enter on flag break (today's range < 50% of surge bar). "
+        "Short hold: 15 min max. "
+        "Stop 1.5% below flag low. Target 1% above flag high. "
+        "Best stop+target: 1.5% stop / 1% target → PF=1.04."
+    ),
+    "RSI Dip": (
+        "Mean-reversion — stock still falling on signal day (same-day PF=0.45). "
+        "Do NOT enter today. Best entry: next-day open (PF=1.08). "
+        "Hold to EOD for full mean-reversion (EOD PF=1.01). "
+        "Wide stop 2%+ — tight stops choke mean-reversion. "
+        "daily_trader.py handles overnight entry automatically."
+    ),
+    "Gap+Vol": (
+        "Gap continuation — edge persists both days (signal-day PF=2.52, next-day PF=1.11). "
+        "Enter at 9:35 open. Hold 120 min or EOD for full drift. "
+        "Stop 1.5–2% below open. Target 3%+. "
+        "71% hit +1% within 30min, 85% within 60min."
+    ),
+    "Momentum": "No backtested directional edge — watch only, do not trade.",
+    "VWAP Bounce": "No backtested directional edge — watch only, do not trade.",
+}
+
 CACHE_TTL_MARKET = 90    # seconds during market hours
 CACHE_TTL_CLOSED = 600   # seconds after hours
 
@@ -361,6 +394,39 @@ def _fetch_symbol(sym: str) -> dict | None:
         is_top = sym in TOP_PERFORMERS.get(setup, [])
         bt     = BT_METRICS.get(setup, BT_METRICS["Neutral"])
 
+        # ── Reason why this setup was triggered (live indicator values) ──────
+        high50_r = float(daily["Close"].tail(51).iloc[:-1].max()) if len(daily) >= 51 else price
+        if setup == "Breakout":
+            imp_note = {"Green": "🟢 Impulse Green (buy zone)", "Red": "🔴 Impulse Red (caution)", "Blue": "🔵 Impulse Blue (neutral)"}.get(impulse, impulse)
+            reason = (f"Price ${price:.2f} > 50d High ${high50_r:.2f} · "
+                      f"RSI14={rsi14_i:.0f} (zone 55–75) · "
+                      f"RelVol={rel_vol:.1f}× (thresh >1.3×) · {imp_note}")
+        elif setup == "Gap+Vol":
+            imp_note = {"Green": "🟢 Impulse Green", "Red": "🔴 Impulse Red", "Blue": "🔵 Impulse Blue"}.get(impulse, impulse)
+            reason = (f"Gap={gap_pct:+.1f}% at open (thresh >1%) · "
+                      f"RelVol={rel_vol:.1f}× (thresh >1.5×) · "
+                      f"RSI14={rsi14_i:.0f} · ADV30={adv30/1e6:.1f}M · {imp_note}")
+        elif setup == "RSI Dip":
+            fi_note = "FI2d<0 (bargain entry — Elder p.39)" if fi2d < 0 else f"FI2d={fi2d:+.0f}"
+            pp_note = " · 📌 Pocket Pivot" if pkt_pivot else ""
+            imp_note = "🔴 Impulse Red (sustained sell = BETTER dip entry, PF=1.82)" if impulse == "Red" else ("🟢 Impulse Green (also good, PF=1.76)" if impulse == "Green" else "🔵 Impulse Blue")
+            reason = (f"RSI14={rsi14_i:.0f} < 35 (oversold mean-revert) · "
+                      f"RSI2(daily)={rsi2_d:.1f} · {fi_note}{pp_note} · {imp_note}")
+        elif setup == "Bull Flag":
+            if len(daily) >= 3:
+                prev_o2 = float(daily["Open"].iloc[-2]); prev_c2 = float(daily["Close"].iloc[-2])
+                surge2  = (prev_c2 - prev_o2) / prev_o2 * 100 if prev_o2 > 0 else 0.0
+                reason  = (f"Surge prev day {surge2:+.1f}% · "
+                           f"Today range tight · "
+                           f"RSI14={rsi14_i:.0f} (zone 50–75) · RelVol={rel_vol:.1f}×")
+            else:
+                reason = f"Bull Flag — RSI14={rsi14_i:.0f} · RelVol={rel_vol:.1f}×"
+        else:
+            reason = (f"No backtested edge today · "
+                      f"RSI14={rsi14_i:.0f} · RelVol={rel_vol:.1f}× · Gap={gap_pct:+.1f}%")
+
+        strategy = SETUP_STRATEGY.get(setup, "No strategy — watch only.")
+
         return {
             "sym":       sym,
             "sector":    _SECTOR.get(sym, "Tech"),
@@ -390,6 +456,9 @@ def _fetch_symbol(sym: str) -> dict | None:
             "impulse":   impulse,            # Green/Blue/Red (Elder Step-by-Step p.47)
             "fi2d":      float(fi2d),        # Force Index 2d EMA (Elder p.39)
             "pkt_pivot": bool(pkt_pivot),    # O'Neill Pocket Pivot (Morales p.132)
+            # ── Human-readable detail for UI expandable rows ──────────────────
+            "reason":    reason,             # Why this setup was triggered (live values)
+            "strategy":  strategy,           # How to trade it (from Polygon 5yr backtest §BT1)
         }
     except Exception:
         return None
@@ -448,12 +517,26 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
         ivr_val   = pos.get("ivr") or "?"
         structure = pos.get("structure") or ("ATM Call" if str(ivr_val) == "?" or
                     (isinstance(ivr_val, (int, float)) and ivr_val < 30) else "Debit Spread")
+        rsi2_val = pos.get("rsi2")
+        rsi2_str = f"{rsi2_val:.1f}" if isinstance(rsi2_val, float) else "<10"
+        opt_reason = (
+            f"Connors RSI(2)={rsi2_str} < 10 → 66.4% directional accuracy (PF=1.32, 2yr backtest) · "
+            f"{opt_type} for {'bullish' if direction=='bull' else 'bearish'} mean-reversion · "
+            f"IVR {ivr_val} → {structure}"
+        )
+        opt_strategy = (
+            f"BTO 1 ATM {opt_type}, exp {expiry} ({dte}d). "
+            f"Stop: exit if option loses 50% of premium. "
+            f"Target: 100% gain or hold to day 3–5 for mean-reversion. "
+            f"Max risk: ${int(pos.get('risk_budget', 400))}. "
+            f"Connors rule: RSI(2) < 10 signals sharp multi-day reversal (Connors/Alvarez 2013 p.44)."
+        )
         rows.append({
             "rank":      1,
             "source":    "Connors RSI(2) Daily",
             "sym":       sym,
             "direction": "▲ Bull" if direction == "bull" else "▼ Bear",
-            "signal":    f"RSI2={pos.get('rsi2', '<10'):.1f}" if isinstance(pos.get("rsi2"), float) else "RSI2 < 10",
+            "signal":    f"RSI2={rsi2_str}" if isinstance(rsi2_val, float) else "RSI2 < 10",
             "opt_type":  opt_type,
             "structure": structure,
             "expiry":    expiry,
@@ -465,6 +548,8 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
             "badge":     "⭐ Proven",
             "confidence":"66.4% hit · PF 1.32 · 2yr backtest",
             "action":    "✅ BUY",
+            "reason":    opt_reason,
+            "strategy":  opt_strategy,
         })
 
     # ── Source B: Intraday validated setups → directional options ────────────
@@ -518,6 +603,23 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
         # Force Index bonus (Elder p.39): FI2d < 0 = bargain entry (for RSI Dip)
         fi_flag = " 🔽FI<0" if (fi2d < 0 and setup == "RSI Dip") else ""
 
+        # Build detailed reason from live indicator values
+        intra_reason = (
+            f"{setup} setup · {bt['dir_pct']:.1f}% directional · PF {bt['pf']:.2f} (2yr backtest) · "
+            f"{struct_note} · "
+            f"RSI14={row['rsi14']:.0f} · RelVol={row['rel_vol']:.1f}× · "
+            f"Gap={row.get('gap_pct', 0):+.1f}% · HV20={hv:.0f}%"
+            + (f" · 📌 Pocket Pivot" if pkt_piv else "")
+            + (f" · 🔽 FI2d<0 (bargain)" if fi2d < 0 and setup == "RSI Dip" else "")
+            + (f" · ⭐ Top-5 backtest performer" if is_top else "")
+        )
+        exec_instr = (
+            f"BTO 1 ATM Call, exp {expiry} ({dte}d). "
+            if structure == "ATM Call" else
+            f"BTO ATM Call + STO OTM Call (debit spread), exp {expiry} ({dte}d). "
+        )
+        intra_strategy = exec_instr + SETUP_STRATEGY.get(setup, "See setup rules.")
+
         rows.append({
             "rank":      setup_rank.get(setup, 9),
             "source":    f"Intraday {setup}",
@@ -536,6 +638,8 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
             "confidence":f"{bt['dir_pct']:.1f}% dir · PF {bt['pf']:.2f} · {struct_note}",
             "action":    action,
             "impulse":   impulse,
+            "reason":    intra_reason,
+            "strategy":  intra_strategy,
         })
     rows.sort(key=lambda r: r["rank"])
     return rows

@@ -2026,9 +2026,16 @@ function _renderDtTable(rows) {
     rank += isValid ? 1 : 0;
     const rankDisp = isValid ? `<b>${rank}</b>` : `<span style="color:#334155">—</span>`;
 
-    return `<tr class="${rowCls}" ${impStyle} title="RSI2(daily)=${r.rsi2_d.toFixed(1)}  EMA20=$${r.ema20_d}  EMA13=$${(r.ema13_d||0).toFixed(2)}  FI2d=${(r.fi2d||0).toFixed(0)}  ADV=${r.adv30m}M  Impulse=${imp}">
+    const reason   = (r.reason   || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const strategy = (r.strategy || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const hasDetail = !!(r.reason || r.strategy);
+    const detailHint = hasDetail ? ` <span class="scr-expand-hint">▸ click for strategy</span>` : "";
+
+    return `<tr class="${rowCls} scr-expandable" ${impStyle}
+        title="RSI2(daily)=${r.rsi2_d.toFixed(1)}  EMA20=$${r.ema20_d}  EMA13=$${(r.ema13_d||0).toFixed(2)}  FI2d=${(r.fi2d||0).toFixed(0)}  ADV=${r.adv30m}M  Impulse=${imp}"
+        onclick="_toggleScrDetail(this)">
       <td class="scr-rank">${rankDisp}</td>
-      <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector}</span></td>
+      <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector}${detailHint}</span></td>
       <td class="scr-price">$${r.price.toFixed(2)}</td>
       <td class="${_clsDir(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
       <td class="${rvCls}">${r.rel_vol.toFixed(2)}×</td>
@@ -2042,6 +2049,14 @@ function _renderDtTable(rows) {
       <td>${pfDisp}</td>
       <td>${retDisp}</td>
       <td>${pickDisp}</td>
+    </tr>
+    <tr class="scr-detail-row" style="display:none">
+      <td colspan="15">
+        <div class="scr-detail-panel">
+          ${reason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${reason}</div>` : ""}
+          ${strategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${strategy}</div>` : ""}
+        </div>
+      </td>
     </tr>`;
   }).join("");
 }
@@ -2092,20 +2107,28 @@ function _renderOptTable(rows) {
       : `<span style="color:#475569">—</span>`;
 
     // Execute button — enabled only for BUY-recommended rows
+    // stopPropagation prevents the row click (detail toggle) from firing
     const canExec  = o.action === "✅ BUY";
     const execPayload = JSON.stringify({
       sym: o.sym, structure: o.structure, expiry: o.expiry,
       opt_type: o.opt_type || "Call", max_risk: o.max_risk || 400
     }).replace(/"/g, "&quot;");
     const execBtn = canExec
-      ? `<button class="scr-exec-btn" onclick='_execScreenerOption(${idx})'
+      ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerOption(${idx})'
            title="Place limit order via Alpaca (paper account)\n${o.sym} ${o.structure} ${o.expiry}\nMax risk: $${o.max_risk||400}"
            data-payload="${execPayload}">⚡ Execute</button>`
       : `<span style="color:var(--muted);font-size:10px">—</span>`;
 
-    return `<tr class="scr-row" title="${(o.confidence||'').replace(/"/g,"'")}">
+    const oReason   = (o.reason   || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const oStrategy = (o.strategy || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const oHasDetail = !!(o.reason || o.strategy);
+    const oHint = oHasDetail
+      ? ` <span class="scr-expand-hint">▸ click row for strategy</span>` : "";
+
+    return `<tr class="scr-row scr-expandable" title="${(o.confidence||'').replace(/"/g,"'")}"
+        onclick="_toggleScrDetail(this)">
       <td>${badge}</td>
-      <td class="scr-sym"><b>${o.sym}</b></td>
+      <td class="scr-sym"><b>${o.sym}</b><br><span style="font-size:9px;color:var(--muted)">${oHint}</span></td>
       <td>${dirBadge}<br><span class="scr-sector" style="font-size:10px">${o.signal}</span></td>
       <td>${dirDisp}</td>
       <td>${pfDisp}</td>
@@ -2116,6 +2139,14 @@ function _renderOptTable(rows) {
       <td style="color:#f59e0b"><b>$${(o.max_risk||400).toLocaleString()}</b></td>
       <td>${action}</td>
       <td>${execBtn}</td>
+    </tr>
+    <tr class="scr-detail-row" style="display:none">
+      <td colspan="12">
+        <div class="scr-detail-panel">
+          ${oReason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${oReason}</div>` : ""}
+          ${oStrategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${oStrategy}</div>` : ""}
+        </div>
+      </td>
     </tr>`;
   }).join("");
 
@@ -2183,6 +2214,16 @@ function _execScreenerOption(idx) {
     opt_type:  o.opt_type || "Call",
     max_risk:  o.max_risk || 400,
   });
+}
+
+// ── Expandable detail row toggle ──────────────────────────────────────────────
+function _toggleScrDetail(tr) {
+  // Each data row is immediately followed by its hidden detail sibling
+  const detail = tr.nextElementSibling;
+  if (!detail || !detail.classList.contains("scr-detail-row")) return;
+  const opening = detail.style.display === "none" || detail.style.display === "";
+  detail.style.display = opening ? "table-row" : "none";
+  tr.classList.toggle("scr-expanded", opening);
 }
 
 // ── Toast notification helper ─────────────────────────────────────────────────

@@ -509,6 +509,24 @@
     to   { opacity:1; transform:translateY(0); }
   }
 
+  /* ── Expandable reason + strategy detail rows ── */
+  .scr-expandable { cursor: pointer; }
+  .scr-expandable:hover td { background: rgba(255,255,255,0.02); }
+  .scr-expanded   { outline: 1px solid rgba(99,102,241,0.35); }
+  .scr-expanded td { background: rgba(99,102,241,0.05) !important; }
+  .scr-expand-hint { color: #6366f1; font-size: 9px; font-weight: 600; letter-spacing: .03em; opacity: .7; }
+  .scr-detail-row td { padding: 0 !important; border-top: none !important; }
+  .scr-detail-panel {
+    padding: 10px 16px 12px;
+    background: rgba(10,15,30,0.85);
+    border-top: 1px solid rgba(99,102,241,0.2);
+    border-bottom: 1px solid rgba(99,102,241,0.1);
+    animation: fadeInUp .15s ease;
+  }
+  .scr-detail-reason   { color: #94a3b8; font-size: 12px; margin-bottom: 7px; line-height: 1.5; }
+  .scr-detail-strategy { color: #cbd5e1; font-size: 12px; line-height: 1.6; }
+  .scr-detail-label    { color: #e2e8f0; font-weight: 700; margin-right: 4px; }
+
   /* Settings / Log tab styles */
   .settings-tab { color: var(--purple) !important; }
   .settings-tab.active { background: rgba(167,139,250,0.08) !important; border-bottom-color: var(--purple) !important; text-shadow: 0 0 16px rgba(167,139,250,0.5) !important; }
