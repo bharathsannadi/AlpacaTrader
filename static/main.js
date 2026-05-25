@@ -270,6 +270,7 @@ function updateUI(s) {
   syncToggleBtn("btn-trade-memory",  s.trade_memory_enabled !== false);
   syncToggleBtn("btn-debate",        s.debate_enabled === true);
   syncToggleBtn("btn-auto-trade",    s.auto_trade === true);
+  _autoTrade = s.auto_trade === true;  // mirror for screener execute confirm gate
 
   // Session end time input
   if (s.session_end) {
@@ -1930,7 +1931,8 @@ const SCR_SETUP_CFG = {
   "Neutral":     { color: "#334155", label: "Neutral",    pf: 0,    valid: false },
 };
 
-let _scrLastTs = 0;   // timestamp of last received update
+let _scrLastTs  = 0;   // timestamp of last received update
+let _autoTrade  = false;  // mirrors server state["auto_trade"] — skip confirm when true
 let _scrAutoId = null; // setInterval handle for clock tick
 
 function showScreener() {
@@ -2163,10 +2165,12 @@ function _execScreenerOption(idx) {
   const o    = rows[idx];
   if (!o) return;
 
-  const sym  = o.sym;
-  const isPaper = true;   // always paper unless server says otherwise
-  const msg  = `Execute ${o.structure} on ${sym}?\n\nExpiry: ${o.expiry}\nMax risk: $${o.max_risk||400}\nAccount: Paper (dry_run mirrors server setting)`;
-  if (!confirm(msg)) return;
+  // Skip confirmation modal when Auto-Trade is ON (mirrors the existing
+  // trade_signal behaviour where backend auto-approves without user click)
+  if (!_autoTrade) {
+    const msg = `Execute ${o.structure} on ${o.sym}?\n\nExpiry: ${o.expiry}\nMax risk: $${o.max_risk||400}\nAccount: Paper (dry_run mirrors server setting)`;
+    if (!confirm(msg)) return;
+  }
 
   // Disable button during submission
   const btn = document.querySelectorAll(".scr-exec-btn")[idx];
