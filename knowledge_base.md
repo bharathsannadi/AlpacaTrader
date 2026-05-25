@@ -1997,3 +1997,391 @@ LESSON:        [One sentence. What would you do differently?]
 | Midday | Journal partial entries; note what worked and what didn't |
 | 3:30 PM | Close all day trades regardless of P&L |
 | After close | Full journal entry; review vs. plan |
+
+---
+
+---
+
+# EXTENDED READING — BATCH 2
+
+> **Added 2026-05-24.** Deep read of 8 additional high-priority books not covered in the first pass:
+> *Trading in the Zone* (Douglas), *Trade Like Jesse Livermore* (Smitten), *Bollinger on Bollinger Bands* (Bollinger), *The New Market Wizards* (Schwager), *Trading Against the Crowd* (Summa), *Mechanical Trading Systems* (Weissman), *Money Management Risk Control for Traders*, *Trade Like Jesse Livermore*.
+
+---
+
+## §T11. The Five Fundamental Truths — Thinking in Probabilities (Douglas, *Trading in the Zone*)
+
+Mark Douglas's *Trading in the Zone* is the single most-cited book by professional traders on the psychology of consistency. The core thesis: **consistent losses come from inconsistent thinking, not inconsistent methods.**
+
+### The Five Fundamental Truths
+Every consistent, professional trader has internalized these five beliefs at a functional (not intellectual) level:
+
+1. **Anything can happen.** Every market event is unique. Past patterns provide a probability edge, not a guarantee. A setup that worked 80% of the time will still fail 20% of the time — and you cannot know in advance which trades those are.
+
+2. **You don't need to know what's going to happen next to make money.** An edge is simply "a higher probability of one thing happening over another." Over a large sample (25+ trades), a genuine edge produces consistent results even with random individual outcomes.
+
+3. **There is a random distribution between wins and losses for any given set of variables that define an edge.** Wins and losses do not come in predictable sequences. Like a casino running roulette, you don't need to know the outcome of each spin — you need the edge and a large enough sample.
+
+4. **An edge is nothing more than an indication of a higher probability of one thing happening over another.** It is NOT a certainty. When you treat it as a certainty, you become emotional when it fails.
+
+5. **Every moment in the market is unique.** This particular exact combination of all variables has never occurred before and will never occur again. This prevents you from accurately projecting the future based on the past at the individual trade level.
+
+### The Consistent Winner's Creed (Douglas p.130)
+```
+I AM A CONSISTENT WINNER BECAUSE:
+1. I objectively identify my edges.
+2. I predefine the risk of every trade.
+3. I completely accept the risk or I am willing to let go of the trade.
+4. I act on my edges without reservation or hesitation.
+5. I pay myself as the market makes money available to me.
+6. I continually monitor my susceptibility for making errors.
+7. I understand the absolute necessity of these principles and, therefore,
+   I never violate them.
+```
+
+### The 25-Trade Exercise
+To prove you are thinking in probabilities (not predictions):
+1. Pick one setup with precise, mechanical rules
+2. Commit to taking the next 25 occurrences **without exception**
+3. Do not change variables mid-way through
+4. Do not avoid a trade because "this one feels like a loser"
+5. After 25 trades, review: win rate, avg gain, avg loss, PF
+
+**Why 25 trades?** This is the minimum sample size where the law of large numbers begins to express your true edge. One or two trades prove nothing.
+
+### The Addiction to Random Rewards
+- Slot machines pay out randomly, which creates stronger addiction than fixed schedules
+- The market also pays out randomly, which creates the same addiction
+- **This explains why traders keep taking C-grade setups:** the occasional random win from a bad setup is enough to reinforce the behavior
+- **Solution:** Grade all setups A/B/C before entry. Track which grade each trade was. Over time you'll see that C-grade setups destroy your edge even if some win randomly.
+
+### Key Rules from Douglas
+- **Never let a winning trade become a fear-driven exit.** If your system says hold, hold. Emotional exits are thesis violations.
+- **Never add to a losing trade hoping for a recovery.** The market has no responsibility to give you what you need.
+- **The source of inconsistency is internal, not external.** The market is not responsible for your emotional state. You are.
+- **"The markets are not random, because they are based on human behavior, and human behavior is never random."** — Schwager (same principle)
+
+---
+
+## §T12. Jesse Livermore's Trading Rules (Smitten, *Trade Like Jesse Livermore* 2005)
+
+Livermore made and lost multiple fortunes (and ultimately $100M+ in today's money) trading stocks and commodities from 1891-1940. His rules, derived from the complete biography and his trading notebooks, are among the most battle-tested in history.
+
+### The Five Money Management Rules (Chapter 5)
+1. **Probe system — never buy the full position at once.**
+   - Initial probe: 20% of intended position
+   - Second probe (if first is profitable): 20% more
+   - Third entry (if second is profitable): 20% more
+   - Final entry (maximum conviction): 40%
+   - This ensures you only build a full position in winners. Losers are stopped out cheaply on the probe.
+
+2. **Never lose more than 10% on any trade.**
+   - The 10% stop is non-negotiable. Period. No exceptions.
+   - "The first loss is the best loss." — Livermore
+
+3. **Always keep a cash reserve.**
+   - Cash is inventory. A speculator without cash is like a shopkeeper with empty shelves.
+   - Never be 100% deployed. Keep 25-50% in reserve for the truly right moment.
+
+4. **You need a reason to buy and a reason to sell.**
+   - Never exit a trade simply because you have a profit.
+   - The reason to sell must be as clear as the reason to buy (e.g., price breaks back below pivotal point, sister stock diverges, group trend reverses).
+
+5. **After a windfall profit, put half away.**
+   - After an unusually large profit, withdraw 50% from the trading account.
+   - This rule prevents the common "give-back" cycle where traders pyramid into massive positions during lucky streaks, then lose it all when the streak ends.
+
+### Pivotal Point Trading (Chapter 4)
+Pivotal Points are the "perfect psychological moment" to make a trade.
+
+| Type | Definition | Action |
+|------|------------|--------|
+| **Reversal Pivotal Point** | Change in basic market direction; accompanied by climactic volume (selling exhaustion or buying climax) | Enter in new direction; this is the highest-conviction entry |
+| **Continuation Pivotal Point** | Consolidation in an ongoing trend; a pause before the next leg | Add to existing position when price breaks out of consolidation |
+| **False Pivotal Point** | Rally to a new high followed by a new low below prior low | Do NOT enter; trend has reversed; wait for new Reversal Pivotal Point |
+| **Consolidating Base** | Extended multi-week sideways action near highs | Wait for breakout; buy only if breakout is on strong volume |
+
+**Key rule:** Never anticipate the pivotal point. Wait for the market to show it. The probe system is designed for exactly this — small initial position to test, then add when confirmed.
+
+### Industry Group Theory (Chapter 3) — "Tandem Trading"
+- Stocks do not move alone. When one moves, related stocks in the same industry follow.
+- **Before entering any trade, check the "sister stock"** — the second-largest stock in the same industry group.
+- **Both must show the same pattern.** If NVDA is breaking out but AMD is breaking down, the setup is suspect. If both are breaking out, conviction is maximum.
+- **Only trade the leading stocks in the leading groups.** Laggards rarely catch up in time to profit.
+
+### Top-Down Trading Framework
+1. **Check the Line of Least Resistance** (overall market direction)
+2. **Check the Industry Group** (semiconductor sector, AI sector, etc.)
+3. **Check the Sister Stock** (tandem confirmation)
+4. **Check the Individual Stock** (pivotal point, volume, pattern)
+5. **Only if all four are aligned → enter the probe position**
+
+### Livermore's Most Quoted Rules
+- *"It was the sittin' and the waitin' that made me the money."* — patience before entry, not after.
+- *"Never average a losing position."* — averaging down is the most expensive habit in trading.
+- *"A stock is never too high to buy or too low to sell short"* — if the pivotal point confirms it.
+- *"After losing several fortunes listening to tips, I closed my office near Wall Street and never took a tip again."* — tips destroy edge.
+- *"Cut the losses quickly and let the profits ride."* — the oldest rule; still violated by 90% of traders.
+
+### How to Apply Livermore to This System
+- **Probe system** → use on Breakout setup (buy 1/3 on breakout, add 1/3 on first consolidation, add 1/3 on confirmed continuation)
+- **Sister stock check** → before entering NVDA RSI Dip, check AMD; before SMCI Bull Flag, check NVDA
+- **Pivotal Point** = our Breakout criteria (new 50-day high = Reversal/Continuation Pivotal Point)
+- **Industry Group** → check that the sector ETF (SMH for semis, XLK for tech) is also in the same direction
+
+---
+
+## §T13. Bollinger Bands — Three Methods (Bollinger, *Bollinger on Bollinger Bands* 2002)
+
+### Construction (Chapter 7)
+```
+Middle Band = 20-period Simple Moving Average
+Upper Band  = Middle Band + 2 × Standard Deviation (20-period)
+Lower Band  = Middle Band − 2 × Standard Deviation (20-period)
+```
+- At 20 periods and ±2 SD: price is contained within the bands **88-89% of the time**
+- When shortening to 10 periods → use ±1.9 SD
+- When lengthening to 50 periods → use ±2.1 SD
+- **Use simple (not exponential) moving average** for the middle band — no advantage to EMA, adds complexity
+
+### Two Derived Indicators
+| Indicator | Formula | Reading |
+|-----------|---------|---------|
+| **%b** | (Close − Lower Band) / (Upper Band − Lower Band) | >1 = above upper band; <0 = below lower band; 0.5 = at middle |
+| **Bandwidth** | (Upper − Lower) / Middle | High = volatile; Low = coiling; 6-month low = Squeeze |
+
+### The Squeeze (Chapter 15) — Most Actionable Signal
+- **Squeeze occurs when Bandwidth falls to its lowest level in 6 months** (bands have contracted to their narrowest)
+- A Squeeze signals that volatility is coiling and a breakout is imminent — the market is "holding its breath"
+- **Direction of the breakout is NOT determined by the Squeeze alone** — need price action or volume to determine direction
+- **Entry:** Buy when price closes above the upper band after a Squeeze. Sell when it closes below the lower band after a Squeeze.
+- **Stop:** Close below the middle band (20-MA) for long entries
+
+### Method I: Volatility Breakout (Chapter 16)
+1. Identify a Squeeze (Bandwidth at 6-month low)
+2. Wait for the breakout: close above upper band (long) or close below lower band (short)
+3. Volume confirmation: breakout bar volume should be above 20-period average
+4. Entry: on the close of the breakout bar, or next open
+5. Stop: at the middle band (20-MA)
+6. Exit: when Bandwidth expands significantly (the move is "done")
+7. **Head fake warning:** First move out of a Squeeze is sometimes a false breakout in the wrong direction (5-10% of cases). Use a second day close outside the band as confirmation.
+
+### Method II: Trend Following (Chapter 19)
+- In a confirmed uptrend, price frequently **walks the upper band** — touching or slightly exceeding it on successive days
+- Walking the upper band is NOT overbought — it is a sign of a strong trend
+- **Sell signal in uptrend:** When price pulls back and closes below the 20-MA (middle band) — this is the trend-following exit, not when price first touches the lower band
+- **For day traders:** When a breakout stock is walking the upper Bollinger Band with each candle, hold the position until a 5-min close below the 20-period MA on the 5-min chart
+
+### Method III: Reversals — W-Bottoms and M-Tops (Chapters 12–13)
+**W-Bottom (bullish reversal):**
+1. Price tags or closes below the lower band (first bottom)
+2. Price rallies back toward the middle band
+3. Price pulls back toward the lower band again but does **not** close below it — the second bottom is HIGHER than the first
+4. Key confirmation: **%b of the second bottom is HIGHER than %b of the first bottom** even if price is similar
+5. Volume dries up on the second bottom = sellers exhausted
+6. Entry: on the close above the middle band after the second bottom
+7. Stop: below the second bottom's low
+
+**M-Top (bearish reversal):** Mirror image of W-Bottom.
+
+### Tags Do NOT Generate Signals
+- **Critical rule (Bollinger p.57):** "A tag of the upper band is NOT automatically a sell signal; a tag of the lower band is NOT automatically a buy signal."
+- Price at the lower band + falling Bandwidth + no volume + no indicator confirmation = likely to keep falling
+- Price at the lower band + rising %b + increasing volume + W-bottom forming = buy signal
+- **Always need confirming indicator** (volume oscillator, %b divergence, MACD-H) before acting on a band tag
+
+### Bollinger Bands for Day Traders (Chapter 22)
+- On 5-min charts, use 20 periods and 2 SD (same as daily)
+- In a trending stock, the upper band acts as a dynamic resistance level
+- **RSI Dip confirmation:** A stock whose daily RSI14 < 35 AND closes below the lower Bollinger Band is in the most extreme oversold zone — classic W-bottom setup forming. This is our RSI Dip + lower band tag = maximum conviction.
+- **Breakout confirmation:** When a stock closes above its 50-day high AND above the upper Bollinger Band on above-average volume, the Breakout setup has all three confirmations (price level, vol, Bollinger).
+
+### Bollinger Band Rules Summary Card (Chapter 26)
+1. Bands do not generate buy/sell signals by themselves — they set the framework.
+2. The appropriate action when price is at a band depends on the action of an indicator.
+3. The Squeeze is the most reliable Bollinger Band signal.
+4. Volume confirms or denies the action at the bands.
+5. In a strong trend, price walks the band — do not fight it.
+6. W-bottoms and M-tops are the reversal plays; they require a second touch that %b diverges from.
+
+---
+
+## §T14. Put/Call Ratio Sentiment — Contrarian Timing (Summa, *Trading Against the Crowd* 2004)
+
+### The Core Premise
+Options traders, particularly retail options traders, are systematically wrong at extremes. When the crowd is overwhelmingly bullish (buying calls) or bearish (buying puts), the contrarian fades that extreme.
+
+### The CBOE Equity Put/Call Ratio
+- **Formula:** Daily equity put volume ÷ daily equity call volume
+- **Typical range:** 0.40 to 1.20
+- **High P/C (> 0.80–1.00):** Extreme fear — crowd is buying puts → contrarian buy signal for stocks
+- **Low P/C (< 0.40–0.50):** Extreme greed — crowd is buying calls → contrarian warning; market may be near a top
+- **Smooth with 10-day or 21-day EMA** to remove daily noise
+
+### Practical Rules for This System
+| P/C Reading | Market Interpretation | Options Action |
+|---|---|---|
+| Equity P/C > 0.90 (10-day EMA) | Extreme fear; crowd betting on collapse | **Buy calls** on RSI Dip setups — fear is a confirming signal |
+| Equity P/C > 0.70 (normal elevated) | Moderate fear | RSI Dip has tailwind; hold or enter with normal size |
+| Equity P/C 0.50–0.70 | Neutral zone | Normal market conditions |
+| Equity P/C < 0.50 | Mild bullish extreme | Warning for Breakout/Momentum plays — close at first sign of reversal |
+| Equity P/C < 0.40 | Extreme greed | Do NOT add new call positions; consider reducing longs |
+
+### Where to Find It
+- CBOE publishes the equity put/call ratio daily: [cboe.com/data](https://www.cboe.com/data)
+- Many charting platforms (ThinkOrSwim, TradingView): symbol `$PCALL` or `$PC` or `CBOE:CPCE`
+- **CPCE** (equity-only) is more reliable than CPCV (total, includes index) for retail sentiment
+
+### Integration with RSI Dip Setup
+When RSI Dip fires **and** CPCE > 0.80:
+- The retail crowd is panic-buying puts on this stock
+- Professional market makers are net long (selling those puts)
+- The oversold bounce is MORE likely because professionals are positioned for it
+- **Action:** Increase size or confidence on RSI Dip entry when CPCE is elevated
+
+---
+
+## §T15. The New Market Wizards — Universal Rules from Top Traders (Schwager 1992)
+
+From interviews with 20+ top professional traders, the consistent rules across all of them:
+
+### Position Sizing — The "Whale" Graph (Eckhardt)
+- Plot performance against position size: the curve is shaped like a "high-foreheaded cartoon whale"
+- Left side (small size): nearly linear — double the size, double the return
+- Peak: somewhere around 1-2% risk per trade for most strategies
+- **Right side: performance collapses. Betting more than the optimal fraction destroys the edge entirely.** A sound method appears to be a failure purely from oversizing.
+- **Rule:** Risk no more than 2% per trade. This is not conservative — it is the mathematically optimal fraction for most edges.
+
+### When You Get Hurt, Get Out Immediately (McKay)
+- *"When I get hurt in the market, I get the hell out. It doesn't matter at all where the market is trading. I just get out, because I believe that once you're hurt in the market, your decisions are going to be much worse."*
+- **Application:** If a position moves against you by your stop amount, exit immediately regardless of conviction. Emotional attachment to a losing trade impairs all subsequent decisions.
+
+### Never Wait for More Evidence to Exit (McKay)
+- *"The most important advice is to never let a loser get out of hand. You want to be sure that you can be wrong twenty or thirty times in a row and still have money in your account."*
+- Risk 5-10% of account maximum across all open positions; no single trade more than 2%.
+
+### Disprove Your Own System (Eckhardt)
+- *"You have to try your best to disprove your results."* — if you can't disprove them, they are probably real.
+- This is the opposite of human nature, which wants to confirm.
+- **Application to this system:** Every time you notice a new potential edge (e.g., Bull Flag), attempt to disprove it. Run the backtest. If it survives the attempt to disprove it, trust it.
+
+### Missing a Trade Is Not a Catastrophe (Eckhardt)
+- *"Missing an important trade is a much more serious error than making a bad trade."* — referring to systematically avoiding your own edge.
+- A disciplined trader takes every signal from their validated setup. Skipping signals on gut feel is how edges are destroyed.
+- Counterpoint: Only applies when you are 100% certain the signal is valid. Do not force uncertain trades.
+
+### The Market Is Not Random (Schwager, Introduction)
+- *"The markets are not random because they are based on human behavior, and human behavior is never random."*
+- **This is the philosophical basis for all technical analysis.** Patterns repeat because fear and greed repeat. Setups work because institutional behavior at levels (VWAP, support, EMA20) is consistent.
+
+### Trend-Following Rule (Eckhardt on position size at trend extremes)
+- Buy on breaks (pullbacks into support), not on strength
+- Sell on rallies (pushes into resistance), not on weakness
+- "It's always tempting to liquidate a good trade on flimsy evidence." — the biggest destroyer of trend profits is premature exits driven by minor adverse moves.
+
+---
+
+## §T16. Mechanical Trading Systems — Discipline Is the Edge (Weissman 2005)
+
+### The Core Insight
+*"The markets are not random. The irrationality of markets is why technical analysis works — but it is also the greatest danger to the mechanical trader. Traders must behave in an unnatural, uncomfortable manner to consistently generate profits. This is why mechanical trading is difficult."*
+
+The edge in mechanical trading is not the system — it is the **discipline to execute the system when it feels wrong.** The system is wrong frequently (< 50% win rate for trend-following). Every losing streak feels like the system is broken. Most traders abandon the system at exactly the wrong time.
+
+### Trader Personality Types and Their Systems
+| Type | Win Rate | Hold | Key Strength | Key Weakness |
+|------|----------|------|---|---|
+| Trend-following | < 50% | Weeks–months | Huge wins offset many small losses | Long drawdown periods during choppy markets |
+| Mean-reversion | 55-65% | Days | Consistent wins, defined risk | Can be caught by regime change (trend starts and never reverts) |
+| Short-term (day/swing) | 50-60% | Hours–days | Frequent trading, defined daily risk | Transaction costs eat edge; emotional toll |
+
+**Match your personality to your system type.** A trend-following system run by a mean-reversion personality leads to early exits (missing the big wins). A mean-reversion system run by a trend-follower leads to holding losers too long.
+
+### The ADX Filter for Trend vs. Mean-Reversion
+- **ADX > 25:** Trending market → use trend-following signals (moving average crossovers, breakouts)
+- **ADX < 20:** Range-bound/choppy market → use mean-reversion signals (RSI extremes, Bollinger Band tags)
+- **ADX 20-25:** Transitional — either method acceptable but both are weaker
+- **Application:** Before entering any setup, check the stock's ADX(14) on the daily chart
+  - RSI Dip + ADX < 20 = perfect mean-reversion setup
+  - Breakout + ADX > 25 = trend confirmed; strong follow-through likely
+
+### The MACD as Trend-Following Filter
+- Weissman confirms: MACD crossovers (13/26/9 — same as Elder's Impulse System) are among the most reliable trend-following filters
+- Positive MACD-Histogram (rising) = trend up = buy Breakout/Bull Flag setups
+- Negative MACD-Histogram (falling) = trend down = buy RSI Dip (mean-reversion against trend, not with it)
+- This validates our Elder Impulse System's role in the screener.
+
+### Diversification of Parameter Sets (not just assets)
+- Running the same strategy with slightly different parameters (e.g., RSI14 and RSI10 simultaneously) reduces variance without reducing edge
+- In a system with 25 stocks: effectively running 25 parallel versions of each setup is already diversification
+- Do NOT over-optimize to a single parameter set. A system that only works at RSI < 35 but not RSI < 37 is curve-fitted.
+
+---
+
+## §DT12. Bollinger Band Squeeze Scan — Potential New Setup
+
+**Status: PROPOSED — not yet backtested. Do not trade until backtest confirms PF > 1.2.**
+
+### Signal Definition (from §T13 Method I)
+A Bollinger Band Squeeze setup forms when:
+1. Daily Bandwidth = (Upper BB − Lower BB) / Middle BB is at its **6-month minimum**
+2. This indicates price volatility has compressed to an extreme
+3. Within 1-5 days of the Squeeze, a directional breakout is expected
+
+### How to Backtest
+Add to `backtest_screener_criteria.py`:
+```python
+def _bollinger_squeeze(df, n=20, sd=2.0, squeeze_pct=10):
+    """Return True if today's Bandwidth is in the bottom squeeze_pct of 6-month range."""
+    ma = df["Close"].rolling(n).mean()
+    std = df["Close"].rolling(n).std()
+    upper = ma + sd * std
+    lower = ma - sd * std
+    bw = (upper - lower) / ma
+    bw_6m_min = bw.rolling(126).min()  # 6-month lookback
+    bw_6m_max = bw.rolling(126).max()
+    pct_rank = (bw - bw_6m_min) / (bw_6m_max - bw_6m_min) * 100
+    return float(pct_rank.iloc[-1]) <= squeeze_pct  # bottom 10% = Squeeze
+```
+
+### What to Measure
+- Next-day directional accuracy after Squeeze fires
+- PF of Long entries (buy on breakout above upper band after Squeeze)
+- PF of Short entries (sell on break below lower band after Squeeze)
+- Elder Impulse filter: does Green Impulse improve Squeeze PF?
+
+### Expected Result (per Bollinger's research)
+- Squeeze alone: ~55% directional accuracy (modest edge)
+- Squeeze + volume breakout confirmation: ~60%+ directional accuracy
+- Squeeze + volume + Impulse filter: potentially comparable to Bull Flag (61.5%)
+
+**Add to screener only if PF > 1.2 is confirmed by backtest.**
+
+---
+
+## §DT13. Quick Rules — Additional Masters
+
+| Source | Rule |
+|--------|------|
+| Douglas | "Anything can happen. Every edge has a unique outcome." |
+| Douglas | "An edge is a higher probability of one thing over another — NOT a certainty." |
+| Douglas | "The market is not responsible for your emotional state. You are." |
+| Douglas | "Take every valid signal in your sample. Skipping signals destroys your edge statistics." |
+| Livermore | "Never buy your entire position at once. Probe first." |
+| Livermore | "Never lose more than 10% on any trade — the first loss is the best loss." |
+| Livermore | "Always keep a cash reserve. A speculator without cash is out of business." |
+| Livermore | "Check the sister stock. Both must confirm before you enter." |
+| Livermore | "It was the sittin' and the waitin' that made me the money." |
+| Livermore | "After a windfall profit, put half away. Don't give it back." |
+| Bollinger | "A tag of the upper band is NOT a sell signal. A tag of the lower band is NOT a buy signal." |
+| Bollinger | "The Squeeze is the most reliable Bollinger Band signal." |
+| Bollinger | "Walking the upper band in a strong trend is NOT overbought — hold your position." |
+| Bollinger | "W-bottom %b divergence: second low's %b higher than first = the bottom is in." |
+| Schwager/Eckhardt | "Never risk more than 2% per trade. This is mathematically optimal, not conservative." |
+| Schwager/McKay | "When you get hurt in the market, get out immediately. Your judgment is impaired." |
+| Schwager/Eckhardt | "Try your best to disprove your trading system. If you can't, it's probably real." |
+| Summa | "CBOE equity P/C > 0.80 = crowd in fear = contrarian buy signal for call entries." |
+| Summa | "CBOE equity P/C < 0.45 = crowd in greed = warning for adding new longs." |
+| Weissman | "The edge is in the discipline to execute when it feels wrong — not in the system itself." |
+| Weissman | "ADX > 25 → trend setups. ADX < 20 → mean-reversion setups. Never mix." |
+| Weissman | "Match your personality to your system type. A mismatch always loses." |
