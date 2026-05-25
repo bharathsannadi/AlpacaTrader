@@ -40,6 +40,7 @@ import spy_auto_trader as trader
 import news_filter
 import daily_trader as dtrad
 import screener_engine as screener
+import screener_executor
 from universe import ALL as _UNIVERSE_ALL
 from security import (
     get_or_create_secret_key,
@@ -1313,6 +1314,50 @@ def on_get_screener(data=None):
         ttl = screener.CACHE_TTL_MARKET if screener._is_market_open() else screener.CACHE_TTL_CLOSED
         if age > ttl:
             socketio.start_background_task(_refresh_screener_bg)
+
+
+@socketio.on("execute_screener_option")
+@require_auth
+def on_execute_screener_option(data=None):
+    """Execute an options order from a screener recommendation row.
+
+    Payload (from UI):
+      sym       — underlying ticker (e.g. "NVDA")
+      structure — "ATM Call" | "Debit Call Spread"
+      expiry    — "2026-06-20"
+      opt_type  — "Call" | "Put"
+      max_risk  — max $ risk (default 400)
+
+    Runs screener_executor in a background task so the WebSocket handler
+    returns immediately. Result is emitted back to all clients as
+    'screener_order_result'.
+    """
+    if not data:
+        return
+
+    # Basic validation
+    sym = str(data.get("sym", "")).upper().strip()
+    if not sym or not sym.isalpha():
+        socketio.emit("screener_order_result", {
+            "success": False, "sym": sym,
+            "message": "Invalid symbol in execute request."
+        }, to=request.sid)
+        return
+
+    with _state_lock:
+        dry = state["dry_run"]
+
+    sid = request.sid
+    log.info(f"execute_screener_option: {sym}  structure={data.get('structure')}  "
+             f"expiry={data.get('expiry')}  dry_run={dry}")
+
+    def _run():
+        result = screener_executor.execute_screener_option(data, dry_run=dry)
+        socketio.emit("screener_order_result", result)   # broadcast to all clients
+        level = "INFO" if result.get("success") else "WARNING"
+        _emit_log(f"SCREENER EXEC  {result.get('message', '')}", level=level)
+
+    socketio.start_background_task(_run)
 
 
 @socketio.on("daily_eod_now")

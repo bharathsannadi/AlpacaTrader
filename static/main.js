@@ -2050,13 +2050,13 @@ function _renderOptTable(rows) {
   if (!tbody) return;
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">
       No active signals today — Connors RSI(2) &lt; 10 triggers after market close ·
       intraday setups populate once market opens</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = rows.map(o => {
+  tbody.innerHTML = rows.map((o, idx) => {
     // Badge color by source quality
     const badgeColor =
       o.badge.includes("Proven")   ? "#a78bfa" :
@@ -2089,6 +2089,18 @@ function _renderOptTable(rows) {
       ? `<span style="color:${parseFloat(o.ivr)<30?'#22c55e':'#f59e0b'}">IVR ${o.ivr}</span>`
       : `<span style="color:#475569">—</span>`;
 
+    // Execute button — enabled only for BUY-recommended rows
+    const canExec  = o.action === "✅ BUY";
+    const execPayload = JSON.stringify({
+      sym: o.sym, structure: o.structure, expiry: o.expiry,
+      opt_type: o.opt_type || "Call", max_risk: o.max_risk || 400
+    }).replace(/"/g, "&quot;");
+    const execBtn = canExec
+      ? `<button class="scr-exec-btn" onclick='_execScreenerOption(${idx})'
+           title="Place limit order via Alpaca (paper account)\n${o.sym} ${o.structure} ${o.expiry}\nMax risk: $${o.max_risk||400}"
+           data-payload="${execPayload}">⚡ Execute</button>`
+      : `<span style="color:var(--muted);font-size:10px">—</span>`;
+
     return `<tr class="scr-row" title="${(o.confidence||'').replace(/"/g,"'")}">
       <td>${badge}</td>
       <td class="scr-sym"><b>${o.sym}</b></td>
@@ -2101,11 +2113,15 @@ function _renderOptTable(rows) {
       <td>${ivrDisp}</td>
       <td style="color:#f59e0b"><b>$${(o.max_risk||400).toLocaleString()}</b></td>
       <td>${action}</td>
+      <td>${execBtn}</td>
     </tr>`;
   }).join("");
+
+  // Store rows for execute function to reference
+  window._scrOptRows = rows;
 }
 
-// ── SocketIO handler ──────────────────────────────────────────────────────────
+// ── SocketIO handlers ─────────────────────────────────────────────────────────
 socket.on("screener_data", function(data) {
   _scrLastTs = data.ts || (Date.now() / 1000);
 
@@ -2119,6 +2135,72 @@ socket.on("screener_data", function(data) {
   _renderOptTable(data.options || []);
   _scrStartClock();
 });
+
+// Result handler for options execution
+socket.on("screener_order_result", function(r) {
+  const ok   = r.success;
+  const sym  = r.sym || "";
+  const msg  = r.message || (ok ? "Order submitted" : "Order failed");
+  const paper = r.paper !== false;  // default true = paper
+
+  // Toast notification
+  _scrToast(
+    ok ? `✅ ${sym} Order Submitted${paper ? " (paper)" : " ⚠ LIVE!"}` : `❌ ${sym} Order Failed`,
+    msg,
+    ok ? (paper ? "info" : "warn") : "error"
+  );
+
+  // Re-enable any spinning execute buttons
+  document.querySelectorAll(".scr-exec-btn").forEach(b => {
+    b.disabled = false;
+    b.textContent = "⚡ Execute";
+  });
+});
+
+// ── Options execute function ───────────────────────────────────────────────────
+function _execScreenerOption(idx) {
+  const rows = window._scrOptRows || [];
+  const o    = rows[idx];
+  if (!o) return;
+
+  const sym  = o.sym;
+  const isPaper = true;   // always paper unless server says otherwise
+  const msg  = `Execute ${o.structure} on ${sym}?\n\nExpiry: ${o.expiry}\nMax risk: $${o.max_risk||400}\nAccount: Paper (dry_run mirrors server setting)`;
+  if (!confirm(msg)) return;
+
+  // Disable button during submission
+  const btn = document.querySelectorAll(".scr-exec-btn")[idx];
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Submitting…"; }
+
+  socket.emit("execute_screener_option", {
+    sym:       o.sym,
+    structure: o.structure,
+    expiry:    o.expiry,
+    opt_type:  o.opt_type || "Call",
+    max_risk:  o.max_risk || 400,
+  });
+}
+
+// ── Toast notification helper ─────────────────────────────────────────────────
+function _scrToast(title, body, type) {
+  // type: "info" | "warn" | "error"
+  const colors = { info: "#22c55e", warn: "#f59e0b", error: "#f43f5e" };
+  const color  = colors[type] || colors.info;
+
+  const toast = document.createElement("div");
+  toast.style.cssText = `
+    position:fixed; bottom:24px; right:24px; z-index:9999;
+    background:#1e293b; border:1px solid ${color}; border-radius:8px;
+    padding:12px 18px; max-width:480px; box-shadow:0 4px 24px rgba(0,0,0,.6);
+    font-size:13px; color:#e2e8f0; animation:fadeInUp 0.3s ease;
+  `;
+  toast.innerHTML = `
+    <div style="font-weight:700;color:${color};margin-bottom:4px">${title}</div>
+    <div style="color:#94a3b8;font-size:11px;word-break:break-all">${body}</div>
+  `;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 8000);
+}
 
 // ── Zoom / refresh (all panes) ────────────────────────────────────────────────
 function zoomIn() {
