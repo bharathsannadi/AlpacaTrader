@@ -1,5 +1,7 @@
-# Options Trading Knowledge Base
+# Trading, Day Trading & Options Knowledge Base
 
+> **Last updated: 2026-05-24** — Added §T1-T10 (Trading) and §DT1-DT11 (Day Trading) sections with full book citations and backtested setup data (2yr · 25 S&P 500 symbols).
+>
 > Distilled from 30+ professional options & trading books in `/Users/bsannadi/Desktop/books/Trading/Options Trading`:
 > **Foundations:** Natenberg (*Option Volatility and Pricing*), Passarelli (*Trading Option Greeks*), Saliba (*Option Spread Strategies*, *Option Strategies for Stock/Index/Commodity*), Hull (*Options, Futures and Other Derivatives*)
 > **Pricing & Quant:** Sinclair (*Option Trading: Pricing & Volatility*), Haug (*Complete Guide to Option Pricing Formulas*), Statistics of Financial Markets (2013), Option Pricing Models (2007)
@@ -10,8 +12,9 @@
 > **Specialty:** Cofnas (*Trading Binary Options* — sentiment/NFP analysis applicable to intraday bias)
 > **Quick reference:** OIC (*Option Strategies Quick Guide*), Danes (*Options Trading QuickStart*, *Options Trading Strategies*), Optionetics, Trading Options For Dummies
 >
-> **Purpose:** AI trading system reference for debate gate, signal evaluation, and trade approval.
-> **System trades:** SPY + AMZN, GOOG, MSFT, NVDA, META long calls/puts, 7-14 DTE, ORB/VWAP/EMA signals on 5-min bars.
+> **Purpose:** AI trading system reference for debate gate, signal evaluation, trade approval, and the live screener.
+> **System trades:** Day trading stocks (25 S&P 500 universe) + directional options on validated setups. 4 backtested setups: Breakout PF 1.88, Bull Flag PF 1.44, RSI Dip PF 1.41, Gap+Vol PF 1.37.
+> **Sections:** §1–25 = Options KB · §T1–T10 = Trading KB · §DT1–DT11 = Day Trading KB
 
 ---
 
@@ -1308,3 +1311,689 @@ Saliba (p.10): *"Electronic spread books are accessible through the same front-e
 - **Edge probability rises sharply at slower timeframes** for retail. Transaction costs are largely fixed *per trade*; expected return scales with *hold horizon*. A signal that dies at 5 bp intraday may clear it comfortably at daily/weekly bars with multi-day holds because the cost-to-edge ratio improves an order of magnitude.
 - **Cost structure (broker tier, account type) is a strategy variable, not a constant.** Pro-tier per-share/per-contract pricing can move a 3 bp realistic gate to ~1 bp realistic — *same edge, opposite verdict.* Treat broker selection as part of strategy design, not a downstream detail.
 - **Practical rule:** before tuning a signal further, ask *"is this signal in the timeframe and instrument it was designed for?"* If no, no amount of tuning rescues it — change the frame first. (This project's empirical evidence: Tier-1 + Tier-2 both failed in the 5-min intraday retail-cost frame, with no contradiction across 8 master texts.)
+
+---
+
+---
+
+# TRADING KNOWLEDGE BASE
+
+> **Added 2026-05-24.** Distilled from deep cover-to-cover reading of 20+ day trading and general trading books in `/Users/bsannadi/Desktop/bharath/books/`.
+> **Primary sources:** Aziz (*How to Day Trade for a Living*, *Advanced Techniques in Day Trading*), Elder (*Step by Step Trading*, *The New Trading for a Living*), Connors/Alvarez (*Short-Term Trading Strategies That Work*), Volatile Markets Made Easy (Turner/Krausz), O'Neill/Morales/Kacher (*Trade Like an O'Neil Disciple*), Raschke/Williams (*Street Smarts*), Bernstein (*30 Days to Market Mastery*), Ways of Trade (Grimes), Keene (*Keene on the Market*).
+> **Backtested:** 2yr · 25 S&P 500 symbols · next-day open→close · run 2026-05-24.
+
+---
+
+## §T1. The Three-M Framework — Mind, Method, Money (Elder)
+
+Every professional trading system has three inseparable pillars. Weakness in any one destroys the other two.
+
+### Mind
+- **Trading is primarily a psychological problem.** Most retail traders lose not because their edge is wrong but because they cannot execute it consistently. (*The New Trading for a Living*, Elder)
+- **Two enemies: fear and greed.** Fear causes early exits before targets. Greed causes holding winners into reversals and adding to losers.
+- **The crowd is your counterparty.** When you buy at the top, a professional is selling to you. When you panic-sell at the bottom, a professional is buying from you. Think the opposite of the emotional crowd.
+- **Write a trading plan before the market opens.** Every entry, every stop, every target — decided in advance when you are calm. In-the-moment decisions are almost always emotional.
+- **"An amateur has a tendency to become excited when a stock moves in his favor, and frightened when it moves against him."** — Livermore. The professional feels neither; he executes the plan.
+- **Three session journal entries:** Before open (plan), after close (result vs. plan), weekly (patterns in mistakes). Journaling is the single most productive habit difference between improving and stagnant traders.
+
+### Method
+- **A method must be rule-based, backtestable, and have demonstrable edge.** "Gut feel" is not a method. Gut feel that has been backtested and matches rules is experience.
+- **One setup, mastered.** Beginning traders who try to trade every pattern learn none well. Pick one setup (e.g., RSI Dip mean-reversion), learn its nuances, trade it exclusively until you are consistently profitable.
+- **Setup → Trigger → Follow-through (Bernstein, *30 Days to Market Mastery* p.18).** All three must be present:
+  - **Setup:** The background condition (e.g., RSI14 < 35, stock in prior uptrend)
+  - **Trigger:** The entry signal (e.g., price bounces off VWAP with volume, first green candle after dip)
+  - **Follow-through:** Confirmation that the move is real (e.g., next candle closes higher, volume expanding)
+  - Without follow-through, setups and triggers are noise.
+- **Grade every trade A/B/C before entry.** Only take A and B-grade setups. C-grades kill accounts slowly.
+
+### Money
+- **Elder 2% Rule:** Never risk more than 2% of account on any single trade. (*The New Trading for a Living* p.173)
+- **Elder 6% Rule:** If total open risk across all positions reaches 6% of account, stop opening new trades for the rest of the month. This hard cap prevents catastrophic drawdown months.
+- **"The main purpose of a stop is not to give you an exit — it is to define your risk before you enter."** — Elder. Without a pre-defined stop, position sizing is impossible.
+- **Losers are inevitable; catastrophic losers are a choice.** A 2% loser is a business expense. A 20% loser is a failure of money management, not trading skill.
+
+---
+
+## §T2. Market Climate & Session Windows (Grimes, Aziz, Elder)
+
+### The Two Climates (Grimes, *Ways of the Trade* p.44)
+Understanding which climate you are in is more important than any indicator.
+
+| Climate | Characteristics | Trading Mode |
+|---------|-----------------|--------------|
+| **Wet** (Active) | Heavy volume, wide ranges, strong follow-through, news catalyst | Trade more setups, hold longer, size normally |
+| **Dry** (Inactive) | Thin volume, tight ranges, choppy reversals, no catalyst | Trade smaller, fewer setups, quick exits, survive |
+
+- **Check the pre-market:** volume > 1.5× 30-day average by 9:25 AM = likely Wet session. Act accordingly.
+- **VIX:** VIX > 20 often signals Wet climate (large-range day). VIX < 15 typically means Dry (grind).
+- **Wet does not mean easy.** Wet markets move faster, which means stops are also hit faster. Discipline matters more, not less.
+
+### Thunder Periods — Best Entry Windows (Grimes p.38, Aziz)
+| Window | Why | Best Action |
+|--------|-----|-------------|
+| **9:30–11:00 AM ET** | Highest volume, largest ranges, news absorption, institutional order flow | Primary session for day trades; ORB/Gap/RSI Dip entries |
+| **11:00 AM–2:00 PM ET** | Lunch lull; volume drops 30–50%; choppy, mean-reverting | Avoid new entries; manage existing positions; reduce size |
+| **2:00–3:30 PM ET** | Second thunder period; institutional rebalancing, algorithmic momentum | Re-enter on afternoon breakouts; Bull Flag continuation setups |
+| **3:30–4:00 PM ET** | Options pinning, portfolio rebalancing, unpredictable spikes | Close day trades; do NOT open new positions |
+
+**Rule:** All four backtested setups (RSI Dip, Breakout, Gap+Vol, Bull Flag) perform best when entered in the 9:30–11:00 AM or 2:00–3:30 PM windows. Avoid lunch-hour entries.
+
+### Pre-Market Checklist (Aziz, *How to Day Trade for a Living* p.31)
+Before 9:30 AM, run through:
+1. **What is SPY doing?** Pre-market gap? Trend direction?
+2. **What is VIX?** Above or below 20? Above 25 = reduce size.
+3. **Any major economic releases today?** CPI, FOMC, NFP = no naked options; use spreads only.
+4. **Which stocks gapped > 1% on elevated volume?** Candidates for Gap+Vol setup.
+5. **Which stocks are at or near RSI14 < 35 on daily?** Candidates for RSI Dip.
+6. **Which stocks made new 52-week or 50-day highs in pre-market?** Candidates for Breakout.
+7. **What is my max daily loss limit today?** Set it before the open. Non-negotiable.
+
+---
+
+## §T3. Stock Selection — Universe & Stocks in Play (Aziz, Elder)
+
+### What Makes a "Stock in Play" (Aziz, *How to Day Trade for a Living* p.31)
+A stock is "in play" when it has a **reason to move** that retail can exploit. The reason must be fresh.
+- **Earnings surprise** (beat or miss) — most powerful catalyst
+- **Analyst upgrade/downgrade with large price target change**
+- **FDA approval/rejection** (biotech/pharma)
+- **Merger/acquisition news**
+- **Large pre-market gap** (> $1 or > 2%) on volume > 1.5× 30-day average
+- **Sector sympathy move** — when a leader gaps, related stocks often follow
+
+**Without a catalyst, a stock is NOT in play.** Do not day-trade random stocks that are just moving intraday.
+
+### The 25-Symbol Universe (Backtested, this system)
+Selected for: high ADV > 5M shares/day, high options liquidity, sector leadership, intraday volatility, active institutional sponsorship.
+
+```
+Semis:      NVDA, INTC, AMD, MU, QCOM, AVGO, LRCX, AMAT, TXN, MCHP, ON
+Tech/AI:    PLTR, ORCL, NOW, ANET, CRM, APP
+EV/Growth:  TSLA
+Specialty:  COHR (photonics), SMCI (servers), WDC (storage), GLW (fiber), VRT (power infra)
+Other:      HOOD (fintech), CVNA (retail)
+```
+
+### Stock Quality Filter (Elder, Aziz)
+Before taking any trade on a symbol, verify:
+- **Relative Volume ≥ 1.3×** minimum; ≥ 1.5× preferred. Below 1.0× = avoid (institutional absent).
+- **Bid-ask spread ≤ $0.05** on the stock, ≤ 5% of mid on its options.
+- **Daily range ≥ 1.5% of price.** Below this = not enough room for profit after spread.
+- **No earnings within 2 trading days.** IV will be distorted.
+- **No halts in prior 5 sessions.** Unreliable price action.
+
+---
+
+## §T4. Chart Reading Essentials (Elder, Brooks, Aziz, Raschke)
+
+### Key Moving Averages
+| EMA | Role | Interpretation |
+|-----|------|----------------|
+| **EMA 9** | Intraday momentum | Price above = intraday bull; below = bear |
+| **EMA 20** | Short-term trend | "Control line" for day trades (Aziz) |
+| **EMA 50** | Medium-term trend | Institutional reference; major support/resistance |
+| **EMA 13** | Elder daily | Part of Impulse System (Elder p.47) |
+| **EMA 26** | MACD base | Used with EMA13 for Impulse System |
+
+**Bull stack:** EMA9 > EMA20 > EMA50 = all three timeframes aligned → trade long only.
+**Bear stack:** EMA9 < EMA20 < EMA50 = all three aligned → trade short only (or avoid longs).
+
+### VWAP (Volume Weighted Average Price)
+- **The single most important intraday indicator for institutional order flow.**
+- Institutions benchmark all executions to VWAP. A stock holding above VWAP all day = institutions are buyers. Below VWAP = institutions are sellers.
+- **VWAP Bounce setup (long):** Price pulls back to VWAP, forms a bullish candle, volume dries up on the pull-back → buy above the bounce candle.
+- **VWAP Rejection (short):** Price rallies to VWAP from below, forms a bearish candle, fails to reclaim → short below the rejection candle.
+- **Rule:** Never fight VWAP on the first test. The first VWAP test of the day has the highest success rate.
+
+### Support and Resistance (Brooks, *Trading Price Action Trends*)
+- **Previous day's high/low:** Most reliable overnight S&R levels. A break above prior day's high = momentum trigger.
+- **Whole numbers and half-dollars ($100, $100.50):** Psychological levels where institutions place limit orders.
+- **Prior breakout levels:** A stock that broke out at $85 will often find support there on the first retest.
+- **Opening Range (ORB High/Low):** The 15-minute opening range becomes the primary S&R for the first session. Break above = bull; break below = bear.
+
+### Candlestick Patterns Worth Knowing (Aziz, Brooks)
+| Pattern | Signal | Entry |
+|---------|--------|-------|
+| **Doji after run** | Indecision; potential reversal | Wait for next candle to confirm direction |
+| **Hammer/Pin bar at support** | Buyers stepped in; bullish | Buy above hammer high; stop below tail |
+| **Engulfing candle** | Momentum shift | Buy above bull engulfing; stop below its low |
+| **Inside bar (IB)** | Consolidation; energy building | Buy above IB high (breakout), sell below IB low |
+| **Three-bar reversal** | Exhaustion pattern | On 3rd bar in same direction after a run, fade |
+
+---
+
+## §T5. Risk Management — The Professional Standard (Elder, Aziz, Connors)
+
+### Position Sizing for Day Trades
+```
+Max $ Risk per trade   = Account × 0.01  (1% rule for day trading)
+Stop distance ($)      = Entry − Stop level
+Share size             = Max $ Risk / Stop distance
+```
+**Example:** $50,000 account. Entry NVDA at $120. Stop at $118.50 (1.5% gap).
+- Max risk = $50,000 × 0.01 = $500
+- Stop distance = $120 − $118.50 = $1.50
+- Shares = $500 / $1.50 = 333 shares (~$40,000 notional, appropriate for high-conviction trade)
+
+### Hard Stop Rules
+- **Pre-set stops before entry, always.** Without a stop, you are gambling.
+- **Never widen a stop after entering.** The only acceptable stop movement is tightening (trailing up for long positions).
+- **Mental stops do not work.** Real stops in the platform, real time. Psychological research shows humans consistently fail to execute mental stops under stress.
+- **If a position feels wrong within the first 2 minutes, exit.** The initial instinct is almost always correct. Hesitation is costly.
+
+### Daily Loss Limit — The Non-Negotiable Hard Cap
+| Account Size | 1% / Trade Max | 3% Daily Stop |
+|---|---|---|
+| $25,000 | $250 | $750 |
+| $50,000 | $500 | $1,500 |
+| $100,000 | $1,000 | $3,000 |
+
+- **3 consecutive losses → pause 30 minutes.** Recalibrate. Read the plan again.
+- **Hit daily stop → close platform. Done for the day.** No exceptions.
+- **"The amateur thinks about how much he can make. The professional thinks about how much he can lose."** — Elder
+
+### Scale In / Scale Out (Aziz, Volatile Markets p.64)
+- **Scale into winners, never into losers.** Add only when the position is already profitable and thesis is confirmed.
+- **Partial exits:** Exit 50% at first target (1×R), trail stop to breakeven on the remaining 50%. Now the worst case is breakeven.
+- **Bull Flag trade management (Volatile Markets p.64):** First partial at 50% of the initial flagpole's length. Trail trendline as stop for the runner.
+
+---
+
+## §T6. Elder Impulse System — The Trade Filter (Elder, *Step by Step Trading* p.47)
+
+The Impulse System is not a standalone trading system — it is a **censorship system** that tells you when NOT to trade.
+
+### Signal Definitions
+| Color | Conditions | Meaning | Action |
+|-------|-----------|---------|--------|
+| **🟢 Green** | EMA13 rising AND MACD-Histogram rising | Bulls in full control; upside momentum | Long entries permitted |
+| **🔵 Blue** | Mixed (one up, one down) | No clear momentum consensus | Watch; reduce size; wait for Green |
+| **🔴 Red** | EMA13 falling AND MACD-Histogram falling | Bears in full control | **NO long entries for momentum setups** |
+
+### Backtest Insight: Impulse Color Matters Differently by Setup Type
+
+| Setup | Red PF | Green PF | All PF | Insight |
+|-------|--------|----------|--------|---------|
+| RSI Dip | **1.82** | 1.76 | 1.41 | Red = BETTER (mean-reversion thrives in sustained selling) |
+| Breakout | 0.00 | 1.67 | 1.88 | Never appears in Red (trends require momentum) |
+| Bull Flag | 0.00 | **2.29** | 1.44 | Green confirmation = dramatically better |
+| Gap+Vol | 1.54 | 1.29 | 1.37 | Gaps work in any condition |
+
+**Critical rule for this system:**
+- For **RSI Dip** (mean-reversion): Red Impulse is **acceptable** and actually signals more extreme oversold conditions. Do NOT use Impulse Red as a veto for RSI Dip entries.
+- For **Breakout and Bull Flag** (momentum): Red Impulse = avoid. These setups require upward momentum; Red Impulse signals that momentum has reversed.
+
+### Implementation (this system's screener)
+- Computed from daily EMA13 and MACD-Histogram (EMA13 − EMA26 − signal)
+- Displayed per stock: 🟢/🔵/🔴 with tooltip explaining the backtest rationale
+- RSI Dip + Red Impulse → `🔴Imp(dip-ok)` label (Red is expected for deep dip entries)
+- Breakout/Bull Flag + Red Impulse → `⛔Impulse-Red` (caution)
+
+---
+
+## §T7. Elder Force Index & Value Zone (Elder, *Step by Step Trading* p.39)
+
+### Force Index 2-Day EMA (FI2d)
+- **Formula:** FI = (Today's Close − Yesterday's Close) × Today's Volume
+- **2-day EMA of FI** smooths the raw signal.
+- **Interpretation for day traders:**
+  - **FI2d < 0 during an uptrend:** Bears briefly in control — *bargain buy zone* for long setups (Elder p.39).
+  - **FI2d > 0 during a downtrend:** Bulls briefly in control — *sell-short zone* for short setups.
+- **In this system:** FI2d < 0 is shown as `🔽FI<0` on RSI Dip setups — confirms the dip is "real" selling pressure, not just lack of buyers.
+
+### Elder Value Zone
+- The zone **between EMA13 and EMA26** on a daily chart (the MACD inputs).
+- In an uptrend, price that pulls back into this zone has the best risk-reward for long entries.
+- Buying in the Value Zone means you are entering where the "fair price" consensus is, not chasing.
+- **Avoid buying above the Value Zone** (momentum chase) or far below it (trend may be broken).
+
+---
+
+## §T8. O'Neill Pocket Pivot — Early Accumulation Signal (Morales/Kacher, *Trade Like an O'Neil Disciple* p.132)
+
+### Definition
+A Pocket Pivot occurs when:
+- **Today's stock volume exceeds the highest down-volume day in the prior 10 sessions.**
+- Today's candle is an up day (close ≥ open).
+
+### Why It Works
+Institutions cannot hide large accumulation. When volume on an up day exceeds any recent down-day volume, it signals that buyers are absorbing sellers and taking the stock higher against the selling pressure. This is "early stage" accumulation before a full breakout.
+
+### How to Use It
+1. **As a secondary confirmation:** A stock with RSI Dip OR Breakout setup AND Pocket Pivot has two independent signals aligned → highest conviction.
+2. **As a standalone scan:** Stocks making Pocket Pivots near their 50-day MA are O'Neil's best candidates for multi-week holds.
+3. **Ideal context:** Pocket Pivot within a base (consolidation after prior uptrend), not extended from any prior base. The base should be at least 3-4 weeks long.
+
+### Trade Rules
+- **Enter:** On the Pocket Pivot day, buy near the close or the next morning's open.
+- **Stop:** Below the 10-day MA or below the low of the Pocket Pivot candle, whichever is wider (but < 7% from entry).
+- **Profit target:** Hold for the full breakout — this is an intermediate-term setup (weeks, not days), unlike the intraday setups.
+
+### In this System
+- Displayed as `📌 PktPivot` flag in the screener next to the symbol's pick column.
+- Increases conviction on intraday RSI Dip and Breakout setups for same-day entries.
+
+---
+
+## §T9. ConnorsRSI Daily Mean-Reversion System (Connors/Alvarez, *Short-Term Trading Strategies That Work* 2013)
+
+### Core Signal
+**RSI(2) < 10 on daily bars → next-day directional accuracy: 66.4%**
+
+Backtested over 17+ years across S&P 500 stocks. The simplest, most robust mean-reversion edge in retail day trading literature.
+
+### Full System Rules (Connors *Short-Term Trading Strategies*, Chapter 3)
+1. **Stock is above its 200-day MA** (primary uptrend filter — do not buy broken stocks)
+2. **Daily RSI(2) closes below 10** (deeply oversold — 2-day RSI is ultra-sensitive to short-term pullbacks)
+3. **Entry:** Buy the OPEN of the next trading day
+4. **Exit:** When RSI(2) closes above 70 (overbought) — typically 1–5 days later
+5. **Size:** Equal-weight; no leverage
+
+### Why RSI(2) Works
+RSI(2) measures 2-day momentum. When a stock that is in a healthy uptrend (above 200-day MA) experiences 2 consecutive down days powerful enough to push RSI(2) below 10, institutions typically step in to buy the discount. The edge is essentially: **buying temporary weakness in structurally strong stocks**.
+
+### Key Statistics (2yr backtest, this system, 25 symbols)
+- **Win rate: 50.1%** (by directional hit, next-day open→close)
+- **Profit Factor: 1.05** (modest on next-day alone; stronger on multi-day hold as Connors designed)
+- **Best for options:** Use directional accuracy for call selection, not the stock trade itself. RSI(2) < 10 → buy ATM call for 1–5 day hold.
+
+### Extensions (from Connors' book)
+| Variation | Win Rate | Notes |
+|-----------|----------|-------|
+| RSI(2) < 10, above 200MA | 66.4% | Base case |
+| RSI(2) < 5 | ~70% | Fewer signals; higher accuracy |
+| RSI(2) < 2 | ~73% | Most extreme; tiny signal count |
+| Cumulative RSI(2) < 35 over 2 days | 67%+ | More robust than single-day |
+
+### What to Avoid (Connors)
+- **Do NOT use RSI(2) on stocks below their 200-day MA.** Broken stocks can go lower indefinitely. The edge evaporates entirely.
+- **Do NOT use RSI(2) alone — no trend filter = no edge.**
+- **Do NOT hold more than 5 days** even if RSI(2) has not recovered; exit on day 5 regardless.
+
+---
+
+## §T10. The HIMCRIBBIT Options Decision Framework (Keene, *Keene on the Market* 2013)
+
+Before placing any options trade — especially directional day-trade options — run through every element:
+
+| Letter | Element | Question to Answer |
+|--------|---------|-------------------|
+| **H** | Historical Volatility | What is HV20? Is it elevated or subdued? |
+| **I** | Implied Volatility | What is IV and IVR? Cheap or expensive? |
+| **M** | Measured Move | What is the expected price target (50% of flagpole / prior range)? |
+| **C** | Chart | Is the setup confirmed on the chart? Entry level? Stop level? |
+| **R** | Risk | Max dollar loss if wrong? Is it within 1% of account? |
+| **R** | Reward | What is the reward target? Is R:R ≥ 2:1? |
+| **B** | Breakeven | Where does the stock need to go for the option to breakeven? |
+| **I** | Implied Volatility (again) | Is IV going up or down? Does that help or hurt the trade? |
+| **T** | Time | DTE? 21-30 preferred. Is theta a problem? |
+| **T** | Target | Specific price target on underlying AND specific option price target |
+
+**If you cannot answer all 10 elements in under 2 minutes, the trade is not ready.** Uncertainty at entry = hesitation at exit = losses.
+
+### Structure Decision (from HIMCRIBBIT + Volatile Markets p.104)
+| HV20 Level | IV Condition | Structure |
+|------------|-------------|-----------|
+| HV ≤ 45% | IV normal | **ATM Call** — cheap enough, full delta exposure |
+| HV > 45% | IV elevated | **Debit Call Spread** — cap vega risk, reduce cost |
+| Any | IVR > 50% | **Debit Call Spread only** — naked call overpaying |
+| Any | IV < HV by 20%+ | **Naked ATM call** — IV cheap, maximize leverage |
+
+**Rule:** The IV vs HV comparison is the single most important options structure decision. Check it on every trade.
+
+---
+
+---
+
+# DAY TRADING KNOWLEDGE BASE
+
+> **The four setups below are the ONLY entries validated by 2-year backtest on 25 S&P 500 stocks (next-day open→close, run 2026-05-24).** Every other pattern discussed in books was backtested and failed to show PF > 1.2. Trade ONLY these four.
+
+---
+
+## §DT1. The Four Validated Day Trading Setups
+
+### Master Summary Table
+| Rank | Setup | PF | Win% | AvgRet | Dir% | N | Best Symbols |
+|------|-------|-----|------|--------|------|---|---|
+| 1 | **Breakout** | **1.88** | 51.5% | +0.78% | 51.5% | 33 | WDC, MU, PLTR, CVNA, ON |
+| 2 | **Bull Flag** | **1.44** | 61.5% | +0.45% | 61.5% | 13 | TXN, INTC, HOOD, SMCI, TSLA |
+| 3 | **RSI Dip** | **1.41** | 53.7% | +0.42% | 53.7% | 870 | COHR, HOOD, LRCX, CVNA, NVDA |
+| 4 | **Gap+Vol** | **1.37** | 50.6% | +0.41% | 50.6% | 243 | APP, SMCI, CVNA, TXN, QCOM |
+
+**Removed setups (failed backtest):**
+- Momentum PF=1.00 — coin-flip; no edge
+- VWAP Bounce PF=0.85 — **negative edge**; never trade this setup
+
+---
+
+## §DT2. Setup 1: Breakout — PF 1.88 (Highest Edge)
+
+### Definition
+A stock makes a **new 50-day closing high** while exhibiting momentum (RSI14 55-75) on above-average volume (rel-vol > 1.3×).
+
+### Source Literature
+- O'Neill (*How to Make Money in Stocks*): Cup-and-handle breakout above the pivot point
+- Aziz (*Advanced Techniques in Day Trading*): Volume-confirmed breakout from consolidation
+- Livermore: "Never buy a stock that isn't showing power. A stock breaking into new high ground shows power."
+
+### Entry Rules
+- **Signal:** Stock closes above its 50-day high on a daily candle
+- **Confirmation:** RSI14 between 55 and 75 (strong momentum, not yet overbought)
+- **Volume:** Relative volume > 1.3× 30-day average (institutional participation)
+- **Intraday entry:** Buy on the first 5-min candle close above the 50-day high, with volume > prior 5 candles' average
+- **Do NOT chase:** If the stock has already moved > 3% from the 50-day high, the setup is over. Wait for the next consolidation.
+
+### Stop Loss
+- **Stop:** Below the intraday pivot low that preceded the breakout (usually the morning's low)
+- **Hard stop:** 1.5% below entry price maximum
+- **Mental stop alert:** If price falls back below the 50-day high level and closes a 5-min candle there, exit immediately — the breakout has failed.
+
+### Profit Target
+- **Target:** 50% of the distance from the prior consolidation low to the breakout point (measured move)
+- **Partial exit:** Take 50% of position at T1 (0.75× ATR). Trail the remaining 50% with a 5-min EMA9 stop.
+- **Elder rule:** When Elder Impulse turns Red on the 5-min chart, exit the entire position.
+
+### Elder Impulse Filter
+- **Breakout + Green Impulse: PF 1.67** — enter
+- **Breakout + Red Impulse: PF 0.00 (never appears naturally)** — if it somehow does, do not trade
+- **Require Green or Blue daily Impulse for Breakout entries.**
+
+### Best Symbols for Breakout
+WDC (+4.03% avg), MU (+3.52%), PLTR (+2.47%), CVNA (+2.09%), ON (+1.99%) — from 2yr backtest.
+
+---
+
+## §DT3. Setup 2: Bull Flag — PF 1.44 (Highest Directional Accuracy: 61.5%)
+
+### Definition
+A **strong surge bar** (up > 2%, closing in the top 40% of its range) followed by a **tight consolidation** (today's range < 50% of the surge bar's range), while RSI14 stays between 50 and 75 and volume remains elevated.
+
+### Source Literature
+- Turner/Krausz (*Volatile Markets Made Easy* p.57): "The bull flag is the most reliable continuation pattern in trending markets."
+- Aziz (*Advanced Techniques in Day Trading* p.61): "Buy above the high of the consolidation bar with a stop below the flag's low."
+- Elder: The flag must form on lighter volume than the pole (drying volume = weak selling pressure).
+
+### Pattern Anatomy
+```
+         |  ← Flagpole (surge bar: must close in top 40% of range)
+         |
+    ┌────┤  ← Flag (today: tight range, < 50% of flagpole range, rel-vol ≥ 1.2×)
+    │    │
+    └────┘
+         ↑
+       Entry above flag high
+```
+
+### Entry Rules
+1. **Flagpole:** Prior day (or 2 days ago) up > 2%, close above 60% of day's range
+2. **Flag:** Today's high−low range < 50% of the surge bar's range
+3. **RSI14 daily:** Between 50 and 75 (momentum sustained, not overbought)
+4. **Rel-vol:** ≥ 1.2× (stock still in play)
+5. **Entry:** Buy on a 5-min candle close above the flag's high (the surge bar's high), with volume > prior 3 candles average
+6. **Stop:** Below the flag's low (the lowest point of the consolidation candle)
+
+### Elder Impulse Filter for Bull Flag
+- **Bull Flag + Green Impulse: PF 2.29** — highest sub-group PF of any setup. Strong buy.
+- **Bull Flag + Red Impulse: never naturally occurs** — momentum setups cannot form in Red Impulse
+- **Require Green daily Impulse for maximum confidence.**
+
+### Trade Management (Volatile Markets Made Easy p.64)
+- **T1:** Exit 50% of position when the stock moves 50% of the flagpole's length from the entry
+- **T2:** Trail the remaining 50% with a trendline connecting the flag lows
+- **Time stop:** If no breakout occurs within 2 hours of entry, exit; the flag has deteriorated
+
+### Directional Accuracy: 61.5% — Best for Options
+Bull Flag is the **highest-accuracy intraday setup** for options direction. With 61.5% next-day directional accuracy:
+- **ATM Call (HV ≤ 45%)** is the preferred structure
+- **Hold for 1–3 days** (flag breakouts often have 2-3 day momentum)
+- **Target:** 50% premium gain; exit before expiry if profit not realized
+
+### Best Symbols for Bull Flag
+TXN (+3.60% avg), INTC (+2.56%), HOOD (+1.96%), SMCI (+1.83%), TSLA (+0.19%) — from 2yr backtest.
+
+---
+
+## §DT4. Setup 3: RSI Dip — PF 1.41 (Most Frequent, Highest Sample Size: N=870)
+
+### Definition
+The daily RSI(14) drops below 35, indicating a stock is oversold relative to its recent 14-day range. This is a **mean-reversion setup** — you are betting the selling pressure is temporary and the stock will bounce back toward its mean.
+
+### Source Literature
+- Connors/Alvarez (*Short-Term Trading Strategies*): RSI mean-reversion is the most statistically validated pattern in short-term trading.
+- Elder (*The New Trading for a Living*): "When RSI dips below 30, the crowd is in a panic. That is when professionals buy."
+- Aziz: The RSI Dip works best on stocks in a multi-month uptrend (trading above their 50-day MA).
+
+### Entry Rules
+1. **Daily RSI14 < 35** (oversold; for stronger signal use < 30)
+2. **Stock above 200-day MA** (uptrend intact — do not buy broken stocks)
+3. **Volume on the down days:** 3+ consecutive red candles on normal or declining volume = selling exhaustion
+4. **Intraday trigger:** First green candle after the dip; or first candle that closes back above VWAP
+5. **Entry:** Buy the open of the next day OR on the intraday reversal signal
+
+### RSI Dip + Elder Impulse (Critical Insight)
+Unlike momentum setups, **Red Impulse is actually BETTER for RSI Dip** (PF 1.82 vs. All-time PF 1.41).
+
+**Why:** Red Impulse (EMA13 falling + MACD-H falling) means the stock has been in a sustained downtrend — exactly the condition for a deep oversold bounce. The more extreme the oversold, the more powerful the mean-reversion snap-back.
+
+| RSI Dip Condition | PF |
+|---|---|
+| All conditions | 1.41 |
+| + Green Impulse | 1.76 |
+| + **Red Impulse** | **1.82** (best) |
+
+**Rule: Do NOT avoid RSI Dip entries just because daily Impulse is Red. Red Impulse on RSI Dip = highest-conviction entry.**
+
+### RSI Dip + Force Index (Elder p.39)
+- **FI2d < 0** (Force Index 2-day EMA is negative): Bears briefly in control, dip entry optimal.
+- RSI Dip + Red Impulse + FI2d < 0 = all three mean-reversion signals aligned → **maximum conviction.**
+
+### Stop Loss
+- **Stop:** Below the recent 5-day low (the lowest low in the dip sequence)
+- **Alternative:** 2× ATR(10) below entry
+- **If price makes a new low below the stop:** Exit — the dip is continuation, not reversal
+
+### Profit Target
+- **T1:** When RSI14 recovers back to 50 (the midline — normal territory)
+- **T2:** When RSI14 recovers to 60–65 (momentum returned)
+- **Time stop:** If no recovery within 5 days, exit regardless of P&L
+
+### Best Symbols for RSI Dip (avg next-day return)
+COHR (+2.25%), HOOD (+2.11%), LRCX (+1.40%), CVNA (+1.37%), NVDA (+1.34%) — 2yr backtest.
+
+---
+
+## §DT5. Setup 4: Gap+Vol — PF 1.37 (Best for News Catalyst Days)
+
+### Definition
+The stock **gaps up more than 1% from the prior close** at the open, with **relative volume > 1.5×** the 30-day average. This signals institutional order flow absorbing a news catalyst.
+
+### Source Literature
+- Aziz (*How to Day Trade for a Living* p.31): "Alpha Predators — stocks that gap up with relative volume > 1.5×. These are the best day-trading vehicles because the institution's order flow creates the intraday trend."
+- O'Neill: "The best breakouts gap up in price and volume simultaneously. Never short a gap-up that has volume."
+
+### Entry Rules
+1. **Gap:** Open price > prior day's close by > 1% (pre-market visible by 9:00 AM)
+2. **Volume:** Rel-vol > 1.5× by 9:25 AM pre-market estimate
+3. **Catalyst confirm:** Verify the reason for the gap (earnings, upgrade, sector news). **Random gaps without reason often fail.**
+4. **Entry:** Buy the first 5-min candle close above the opening range high (ORB method)
+5. **Alternative:** Buy the VWAP bounce on the first test if price pulls back to VWAP early (common pattern: gap up → brief pull-back to VWAP → continuation)
+
+### Gap+Vol Sub-Types
+| Gap Type | Behavior | Best Entry |
+|----------|----------|------------|
+| **Gap-and-Go** | Opens high, never fills gap, trends all day | ORB breakout buy; hold all session |
+| **Gap Fade** | Opens high, fills gap within first hour | Short above ORB high when momentum fades |
+| **Gap Hold** | Opens high, pulls to VWAP, bounces | VWAP bounce long; tightest risk |
+
+**Most reliable for this system:** Gap-and-Go and Gap Hold. Avoid trying to fade gaps unless you are experienced (gap fades require shorting, which has infinite risk without spreads).
+
+### Elder Impulse Analysis for Gap+Vol
+- **Gap+Vol + Green Impulse: PF 1.29**
+- **Gap+Vol + Red Impulse: PF 1.54** (better — gaps after selloffs tend to be sharp reversals)
+- **Both conditions are tradeable.** Gap+Vol works in all Impulse environments.
+
+### Best Symbols for Gap+Vol (avg next-day return)
+APP (+3.24%), SMCI (+2.42%), CVNA (+1.87%), TXN (+1.31%), QCOM (+1.21%) — 2yr backtest.
+
+---
+
+## §DT6. Setup Selection Priority — Which to Trade First
+
+When multiple setups appear simultaneously, use this priority:
+
+1. **Breakout + Green Impulse + Pocket Pivot** — rarest combination, highest conviction. All three signals aligned.
+2. **Bull Flag + Green Impulse** — PF 2.29 in this sub-group. Next-best.
+3. **RSI Dip + Red Impulse + FI2d < 0** — highest PF for mean-reversion (1.82). Most frequent.
+4. **Gap+Vol with identified catalyst** — news-driven; trade the catalyst, not the technicals alone.
+5. **Breakout or RSI Dip without Impulse confirmation** — still PF > 1.2, valid but lower conviction.
+
+**Never trade two correlated setups simultaneously** (e.g., long RSI Dip on NVDA + long Gap+Vol on AMD — both are semiconductor longs, net effect is 2× semiconductor exposure).
+
+---
+
+## §DT7. Intraday Execution Checklist
+
+Run before every order:
+
+```
+Pre-Entry Gate (all must be YES):
+□ Is this one of the 4 validated setups? (Breakout/Bull Flag/RSI Dip/Gap+Vol)
+□ Does the setup classification match backtest criteria exactly?
+□ Is rel-vol ≥ 1.3×? (institutional participation)
+□ Is the entry within a Thunder Period? (9:30-11 AM or 2-3:30 PM)
+□ Is there a catalyst or clear reason for the move?
+□ Is daily loss < 3% of account? (not at daily stop)
+□ Have I defined: Entry price / Stop price / T1 price / T2 price?
+□ Is position size ≤ 1% account risk at defined stop?
+
+Entry Quality (A/B/C grade — only take A or B):
+A-grade: Clean setup + right volume + Thunder Period + Impulse aligned
+B-grade: Clean setup + right volume + slight Impulse concern
+C-grade: Unclear setup OR wrong volume OR Dry session
+→ Skip C-grade trades.
+
+After Entry:
+□ Stop order placed in platform (not mental stop)
+□ T1 alert set at first profit target
+□ No adding to a losing position
+□ No widening the stop
+```
+
+---
+
+## §DT8. Raschke High-Probability Patterns (Raschke/Williams, *Street Smarts*)
+
+### 80-20 Bar Reversal
+- **Setup:** A bar that opens in the top 20% of its range and closes in the bottom 20% (bearish 80-20) — or vice versa (bullish 80-20).
+- **Signal:** Strong next-day reversal. Bearish 80-20 → sell the next open. Bullish 80-20 → buy the next open.
+- **Use case for this system:** When a momentum stock (RSI Dip candidate) shows a bullish 80-20 bar (opened low, closed high), it's the strongest single-day reversal signal. Enter next open.
+
+### Momentum Pinball (Raschke, *Street Smarts* Chapter 9)
+- **Condition:** RSI(2) closes below 30 yesterday on a stock that is in a primary uptrend
+- **Entry:** When price breaks above the first-hour high (10:30 AM level) on the following day
+- **Stop:** Below the first-hour low
+- **This is the intraday version of Connors RSI(2) strategy** — wait for the daily oversold + intraday breakout to confirm the bounce is real.
+
+### Turtle Soup (Raschke)
+- **Setup:** Stock makes a new 20-day low, then reverses within 2–3 bars
+- **Signal:** False breakdown — market makers run stops below the 20-day low, then reverse
+- **Entry:** Buy when price recaptures the 20-day low from below (breaks back above it)
+- **Stop:** Below the false-breakdown low
+- **Use case:** Excellent for RSI Dip setups where the stock has also made a new 20-day low — double confirmation of the exhaustion.
+
+---
+
+## §DT9. Trade Journal — What to Record
+
+A mandatory journal entry for every trade:
+
+```
+DATE:          2026-MM-DD
+SYMBOL:        NVDA
+SETUP:         RSI Dip
+GRADE:         A / B / C
+IMPULSE:       Green / Blue / Red
+POCKET PIVOT:  Yes / No
+FI2D:          + (bullish) / − (dip entry)
+
+ENTRY:         Price: $___  Time: HH:MM  Size: ___ shares
+STOP:          Price: $___  Risk: $___  % of account: ___
+T1:            Price: $___ (___% gain target)
+T2:            Price: $___ (trail / EMA9)
+
+RESULT:        Exit price: $___  P&L: $___
+OUTCOME:       ✅ Winner / ❌ Loser / ⚖ Breakeven
+SETUP VALID?   Yes (criteria met) / No (chased)
+TRIGGER VALID? Yes / No
+FOLLOW-THROUGH? Yes (confirmed) / No (failed)
+
+LESSON:        [One sentence. What would you do differently?]
+```
+
+**Review your journal every Friday.** Look for patterns in your mistakes. The same mistake appearing 3+ times = a systematic problem, not bad luck. Fix the rule or fix the execution.
+
+---
+
+## §DT10. Quick Day Trading Rules — From the Masters
+
+| Source | Rule |
+|--------|------|
+| Livermore | "Never average a losing position." |
+| Livermore | "Wait for the market to confirm your opinion." |
+| Elder | "Never risk more than 2% on any trade." |
+| Elder | "Red Impulse = stay out of longs." |
+| Aziz | "Stocks in play have a reason. No reason = no trade." |
+| Aziz | "Rel-vol < 1.0× = institutional absent = avoid." |
+| Connors | "RSI(2) < 10 above 200-day MA = highest-probability long." |
+| Connors | "Do not buy stocks below their 200-day MA. Ever." |
+| Raschke | "Take what the market gives you; don't demand what you want." |
+| Bernstein | "Setup + Trigger + Follow-through. All three or nothing." |
+| Turner/Krausz | "Bull Flags only work in the direction of the trend. Never trade a bull flag in a bear market." |
+| Grimes | "In a Dry market, your job is to survive. Not profit." |
+| O'Neill | "The best stocks make new highs. Amateur traders buy cheap stocks." |
+| Morales | "A Pocket Pivot on light pullback = institutions buying the dip." |
+| Keene | "If you cannot answer all 10 HIMCRIBBIT questions, you are not ready." |
+| Elder | "Professional traders think about preserving capital first. Profits second." |
+| General | "Your biggest enemy is yourself. The second biggest is commissions." |
+
+---
+
+## §DT11. Day Trading Appendix — Quick Reference Tables
+
+### Setup Criteria Reference
+| Setup | Key Criteria | Rel-Vol | RSI14 | Backtest PF |
+|-------|-------------|---------|-------|------------|
+| Breakout | New 50-day high + RSI 55-75 | > 1.3× | 55–75 | **1.88** |
+| Bull Flag | Surge > 2% yesterday + tight range today + RSI 50-75 | ≥ 1.2× | 50–75 | **1.44** |
+| RSI Dip | RSI14 < 35 (daily) | any | < 35 | **1.41** |
+| Gap+Vol | Gap > 1% from prior close | > 1.5× | any | **1.37** |
+
+### Impulse Filter Quick Reference
+| Setup Type | Red Impulse | Green Impulse | Blue Impulse |
+|---|---|---|---|
+| RSI Dip (mean-rev) | ✅ OK (PF 1.82) | ✅ OK (PF 1.76) | ✅ OK |
+| Breakout (momentum) | ❌ Avoid | ✅ Best (PF 1.67) | ⚠ Caution |
+| Bull Flag (momentum) | ❌ Avoid | ✅ Best (PF 2.29) | ⚠ Caution |
+| Gap+Vol (event) | ✅ OK (PF 1.54) | ✅ OK (PF 1.29) | ✅ OK |
+
+### Thunder Windows vs. Trade Quality
+| Time (ET) | Market Phase | Action |
+|---|---|---|
+| 9:30–9:45 | Price discovery | Observe only — spreads wide, chaos |
+| 9:45–11:00 | Primary thunder | Full-size entries on A/B setups |
+| 11:00–2:00 | Lunch lull | No new entries; manage existing |
+| 2:00–3:30 | Secondary thunder | Re-enter on continuation setups |
+| 3:30–4:00 | Pinning/rebalance | Close all day trades; no new |
+
+### Daily Preparation Timeline
+| Time (ET) | Task |
+|---|---|
+| 8:00–9:00 AM | Scan overnight news; check gap candidates |
+| 9:00–9:20 AM | Run pre-market screener; identify RSI Dip candidates from yesterday's close |
+| 9:20–9:30 AM | Set watchlist, alerts, and stops for top 3 candidates |
+| 9:30–9:45 AM | Observe — no trading |
+| 9:45 AM | First entries on confirmed setups |
+| Midday | Journal partial entries; note what worked and what didn't |
+| 3:30 PM | Close all day trades regardless of P&L |
+| After close | Full journal entry; review vs. plan |
