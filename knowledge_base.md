@@ -1,6 +1,6 @@
 # Trading, Day Trading & Options Knowledge Base
 
-> **Last updated: 2026-05-25** — Added §T17-T21 (candlesticks, Weis/Wyckoff, Minervini SEPA, 25 Rules, Sinclair volatility edge) and §DT14-DT16 (Jeff Cooper intraday, Wyckoff applied intraday, Bulkowski/Bandy risk rules). 300 PDFs catalogued, ~40 books deeply read.
+> **Last updated: 2026-05-25** — Added §T17-T27 and §DT14-DT17: Candlesticks, Weis/Wyckoff, Minervini SEPA, 25 Rules, Sinclair vol edge, Cooper intraday, Wyckoff intraday, Bulkowski/Bandy risk; Velez Pristine 4-Stage, 18 Champions cross-trader rules, Person Pivot P3T, Rhoads VIX derivatives, Heitkoetter/McDowell day trading, Murphy intermarket, McMillan covered calls & collars. 300 PDFs catalogued, ~50 books deeply read.
 >
 > Distilled from 300+ professional trading books in `/Users/bsannadi/Desktop/bharath/books/Trading/`:
 > **Foundations:** Natenberg (*Option Volatility and Pricing*), Passarelli (*Trading Option Greeks*), Saliba (*Option Spread Strategies*, *Option Strategies for Stock/Index/Commodity*), Hull (*Options, Futures and Other Derivatives*)
@@ -2702,4 +2702,351 @@ These rules are from a 20-year CBOT pit trader. Distilled to what applies to our
 - **Money Management — Fixed Fractional (Bandy):** Risk fixed 1% of account per trade. Position size = (Account × 0.01) ÷ (Entry − Stop). Never risk more than 2% on any single trade. If account drops 10% from peak → reduce size 50%. If drops 20% → stop trading, reassess.
 - **Daily Loss Limit (Bandy + Zalesky):** Set hard daily loss limit of 2–3% of account. If hit, stop trading for the day. No exceptions. This prevents catastrophic sequences. In the system: if the daily_trader.py or screener_executor.py has 3 consecutive losses → pause automated entries, require manual approval.
 - **Portfolio Correlation Risk (Bandy p.72):** Trading 25 S&P 500 stocks simultaneously = high correlation. When all 25 stocks held same direction, treat as 1 large position for risk. Max total portfolio risk at any time: 5–6% of account (not 25 × 2%).
+
+
+---
+
+## §T22 — Pristine Method: 4-Stage Cycle & Buy/Sell Setups — Oliver Velez (2001)
+*Distilled from Velez "Swing Trading Tactics" (Pristine Capital Holdings 2001) — directly read.*
+
+**Core concept: The Stock Atom (4-Stage Cycle).** Every stock repeats: Stage 1 (base/basing) → Stage 2 (uptrend — BUY AREA) → Stage 3 (top/distribution) → Stage 4 (downtrend — SHORT AREA). The entire life of a stock is this cycle repeated. A trader's only job: know what stage you are in and act accordingly.
+
+**Multi-timeframe stage matching (the master key):**
+- Buy when **Minor Stage 2 matches Major Stage 2** — highest-confidence long entry.
+- Short when **Minor Stage 4 matches Major Stage 4** — highest-confidence short entry.
+- In Stage 1 and Stage 3 (transitions), both longs and shorts are acceptable if the minor stage matches.
+- "If you wish to know the road, inquire of those who have traveled it." — use higher timeframe to confirm setup.
+
+**Pristine Buy Setup (PBS) — 3 criteria required:**
+1. 3+ consecutive lower highs (major emphasis on the highs)
+2. 3+ consecutive lower lows
+3. 3+ consecutive dark (red) bars — signal: Minor Stage 4 pullback forming within Major Stage 2
+
+**Pristine Buy Action:**
+- Entry: Buy when stock trades above prior day's high (preferred) OR above first 30-min high if prior day's high is too extended
+- Stop: $0.05–$0.10 below the entry day's low, or the prior day's low, whichever is lower
+- Trail: move stop under each prior low bar after 2 complete bars until price objective met, reversal bar forms, or gap-up occurs
+- Tools: Daily candlestick chart + 20ma & 40ma + CCI(5) buy signal as trigger
+
+**Pristine Short Setup (PSS) — mirror image:**
+1. 3+ consecutive higher lows
+2. 3+ consecutive higher highs
+3. 3+ consecutive green (up) bars — Minor Stage 2 bounce within Major Stage 4
+- Entry: Short below prior day's low or below first 30-min low
+- Stop: $0.05–$0.10 above entry day's high or prior day's high
+
+**3-to-5 bar rule:** Bulls and Bears cannot consistently win more than 5 battles in a row. After 3–5 consecutive bars in one direction, the other side typically takes control. More than 5 consecutive bars in one direction = potential climax (catastrophic reversal risk). Application: 3 bars up = think sell / 3 bars down = think buy.
+
+**CCI(5) Signals:**
+- Anticipatory Buy: CCI(5) crosses above −100 from oversold
+- Confirmed Buy: CCI(5) crosses above +100 from below
+- Sell signals = mirror image. Only look for buy signals in uptrends; sell signals in downtrends.
+
+**Time frame assignments (Pristine):**
+- Wealth Building: Weekly chart (Core Trading, weeks-months) + Daily chart (Swing Trading, 2–10 days)
+- Income Producing: Hourly chart (Guerilla Trading, 1–2 days) + 5/15-min chart (Micro-Trading, intraday)
+- Always combine at least 2 time frames. Market player using more than one time frame achieves higher accuracy.
+
+**Application to our setups:**
+- Breakout = Major Stage 2 emerging (price above 50d high) — confirm Minor Stage 2 on 60-min (3+ higher lows, higher highs)
+- Bull Flag = Major Stage 2 with Minor Stage 1 forming (3-bar pullback on declining volume) → buy on first Minor Stage 2 bar
+- RSI Dip = Major Stage 2 with Minor Stage 4 pullback → PBS pattern → buy above prior day high when RSI2 < 10
+
+---
+
+## §T23 — Cross-Trader Rules: 18 Trading Champions (FWN Interviews, 1996)
+*Distilled from "18 Trading Champions Share Their Keys To Top Trading Profits" (1996) — directly read.*
+
+**George Angell (S&P 500 day trader):** Volatility + Liquidity are the two non-negotiables for any market. Without both, do not trade. "Every day I go in without an opinion. Let the market tell me where it wants to go — opinions are what get you in trouble." Uses "action points" rather than mechanical stops: at the point, will get out but waits for the bounce first. Specialists must know ONE market deeply; don't trade everything.
+
+**Lee Gettess (risk control specialist):** "The only thing a trader can control is risk." If you say 'I won't lose more than $1,000 on this trade' there may be gaps and slippage, but you can be pretty sure you won't lose more. "My whole focus is: control the risk — that's what all the top traders do." Don't place stops before news releases (markets go nuts briefly); monitor instead. "I can take a $1,500 loss and be absolutely wrong and congratulate myself for doing the right thing."
+
+**Tom DeMark (market timing 100%):** "Market timing is anti-trend, contrarian, pattern recognition and price exhaustion — 100%." His indicators are totally objective, mechanical, and against-the-grain of most technicians. "Money management and discipline are more important than the system." "Read a lot, test a lot, don't trade until you've done your homework."
+
+**George Lane (stochastics inventor, 47 years trading):** "Momentum always changes direction before price." Trades 3-min, 15-min, and 30-min charts using stochastics + volume + trendlines. "That's the secret to making money: control the size of your losses." Never trades without a stop-loss. Sticks only to liquid markets.
+
+**Gary Wagner (candlestick sentiment):** Candlesticks measure psychology — the interplay of open vs close within each bar shows who is winning (Japanese view) vs Western view of close vs prior close. Japanese view is more accurate for traders.
+
+**Ben Warwick (event trading):** Focus on how the market REACTS to news, not the news itself. If market rallies on a number and closes in top 20% of range = buy signal. If fundamentally bullish news but market closes in bottom 20% of range = sell signal. Getting in immediately after news = 50/50 game. "You've got to identify an inefficiency" to make money consistently.
+
+**Larry Williams (%R inventor):** "Markets top by closing on their highs and market bottoms by closing on their bottoms — markets top because they run out of buyers. %R enables you to see that." Commitments of Traders (COT) report: "When commercials go from net long to net short — that's usually a good buy signal." Commercials accumulate and distribute, they don't pick tops and bottoms. "Cut your losses and let your profits run. By and large, having targets doesn't work — you miss the one big move you need."
+
+**Universal rules across all 18 traders:**
+1. Discipline and risk control > system quality. Every champion emphasized this.
+2. Specialize in 1–2 liquid markets. Don't spread attention across 20 markets.
+3. Use mechanical systems to take difficult trades you wouldn't take on gut instinct alone.
+4. Have a clearly defined max-loss per trade BEFORE entering. Not after.
+5. The first loss is usually the best loss. Don't hold losing trades hoping for recovery.
+6. Education is cheap compared to the cost of experience. Paper trade first.
+7. Every market has different characteristics. Know your market well.
+8. Volume + volatility determine profit potential. Low-volume slow markets = skip.
+
+---
+
+## §T24 — Pivot Point Analysis & P3T Method — John Person (2004)
+*Distilled from Person "A Complete Guide to Technical Trading Tactics" (Wiley 2004) — directly read.*
+
+**Pivot Point Formula (the floor trader's weapon):**
+```
+P  = (H + L + C) / 3        — the Pivot
+R1 = (P × 2) − L            — first resistance
+R2 = (P + H) − L            — second resistance
+S1 = (P × 2) − H            — first support
+S2 = (P − H) + L            — second support
+```
+- This is a LEADING indicator (predicts next session's range) vs lagging indicators (MA, MACD based on past data).
+- Only take a trade off the FIRST test of S1 or R1. "If you go to the well one too many times, the well runs dry." Once the level is identified and widely tested, it loses its edge.
+- Calculate daily, weekly, AND monthly pivots. Multi-timeframe pivot convergence = very high-confidence support/resistance.
+
+**P3T — Person's Pivot Point Trade Signal (the synthesis method):**
+P3T combines three layers: (1) Pivot Point level as price target/support/resistance + (2) Japanese Candlestick reversal pattern at that level + (3) Stochastics confirmation (oversold bounce at support, overbought at resistance). All three must align for a P3T entry signal.
+
+**Verify-Verify-Verify approach:** "Lining up the stars" — a high-probability entry requires confirmation from:
+- Pivot point S1/R1 as a structural level
+- A candlestick reversal at that level (harami, doji, shooting star, morning star)
+- Technical indicator confirmation (stochastics, CCI, or MACD)
+- Volume expansion on the reversal bar
+Never enter on just one signal. Wait for 2–3 overlapping confirms.
+
+**Day-trading entry rules (from Person):**
+- Buy at S1 when stochastics are oversold + a bullish candlestick (hammer, harami) forms
+- Short at R1 when stochastics are overbought + a bearish candlestick (shooting star, doji) forms
+- Opening Range Breakout: if price breaks above the first 30-min range high on expanding volume = long entry; stop below range low
+- Oops Signal: if price gaps higher but then immediately trades below the prior day's close = sell signal (gap exhaustion)
+
+**Candlestick + Pivot confluence (key combinations):**
+- Hammer at S1 + stochastics < 20 → high-probability bounce long
+- Shooting star at R1 + stochastics > 80 → high-probability reversal short
+- Bullish harami at weekly pivot support → 2-day swing long
+- Dark Cloud Cover at monthly R1 → position short
+
+**Market Sentiment tools (Person ch.9):**
+- Put/Call ratio (contrarian): elevated P/C ratio → sentiment bearishly extreme → bullish for market
+- VIX elevated → fear extreme → contrarian bullish signal
+- Commitments of Traders (COT): commercial net long = bullish; commercial net short = bearish
+- Market Vane Bullish Consensus: >75% bullish = contrarian top signal; <25% = contrarian bottom
+
+**Mental game rules (Person ch.11):** Set daily loss limits as a hard rule. Keep a trading diary after every session (entry, exit, reason, emotion, grade). Do not trade when sick, tired, or emotionally compromised. Build confidence slowly: 1 contract → 2 contracts → scale up only after consistent profitability.
+
+**Application to our screener:** Before entering any screener signal, check:
+1. Is today's price near a daily S1/R1 pivot? (favorable entry = near S1 for longs, near R1 for shorts)
+2. Does the 5-min/60-min candlestick show a reversal pattern at that level?
+3. Is RSI(14) or stochastics showing oversold for longs / overbought for shorts?
+→ If all 3 align = highest conviction entry. If only 1 = wait or skip.
+
+---
+
+## §T25 — VIX Derivatives Trading — Russell Rhoads (2011)
+*Distilled from Rhoads "Trading VIX Derivatives" (Wiley 2011) — directly read.*
+
+**VIX daily move rule (practitioner shortcut):** VIX ÷ 16 = expected daily % move for S&P 500.
+- VIX = 16 → 1% daily move expected
+- VIX = 32 → 2% daily move expected
+- VIX = 48 → 3% daily move expected
+- VIX = 64+ (2008 crisis territory) → 4%+ daily moves expected
+
+**VIX 30-day move formula:** VIX ÷ √12 = expected 30-day % move for S&P 500.
+- VIX = 20 → expected 30-day move ≈ 5.77%
+- VIX = 40 → expected 30-day move ≈ 11.55%
+
+**VIX inverse relationship:** VIX rises when S&P 500 falls. Demand for put options (portfolio protection) drives up implied volatility → VIX rises. When markets panic, protection demand spikes → VIX spikes. This is structural, not random.
+
+**VIX as a filter for MA crossover systems (Rhoads ch.9 research):**
+- 20-day MA alone: $95.65 profit per unit
+- 20-day MA + VIX moving average filter: $140.22 profit (+47% improvement)
+- Adding a VIX overlay to standard technical systems improves results significantly
+- Rule: when VIX is above its own moving average AND market is below its MA = higher risk environment → reduce position size
+
+**VIX term structure:**
+- **Contango (normal market):** VIX futures curve slopes upward — each further month has higher VIX → calm market, sellers of volatility earn the roll
+- **Backwardation (stress event):** VIX futures curve slopes downward — near-term VIX > forward VIX → acute panic, temporary spike expected to revert
+- Contango = structural edge for VIX sellers (iron condors, credit spreads on VXX puts)
+- Backwardation → avoid selling volatility; buy protection instead
+
+**VXX (iPath S&P 500 VIX Short-Term Futures ETN):**
+- VXX tracks a rolling long in the 1st + 2nd month VIX futures, rebalanced daily
+- In contango environments, VXX bleeds value due to "roll cost" (buying expensive near-term, selling cheap at expiration)
+- VXX is NOT a proxy for the VIX index — in calm markets it systematically decays
+- Long VXX = hedge / speculation on volatility spike. Short VXX (via puts or inverse ETNs) = structural edge in calm markets but catastrophic if VIX spikes
+
+**VIX Futures settlement facts (critical for traders):**
+- VIX futures expire on WEDNESDAY (not Friday like equity options)
+- Last day of trading = Tuesday; Wednesday morning settlement
+- The specific Wednesday is based on standard option expiration of the following month — varies month to month
+- Always verify exact expiration date; do not assume it's the 3rd Wednesday
+
+**VIX options key characteristics:**
+- VIX options are priced off VIX FUTURES (not the VIX index itself)
+- This means VIX options have their own pricing dynamics independent of where VIX is today
+- VIX 25-delta put (below where VIX futures are priced) does NOT behave like SPX 25-delta put
+
+**Practical VIX level decision table:**
+| VIX Level | Market Regime | Action for Our Setups |
+|-----------|---------------|-----------------------|
+| <15 | Complacency / low volatility | Full size, Breakout/Bull Flag preferred |
+| 15–20 | Normal | Standard sizing, all setups active |
+| 20–30 | Elevated fear | Reduce to 75% size; add RSI Dip (mean-revert) |
+| 30–40 | High fear | 50% size; only RSI Dip + defensive entries |
+| >40 | Crisis / panic | 25% size or stand aside; wait for VIX reversal |
+
+**Application to screener options:**
+- When VIX > 25: prefer buying puts or put spreads over naked calls
+- When VIX > 30: IV crush risk on long options is severe — use spreads, not naked long options
+- When VIX backwardation detected: do not sell premium; go directional only
+- VIX/16 daily move estimate → use as ATR proxy when setting intraday option stops
+
+---
+
+## §DT17 — Day Trading Frameworks: Heitkoetter (2008) + McDowell ART System (2008)
+*Distilled from Heitkoetter "Complete Guide to Day Trading" (2008) + McDowell "The ART of Trading" (2008) — directly read.*
+
+### Heitkoetter's 10 Trading Plan Principles
+1. **Use few rules** — if you can't explain your system in 5 minutes, it's too complex
+2. **Trade electronic and liquid markets** — avoid thinly traded markets, especially at open/close
+3. **Have realistic expectations** — 10–15% annual returns are excellent; don't chase 100% per month
+4. **Maintain healthy risk/reward** — never take a trade with R/R < 1:1; prefer ≥ 1:2
+5. **Produce at least 5 trades per week** — systems that don't generate enough signals lead to forcing bad trades
+6. **Start small, grow big** — begin with 1 contract/100 shares; scale only after proven consistency
+7. **Automate exits** — manual exits are subject to emotion; set stop + target before entering, then let it work
+8. **High win percentage** — target ≥ 55% win rate in your backtest before trading live
+9. **Test on 200+ trades minimum** — statistical significance requires ≥200 sample trades; fewer = luck
+10. **Choose valid backtesting period** — test includes at least 1 bull market + 1 bear market + 1 sideways period
+
+### Heitkoetter's 7 Deadly Trading Mistakes
+1. **Wrong market direction** — over-complexity from too many indicators; simplify: buy when market goes up, sell when it goes down. One trendline > 10 oscillators.
+2. **Not taking profits** — use automatic trailing stops and pre-set profit targets; remove the decision entirely
+3. **Not limiting losses** — "Risk means not having control." Set stop before entry, always. Never trade without a stop.
+4. **Trading the wrong market** — trade only liquid, volatile markets. No volume = no profit potential.
+5. **No strategy** — must have written rules for entry, exit, stop, and position size BEFORE entering
+6. **Not controlling emotions** — trade small enough that a loss doesn't hurt emotionally; if it hurts too much, size is too large
+7. **Overtrading** — fewer, higher-quality setups > more, lower-quality setups. Less is more.
+
+### Heitkoetter's Three "Secrets" to Day Trading Success
+1. Have a proven strategy (backtested on 200+ trades across different market conditions)
+2. Have rock-solid discipline to follow that strategy without deviation
+3. Proper money management (never risk more than 2% of account per trade)
+
+### McDowell ART System (Applied Reality Trading)
+**Core philosophy:** Price and volume are the only reality. All indicators form opinions that can lead to counterproductive behavior. MACD divergence, stochastics "overbought" — these opinions prevent traders from taking correct signals.
+
+**ART Reversal Bar Signals (1B and 2B):**
+- **1B (One-Bar Reversal):** A single bar that closes in the opposite direction of the prior trend on increased volume. First signal to watch for trend change.
+- **2B (Two-Bar Reversal):** After a 1B, the next bar confirms by also closing in the reversal direction. Higher-confidence than 1B alone.
+- ART reversal bars work on any timeframe — scalping (1-min), day trading (5-min), swing trading (daily)
+
+**Pyramid Trading Points (P and MP):**
+- **P (Pyramid Point):** Major trend pivot — used to define the primary trend direction and as the primary stop anchor
+- **MP (Minor Pyramid Point):** Minor correction pivot within the major trend — used for scaling in and for stop adjustments
+- Entry: buy above P (bullish pyramid) or sell below P (bearish pyramid)
+- Stops: always based on actual chart structure (below prior P or MP), NOT arbitrary percentages
+
+**Trend-Trading Rules (ART ch.21):**
+- Only trade in the direction of the primary Pyramid Point (never countertrend for beginners)
+- Entry: after confirmed 2B reversal in the direction of the trend
+- Stop: below the 2B reversal bar's low (for longs)
+- Target: next Pyramid Trading Point level or 2:1 R/R minimum
+- Move stop to breakeven after trade moves 1× the initial risk distance
+
+**Countertrend-Trading Rules (ART ch.22, advanced only):**
+- Only after master-level experience with trend trading
+- Use minor MP points to identify corrections
+- Tight stops mandatory; countertrend trades = small size, quick exits
+
+**Stop-loss philosophy (McDowell):** Stops are set based on MARKET REALITY (chart structure, ATR) — not arbitrary percentage amounts. Percentage stops frequently stop you out at the worst point. Chart-structure stops prevent premature exit.
+
+**Application to our screener:** 
+- Use ART philosophy: at entry, don't ask "what does MACD say?" — ask "what is price and volume telling me right now?"
+- For Breakout: confirm 2B reversal after a 3-bar pullback to 20-period MA on 5-min chart = entry
+- For RSI Dip: a 1B reversal bar (hammer/engulf) on the 60-min chart = ART entry signal
+- For Bull Flag: flag is a Minor MP correction; buy on 2B reversal above flag resistance
+- Stops: set below the reversal bar's low, not at a fixed 1% from entry
+
+---
+
+## §T26 — Intermarket Technical Analysis — John J. Murphy (1991)
+*Distilled from Murphy "Intermarket Technical Analysis" (Wiley 1991) — directly read.*
+
+**The Four Market Sectors & Their Cascade:**
+```
+USD (Dollar) → Commodities → Bonds → Stocks
+```
+- **USD ↑ → Commodities ↓** (inverse): A strong dollar makes commodities more expensive for foreign buyers → suppresses demand → commodity prices fall
+- **Commodities ↑ → Bonds ↓** (inverse): Rising commodity prices signal rising inflation → bond yields rise → bond prices fall; this is the most important intermarket relationship
+- **Bonds ↑ → Stocks ↑** (positive): Rising bond prices = falling interest rates = cheaper borrowing = bullish for equities
+- Therefore: **USD ↑ → Commodities ↓ → Bonds ↑ → Stocks ↑** (the inflationary/deflationary cascade)
+- And: **Commodities ↑ → Bonds ↓ → Stocks ↓** (the inflation-warning chain)
+
+**The 6 core intermarket relationships (Murphy):**
+1. Commodity groups internally (gold → platinum, crude → heating oil)
+2. Commodity group-to-group (precious metals vs energy)
+3. CRB Index vs. commodity groups (CRB = basket of 21 commodities, the key gauge)
+4. **CRB Index inverse to bonds** ← most important single relationship
+5. **Bonds positive to stocks** ← second most important
+6. **USD inverse to commodities** (especially gold) ← third most important
+
+**Gold as leading indicator of CRB:** Gold typically LEADS major turns in the CRB Index by 6–12 months. Watch gold for early inflation/deflation warnings before the broader CRB reacts. Rising gold = inflation risk = bearish for bonds.
+
+**Dow Utilities as leading indicator of stocks:** Utilities are extremely interest-rate sensitive (they borrow heavily). Rising bond prices (falling yields) benefit Utilities → Utility stocks rally → general stock market follows. Utility divergence from stocks = warning of broader market reversal.
+
+**Global market correlation:** All major global equity markets move together in major bull/bear cycles. Japanese, British, and U.S. markets peaked and bottomed within months of each other in 1987. Activity in overseas bond/stock markets provides advance warning for U.S. markets. Rule: Do not ignore global market trends when setting U.S. directional bias.
+
+**Practical rules for our screener:**
+- Monitor 10Y Treasury yield trend: Rising yields (falling bonds) = headwind for Breakout/Bull Flag setups — reduce size
+- Monitor CRB/DJC commodity index: Rising commodities + rising stocks = late-cycle risk — tighten stops
+- Monitor USD trend: Falling USD = tailwind for commodity/materials/energy stocks; Rising USD = headwind for same
+- Gold leading CRB: If gold breaks out above prior 6-month high = inflation signal → be more cautious on bond-sensitive sectors (utilities, REITs)
+- "When in doubt, look to related markets for clues." — the intermarket analyst's mantra
+
+**1987 Crash intermarket warning (historical example):**
+- Spring 1987: CRB Index broke out (commodities rising)
+- Result: Bond prices collapsed (inflation fear)
+- Result: Interest rates spiked
+- Result: Stocks crashed in October 1987
+- **Lesson:** Watch CRB + Bond divergence from stocks as an advance warning system — stocks that keep rising while bonds fall are living on borrowed time.
+
+---
+
+## §T27 — Options for Volatile Markets: Covered Calls, Collars & Hedging — McMillan & Lehman (2011)
+*Distilled from Lehman & McMillan "Options for Volatile Markets" (Bloomberg Press 2011) — directly read.*
+
+**Core thesis:** Covered call writing reduces portfolio volatility by approximately 1/3 vs. holding stock alone. The CBOE Buy-Write Index (BXM) outperformed the S&P 500 by 7+ percentage points (20.54% vs 13.36%) from 2004–2009. Every equity investor should use options to modify risk/reward; most don't.
+
+**Covered Call Write — how it works:**
+- Buy 100 shares XYZ at $48. Sell 1 OTM Nov 50 call at $2 premium.
+- Maximum gain: capped at strike price ($50) — you give up upside above $50
+- Downside protection: the $2 premium lowers your effective cost to $46 (not zero protection)
+- Two returns to track:
+  - **RIE (Return If Exercised):** (premium + stock gain to strike) / initial investment = ($200 + $200) / $4800 = 8.3% in 2 months
+  - **RU (Return if Unchanged):** premium / initial investment = $200 / $4800 = 4.2% (floor return if stock doesn't move)
+- OTM covered calls: higher upside potential, lower premium. ATM covered calls: higher premium, more protection.
+
+**Selecting calls to write:**
+- Prefer calls 1–2 strikes OTM in normal markets; ATM in high-volatility markets (more premium)
+- Prefer 30–60 DTE (days to expiration): enough time premium without too much gamma risk
+- Avoid writing calls during earnings week (IV spike creates illiquid rollout conditions)
+- Avoid writing on stocks that have upcoming catalysts that could cause gaps beyond strike
+
+**Covered call follow-up actions:**
+- If stock rises to near strike before expiration: "roll up" — buy back current call, sell higher strike call
+- If stock falls: "roll down" — buy back current call, sell lower strike call to collect more premium and lower breakeven
+- If call goes ITM at expiration: let it be exercised OR roll forward to next month
+
+**Protective put hedge (catastrophic risk):**
+- Buy a put below the stock price as insurance against large drawdown
+- Most effective at 10–15% OTM for quarterly protection
+- Disadvantage: expensive in high-IV environments (puts cost more when you need them most)
+- Rule: hedge downside when VIX < 20 (options cheap); don't buy puts when VIX > 35 (too expensive, use collar instead)
+
+**Collar strategy (best of both):**
+- Buy 100 shares XYZ + sell OTM call + buy OTM put = defined risk on BOTH sides
+- Example: buy XYZ at $50, sell Nov 55 call at $2, buy Nov 45 put at $1.50 → net cost $0.50
+- Max gain capped at $55; max loss capped at $45 regardless of how far stock falls
+- Best application: after a big run-up, to protect gains while keeping upside — our Bull Flag exit strategy
+
+**Application to our screener options positions:**
+- **After entering a Breakout:** sell a covered call 5–8% above entry on the next options expiry (capture IV premium while stock consolidates)
+- **RSI Dip entries:** buy ATM call + sell OTM call (bull call spread) to reduce net debit in high-IV conditions
+- **Gap+Vol entries:** use collar if holding overnight — buy near-ATM put, sell far OTM call; limits gap-down risk
+- **IV > 40% on single stock:** always use spreads (bull call or bull put spread) never naked long options — IV crush on resolution will destroy naked long option value
+- **Covered call writing rule (McMillan):** Write covered calls on 50% of your position when RSI14 > 65 — reduces cost basis while maintaining 50% upside exposure
 
