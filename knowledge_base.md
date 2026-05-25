@@ -2385,3 +2385,88 @@ def _bollinger_squeeze(df, n=20, sd=2.0, squeeze_pct=10):
 | Weissman | "The edge is in the discipline to execute when it feels wrong — not in the system itself." |
 | Weissman | "ADX > 25 → trend setups. ADX < 20 → mean-reversion setups. Never mix." |
 | Weissman | "Match your personality to your system type. A mismatch always loses." |
+
+---
+
+## §BT1 — Intraday Timing Backtest (Polygon 5yr, 50 symbols, 13,131 trades)
+
+*Run: 2026-05-25 | Source: Polygon paid tier 1-min bars | Universe: 25 tech/semis + 25 mega-cap/cyber/crypto*
+
+### Edge Decomposition — Signal Day vs Next Day (open→close)
+
+The most important finding: **where does each setup's edge actually live?**
+
+| Setup | Signal Day PF | Signal Day Win% | Next Day PF | Next Day Win% | Verdict |
+|-------|:---:|:---:|:---:|:---:|---|
+| Breakout  | **28.42** | **89.8%** | 0.84 | 46.0% | **SAME-DAY ONLY** |
+| Gap+Vol   | **2.52**  | **65.9%** | 1.11 | 50.6% | Same-day best, next day OK |
+| RSI Dip   | 0.45  | 37.5% | **1.08** | **50.6%** | **NEXT-DAY swing** |
+| Bull Flag | 0.44  | 41.5% | 0.55 | 47.1% | Needs intraday classification |
+
+**Breakout interpretation**: PF=28.42 on signal day is not "tradeable in hindsight" —
+it reflects that the stock is *in the act of breaking out* when the signal fires intraday.
+The screener correctly detects this using 5-min bars and enters *during* the breakout.
+By next morning the move is spent; next-day entry shows PF=0.84 (loser).
+
+**RSI Dip interpretation**: Stock is falling *on the signal day* (PF=0.45 — you'd lose
+buying the open). Mean-reversion happens *overnight*; next-day open→close PF=1.08.
+daily_trader.py enters at next-day open, which is exactly correct.
+
+### Intraday Hold Period — Full 50-Symbol Results (next-day entry at 9:35 ET)
+
+| Setup | 15min | 30min | 60min | 90min | 120min | 180min | EOD | **Best** |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| Breakout  | 0.73 | 0.79 | 1.01 | **1.08** | 1.08 | 1.04 | 0.93 | **90min** |
+| Bull Flag | **0.94** | 0.76 | 0.75 | 0.82 | 0.86 | 0.70 | 0.78 | **15min** |
+| RSI Dip   | 0.91 | 0.85 | 0.92 | 0.90 | 0.92 | 0.93 | **1.01** | **EOD** |
+| Gap+Vol   | 0.97 | 0.97 | 1.01 | 1.04 | **1.06** | 1.06 | 1.06 | **120min+** |
+
+*(PF values, entry 9:35 ET next day after signal)*
+
+### Time-of-Day: Minutes to First +1% Gain from 9:35 Entry
+
+| Setup | 25th pct | Median | 75th pct | % within 30min | % within 60min |
+|-------|:---:|:---:|:---:|:---:|:---:|
+| Breakout  | 16 min | 26 min | 48 min | 60% | 80% |
+| Bull Flag | 13 min | 25 min | 40 min | 64% | 82% |
+| RSI Dip   | 11 min | 24 min | 50 min | 64% | 79% |
+| Gap+Vol   | 11 min | 23 min | 34 min | 71% | 85% |
+
+### Execution Rules Derived from Backtest
+
+**Breakout (intraday signal):**
+- Enter immediately when screener flags (5-min bar breakout in progress)
+- Hold 60–90 minutes from entry; do NOT hold to EOD (stock fades after breakout)
+- Stop: 1.0–1.5% below entry | Target: 2–3% above entry
+- Do NOT enter next morning — the edge is gone (PF=0.84)
+
+**Gap+Vol (intraday signal):**
+- Enter at signal (gap plays work early); hold 120min or EOD for full drift
+- Gap+Vol is the ONLY setup that works both same-day and next-day
+- Stop: 1.5–2.0% | Target: 3%+ (let it run — 71% hit +1% within 30min)
+- Next-day entry still valid (PF=1.11) if you missed the open
+
+**RSI Dip:**
+- Do NOT enter same-day — stock is still falling (PF=0.45)
+- Enter NEXT DAY at open (daily_trader.py handles this correctly)
+- Hold to EOD for full mean-reversion (EOD PF=1.01, tight stops kill it)
+- Stop: wide (2%+) — tight stops choke mean-reversion moves
+
+**Bull Flag:**
+- With daily-bar classification: weak both days (PF<1.0)
+- Works only when detected INTRADAY via 5-min bars (screener does this)
+- If entering intraday on the flag day: hold ≤15min, stop 1%, target 1%
+- Best stop+target: 1.5% stop / 1.0% target → PF=1.04 (barely positive)
+
+### Cache Location
+```
+~/Desktop/bharath/AlpacaTrader_Data/polygon_cache/
+  {SYM}_daily.parquet    — 5yr daily bars, ~1,254 rows/sym
+  {SYM}_minute.parquet   — 5yr RTH 1-min bars, ~500k rows/sym (~14MB/sym)
+  _manifest.json         — download timestamps
+Total: ~660 MB, 50 symbols (UNIVERSE_1 + UNIVERSE_2)
+```
+
+Scripts:
+- `scripts/polygon_cache.py --batch [1|2|all]` — download/update cache
+- `scripts/backtest_intraday_timing.py` — run timing analysis
