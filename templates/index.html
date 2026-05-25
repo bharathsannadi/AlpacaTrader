@@ -489,6 +489,13 @@
   .scr-refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 3px 9px; border-radius: 5px; font-size: 11px; cursor: pointer; transition: color .15s, border-color .15s; }
   .scr-refresh-btn:hover { color: var(--text); border-color: var(--text); }
   .scr-note { font-size: 10px; color: var(--muted); padding: 4px 0 0; font-style: italic; }
+  .scr-pill { display:inline-flex; align-items:center; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; letter-spacing:.02em; white-space:nowrap; }
+  .scr-pill-good { background:rgba(34,197,94,.12); color:#22c55e; border:1px solid rgba(34,197,94,.25); }
+  .scr-pill-bad  { background:rgba(244,63,94,.10); color:#f43f5e; border:1px solid rgba(244,63,94,.20); text-decoration:line-through; opacity:.7; }
+  .scr-top-star  { color:#f59e0b; font-size:13px; }
+  .scr-action-buy   { color:#22c55e; font-weight:700; font-size:11px; }
+  .scr-action-watch { color:#f59e0b; font-weight:600; font-size:11px; }
+  .scr-neutral td   { opacity:.55; }
 
   /* Settings / Log tab styles */
   .settings-tab { color: var(--purple) !important; }
@@ -1530,108 +1537,123 @@
   </div><!-- /right-panel -->
 </div><!-- /dashboard -->
 
-<!-- ── Screener panel (shown when Screener tab is active) ─────────────────── -->
+<!-- ── Screener panel ──────────────────────────────────────────────────────── -->
 <div class="screener-panel" id="screener-panel">
 
-  <!-- Header -->
-  <div class="scr-header">
-    <span class="scr-title">🔍 Live Screener</span>
-    <span class="scr-meta" id="scr-updated">Click Refresh to load</span>
-    <span class="scr-meta" id="scr-mkt-status"></span>
-    <button class="scr-refresh-btn" onclick="socket.emit('get_screener',{force:true})">↻ Refresh</button>
-    <span class="scr-note">Auto-refreshes every 90 s during market hours · 25-stock S&amp;P 500 universe · book-sourced criteria</span>
+  <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-bottom:2px">
+    <span style="font-size:13px;font-weight:700;color:var(--text);letter-spacing:.04em">🔍 LIVE SCREENER</span>
+    <span id="scr-mkt-status" style="font-size:11px;color:var(--muted)"></span>
+    <span id="scr-updated" style="font-size:11px;color:var(--muted)">—</span>
+    <span id="scr-spin" style="font-size:11px;color:#f59e0b;display:none">⟳ refreshing…</span>
+    <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh Now</button>
+    <span style="font-size:10px;color:var(--muted);margin-left:auto">
+      ✅ Only <b>backtested setups shown</b> (Breakout PF 1.88 · RSI Dip PF 1.41 · Gap+Vol PF 1.37) ·
+      auto-refresh 90s · 25 S&amp;P 500 names
+    </span>
   </div>
 
-  <!-- ── Section 1: Day Trading Watchlist ───────────────────────────────── -->
+  <!-- ── Backtest summary pills ──────────────────────────────────────────── -->
+  <div id="scr-bt-pills" style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0">
+    <span class="scr-pill scr-pill-good">Breakout  PF 1.88 · Win 51.5% · AvgRet +0.78%</span>
+    <span class="scr-pill scr-pill-good">RSI Dip   PF 1.41 · Win 53.7% · AvgRet +0.42%</span>
+    <span class="scr-pill scr-pill-good">Gap+Vol   PF 1.37 · Win 50.6% · AvgRet +0.41%</span>
+    <span class="scr-pill scr-pill-bad" title="Backtested PF 1.00 — removed">Momentum removed (PF 1.00)</span>
+    <span class="scr-pill scr-pill-bad" title="Backtested PF 0.85 — removed">VWAP Bounce removed (PF 0.85)</span>
+    <span style="font-size:10px;color:var(--muted);align-self:center">2yr · 25 symbols · next-day open→close</span>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- TABLE 1: DAY TRADING STOCKS                                            -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
   <div class="card" style="padding:10px 12px">
-    <div class="card-title" style="margin-bottom:8px">
-      Day Trading Watchlist
-      <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:8px">
-        Aziz · Elder · O'Neil · Livermore · Master Traders
-      </span>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
+      <span class="card-title" style="margin:0">📈 Table 1 — Day Trading Stocks</span>
+      <span style="font-size:10px;color:var(--muted)">Validated setups only · 25 S&amp;P 500 leaders · intraday 5-min + daily bars</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">Books: Aziz · Elder · O'Neil · Livermore · Master Traders</span>
     </div>
     <div style="overflow-x:auto">
-      <table class="scr-table">
+      <table class="scr-table" id="scr-dt-table">
         <thead>
           <tr>
-            <th>#</th>
+            <th style="width:24px">#</th>
             <th>Symbol</th>
             <th>Price</th>
-            <th title="Daily change vs prior close">Chg%</th>
-            <th title="Today volume vs 30-day avg (Aziz p.31 — ≥1.5× = Stocks in Play)">Rel.Vol</th>
-            <th title="RSI(14) — momentum indicator (Elder p.212)">RSI14</th>
-            <th title="Price vs VWAP — Elder p.212 institutional benchmark">vs VWAP</th>
-            <th title="Today high-low / price">Range%</th>
+            <th title="Day change % vs prior close">Day%</th>
+            <th title="Today vol ÷ 30d avg × day-fraction elapsed (Aziz p.31 — ≥1.5× = Stocks in Play)">Rel.Vol</th>
+            <th title="5-min bar RSI(14) intraday">RSI14</th>
+            <th title="Price vs VWAP (Elder p.212 — institutional benchmark)">vs VWAP</th>
+            <th title="Today's high-low range as % of price">Range%</th>
             <th title="20-day annualised historical volatility">HV20</th>
-            <th title="Book-sourced setup classification">Setup</th>
+            <th title="Daily RSI(2) — Connors signal trigger level">RSI2-D</th>
+            <th title="Backtested setup — only 3 valid setups shown">Setup</th>
+            <th title="Backtested profit factor (2yr, 25 syms, next-day open→close)">BT PF</th>
+            <th title="Backtested next-day average return">BT Ret%</th>
+            <th title="⭐ = top backtested performer for this setup">Pick</th>
           </tr>
         </thead>
         <tbody id="scr-dt-tbody">
-          <tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">
-            Click <b>↻ Refresh</b> or open this tab to load live data
+          <tr><td colspan="14" style="text-align:center;color:var(--muted);padding:24px">
+            Click <b>↻ Refresh Now</b> to load live data
           </td></tr>
         </tbody>
       </table>
     </div>
-    <div class="scr-note" style="margin-top:6px">
-      Setup badges: <span style="color:#22c55e">■ Momentum</span> (RSI14&gt;60 + above VWAP + chg&gt;1%) ·
-      <span style="color:#eab308">■ Gap+Vol</span> (gap≥1% + rel-vol≥1.5×, Aziz p.31) ·
-      <span style="color:#3b82f6">■ Breakout</span> (rel-vol≥2×) ·
-      <span style="color:#22d3ee">■ VWAP Bounce</span> (Elder p.212) ·
-      <span style="color:#f97316">■ RSI Dip</span> (RSI14&lt;35, Connors mean-revert)
+    <div style="margin-top:6px;font-size:10px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap">
+      <span><span style="color:#3b82f6">■</span> Breakout — new 52-wk high + RSI14 55-75 + rel-vol&gt;1.3  <b>PF 1.88</b></span>
+      <span><span style="color:#f97316">■</span> RSI Dip — RSI14&lt;35 oversold mean-revert  <b>PF 1.41</b></span>
+      <span><span style="color:#eab308">■</span> Gap+Vol — gap&gt;1% + rel-vol&gt;1.5× (Aziz p.31)  <b>PF 1.37</b></span>
+      <span style="color:#475569">■ Neutral — below threshold, monitoring only</span>
+      <span style="margin-left:auto">⭐ = top-5 backtested performer for setup</span>
     </div>
   </div>
 
-  <!-- ── Section 2: Options Opportunities ───────────────────────────────── -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- TABLE 2: OPTIONS OPPORTUNITIES                                         -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
   <div class="card" style="padding:10px 12px">
-    <div class="card-title" style="margin-bottom:8px">
-      Options Opportunities
-      <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:8px">
-        KB §2 IVR routing · KB-9 DTE 21-28 (Saliba) · Get Rich w/Options p.48
-      </span>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
+      <span class="card-title" style="margin:0">🎯 Table 2 — Options Opportunities</span>
+      <span style="font-size:10px;color:var(--muted)">Ranked by backtested directional accuracy · only validated setups</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">KB §2 IVR · KB-9 DTE 21-28 · Get Rich w/Options p.48</span>
     </div>
     <div style="overflow-x:auto">
-      <table class="scr-table">
+      <table class="scr-table" id="scr-opt-table">
         <thead>
           <tr>
-            <th>Source</th>
+            <th title="Signal source and quality">Source</th>
             <th>Symbol</th>
-            <th>Signal</th>
-            <th title="Suggested option structure (KB §2: naked if IVR<30, spread if IVR≥30)">Structure</th>
-            <th title="Expiry date + DTE (KB-9 Saliba: prefer 21-28 DTE)">Expiry / DTE</th>
-            <th title="Implied Volatility Rank — KB §2 routing gate">IVR</th>
-            <th title="Maximum risk per trade ($400 = ½-Kelly from backtest)">Max Risk</th>
-            <th>Confidence</th>
+            <th title="Direction and trigger signal">Direction / Signal</th>
+            <th title="Backtested directional hit rate">Dir Hit%</th>
+            <th title="Backtested profit factor for this setup">BT PF</th>
+            <th title="Suggested option structure (KB §2: naked if IVR<30 or HV<45%, spread otherwise)">Structure</th>
+            <th title="Target expiry (KB-9 Saliba: prefer DTE 21-28)">Expiry</th>
+            <th title="Days to expiration">DTE</th>
+            <th title="IVR from daily strategy (— if intraday only)">IVR</th>
+            <th title="Maximum risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $Risk</th>
+            <th title="Action recommendation based on backtested edge">Action</th>
           </tr>
         </thead>
         <tbody id="scr-opt-tbody">
-          <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">
+          <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">
             No active opportunities — refresh to check signals
           </td></tr>
         </tbody>
       </table>
     </div>
-    <div class="scr-note" style="margin-top:6px">
-      <b>⭐ Daily Strategy</b> = Connors RSI(2)&lt;10 signal (backtested PF 1.32) ·
-      <b>📈 Momentum</b> = intraday trend-following call (medium confidence, discretionary) ·
-      Structure: naked call if IVR&lt;30, debit spread if IVR≥30 or HV&gt;50%
+    <div style="margin-top:6px;font-size:10px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap">
+      <span><span style="color:#a78bfa">⭐ Proven</span> = Connors RSI(2)&lt;10 daily · 66.4% dir-hit · PF 1.32 · multi-day hold</span>
+      <span><span style="color:#f59e0b">⭐ Top Pick</span> = top-5 backtested RSI Dip / Breakout performer · &gt;50% dir-hit</span>
+      <span><span style="color:#22c55e">📈 Valid</span> = backtested setup · 50-54% dir-hit · ⚠ use smaller size</span>
+      <span>Structure: ATM Call if HV≤45% · Debit Spread if HV&gt;45% (theta risk)</span>
     </div>
   </div>
 
-  <!-- Book source summary -->
-  <div class="card" style="padding:10px 14px;font-size:11px;color:var(--muted)">
-    <b style="color:var(--text)">📚 Book Sources (8 books read cover-to-cover for this screener)</b><br>
-    <span style="color:#eab308">Day Trading:</span>
-    Aziz "Advanced Techniques in Day Trading" (Stocks in Play = high rel-vol) ·
-    Elder "Come Into My Trading Room" (VWAP + price ≥ $20 + ADV) ·
-    O'Neil Disciple (ADV ≥ millions, institutional quality) ·
-    Livermore "Trade Like Jesse Livermore" (leaders of the leading group) ·
-    Master Traders (high-beta sectors: semis, tech, biotech, energy)<br>
-    <span style="color:#a78bfa">Options:</span>
-    "Get Rich With Options" p.48 (buy calls when IV is LOW) ·
-    KB §2 (IVR routing: naked&lt;30, spread≥30) ·
-    KB-9 Saliba (prefer DTE 21-28) ·
-    "Think Like an Option Trader" (direction must be proven, not guessed)
+  <!-- ── Backtest methodology note ──────────────────────────────────────────── -->
+  <div style="font-size:10px;color:var(--muted);padding:4px 2px;display:flex;gap:20px;flex-wrap:wrap">
+    <span>📚 <b>Day trading books read:</b> Aziz (Stocks in Play) · Elder (VWAP) · O'Neil Disciple (ADV) · Livermore (leaders) · Master Traders (high-beta sectors)</span>
+    <span>📚 <b>Options books read:</b> Get Rich w/Options p.48 · Natenberg · Think Like Option Trader · KB §2/§9</span>
+    <span>📊 <b>Backtest:</b> 2yr · 25 symbols · next-day open→close · run 2026-05-24</span>
   </div>
 
 </div><!-- /screener-panel -->

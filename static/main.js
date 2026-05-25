@@ -1908,94 +1908,185 @@ function showLog() {
   document.getElementById("tab-log").classList.add("active");
 }
 
-// ── Screener tab ──────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// SCREENER TAB — Two validated tables with live auto-update
+// Backtest results (2yr, 25 symbols, next-day open→close):
+//   Breakout  PF 1.88  Win 51.5%  AvgRet +0.78%
+//   RSI Dip   PF 1.41  Win 53.7%  AvgRet +0.42%
+//   Gap+Vol   PF 1.37  Win 50.6%  AvgRet +0.41%
+//   Momentum  PF 1.00  → REMOVED
+//   VWAP Bounce PF 0.85 → REMOVED (negative edge)
+// ═════════════════════════════════════════════════════════════════════════════
+const SCR_SETUP_CFG = {
+  "Breakout":    { color: "#3b82f6", label: "Breakout",  pf: 1.88, valid: true  },
+  "RSI Dip":     { color: "#f97316", label: "RSI Dip",   pf: 1.41, valid: true  },
+  "Gap+Vol":     { color: "#eab308", label: "Gap+Vol",   pf: 1.37, valid: true  },
+  "Momentum":    { color: "#475569", label: "Momentum",  pf: 1.00, valid: false },
+  "VWAP Bounce": { color: "#475569", label: "VWAP Bounce",pf:0.85, valid: false },
+  "Neutral":     { color: "#334155", label: "Neutral",   pf: 0,    valid: false },
+};
+
+let _scrLastTs = 0;   // timestamp of last received update
+let _scrAutoId = null; // setInterval handle for clock tick
+
 function showScreener() {
   _setViewMode("screener");
   document.getElementById("tab-screener").classList.add("active");
-  // Request data — serve from cache immediately, refresh if stale
-  socket.emit("get_screener", {});
+  socket.emit("get_screener", {});       // serve cache + refresh if stale
+  _scrStartClock();
 }
 
-function _scr_chgClass(v) {
-  return v > 0 ? "scr-up" : v < 0 ? "scr-down" : "scr-flat";
+function scrRefresh() {
+  const spin = document.getElementById("scr-spin");
+  if (spin) spin.style.display = "";
+  socket.emit("get_screener", { force: true });
 }
 
-function _scr_setupBadge(setup) {
-  const colors = {
-    "Momentum":    "#22c55e",
-    "Gap+Vol":     "#eab308",
-    "Breakout":    "#3b82f6",
-    "VWAP Bounce": "#22d3ee",
-    "RSI Dip":     "#f97316",
-    "Neutral":     "#475569",
-  };
-  const c = colors[setup] || "#475569";
-  return `<span class="scr-badge" style="background:${c}22;color:${c};border:1px solid ${c}44">${setup}</span>`;
+function _scrStartClock() {
+  if (_scrAutoId) return;
+  _scrAutoId = setInterval(() => {
+    const el = document.getElementById("scr-updated");
+    if (!el || !_scrLastTs) return;
+    const age = Math.round((Date.now() / 1000) - _scrLastTs);
+    const mins = Math.floor(age / 60), secs = age % 60;
+    const ageStr = mins > 0 ? `${mins}m ${secs}s ago` : `${secs}s ago`;
+    el.textContent = `Updated ${ageStr}`;
+  }, 5000);
 }
 
-function _scr_optBadge(badge) {
-  const isDaily = badge.includes("Daily");
-  const c = isDaily ? "#a78bfa" : "#22c55e";
-  return `<span class="scr-badge" style="background:${c}22;color:${c};border:1px solid ${c}44">${badge}</span>`;
+function _scrBadge(text, color, bg) {
+  bg  = bg  || color + "20";
+  return `<span class="scr-badge" style="background:${bg};color:${color};border:1px solid ${color}40">${text}</span>`;
 }
 
+function _clsDir(v) { return v > 0 ? "scr-up" : v < 0 ? "scr-down" : "scr-flat"; }
+
+// ── Table 1 renderer — Day Trading Stocks ────────────────────────────────────
+function _renderDtTable(rows) {
+  const tbody = document.getElementById("scr-dt-tbody");
+  if (!tbody) return;
+
+  const valid   = rows.filter(r => r.valid);
+  const neutral = rows.filter(r => !r.valid);
+  const all     = [...valid, ...neutral];
+
+  if (!all.length) {
+    tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;color:var(--muted);padding:24px">
+      Loading live data… (takes ~60 s for 25 symbols)</td></tr>`;
+    return;
+  }
+
+  let rank = 0;
+  tbody.innerHTML = all.map(r => {
+    const cfg      = SCR_SETUP_CFG[r.setup] || SCR_SETUP_CFG["Neutral"];
+    const isValid  = cfg.valid;
+    const chgSign  = r.chg_pct >= 0 ? "+" : "";
+    const rvCls    = r.rel_vol >= 1.5 ? "scr-up" : r.rel_vol < 0.8 ? "scr-down" : "";
+    const rsiCls   = r.rsi14 <= 35 ? "scr-down" : r.rsi14 >= 60 ? "scr-up" : "";
+    const rsi2Cls  = r.rsi2_d < 10 ? "scr-down" : r.rsi2_d > 70 ? "scr-up" : "";
+    const vwapArrow= r.vwap_diff >= 0 ? "▲" : "▼";
+    const vwapCls  = r.vwap_diff >= 0 ? "scr-up" : "scr-down";
+    const setupBadge = _scrBadge(cfg.label, cfg.color);
+    const pfDisp   = isValid ? `<b style="color:${cfg.color}">${r.bt_pf.toFixed(2)}</b>` : `<span style="color:#475569">—</span>`;
+    const retDisp  = isValid ? `<span class="scr-up">+${r.bt_ret.toFixed(3)}%</span>` : `<span style="color:#475569">—</span>`;
+    const topStar  = r.is_top ? `<span class="scr-top-star" title="Top-5 backtested performer for this setup">⭐</span>` : "";
+    const rowCls   = isValid ? "scr-row" : "scr-row scr-neutral";
+    rank += isValid ? 1 : 0;
+    const rankDisp = isValid ? `<b>${rank}</b>` : `<span style="color:#334155">—</span>`;
+
+    return `<tr class="${rowCls}" title="RSI2(daily)=${r.rsi2_d.toFixed(1)}  EMA20=$${r.ema20_d}  ADV=${r.adv30m}M">
+      <td class="scr-rank">${rankDisp}</td>
+      <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector}</span></td>
+      <td class="scr-price">$${r.price.toFixed(2)}</td>
+      <td class="${_clsDir(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
+      <td class="${rvCls}">${r.rel_vol.toFixed(2)}×</td>
+      <td class="${rsiCls}">${r.rsi14.toFixed(0)}</td>
+      <td class="${vwapCls}">${vwapArrow}${Math.abs(r.vwap_diff).toFixed(1)}%</td>
+      <td>${r.day_range.toFixed(1)}%</td>
+      <td>${r.hv20.toFixed(0)}%</td>
+      <td class="${rsi2Cls}">${r.rsi2_d.toFixed(1)}</td>
+      <td>${setupBadge}</td>
+      <td>${pfDisp}</td>
+      <td>${retDisp}</td>
+      <td>${topStar}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ── Table 2 renderer — Options Opportunities ──────────────────────────────────
+function _renderOptTable(rows) {
+  const tbody = document.getElementById("scr-opt-tbody");
+  if (!tbody) return;
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">
+      No active signals today — Connors RSI(2) &lt; 10 triggers after market close ·
+      intraday setups populate once market opens</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(o => {
+    // Badge color by source quality
+    const badgeColor =
+      o.badge.includes("Proven")   ? "#a78bfa" :
+      o.badge.includes("Top Pick") ? "#f59e0b" : "#22c55e";
+    const badge = _scrBadge(o.badge, badgeColor);
+
+    // Direction chip
+    const dirColor = o.direction.includes("▲") ? "#22c55e" : "#f43f5e";
+    const dirBadge = `<span style="color:${dirColor};font-weight:700">${o.direction}</span>`;
+
+    // Dir hit color
+    const dirHit  = o.dir_pct || 0;
+    const dirCls  = dirHit >= 60 ? "scr-up" : dirHit >= 52 ? "" : "scr-down";
+    const dirDisp = `<span class="${dirCls}">${dirHit.toFixed(1)}%</span>`;
+
+    // PF color
+    const pfColor = o.pf >= 1.3 ? "#22c55e" : o.pf >= 1.1 ? "#f59e0b" : "#f43f5e";
+    const pfDisp  = `<b style="color:${pfColor}">${(o.pf||0).toFixed(2)}</b>`;
+
+    // Structure badge
+    const structColor = o.structure.includes("Spread") ? "#f59e0b" : "#22d3ee";
+    const structBadge = _scrBadge(o.structure, structColor);
+
+    // Action
+    const actCls  = o.action === "✅ BUY" ? "scr-action-buy" : "scr-action-watch";
+    const action  = `<span class="${actCls}">${o.action}</span>`;
+
+    // IVR
+    const ivrDisp = o.ivr && o.ivr !== "—"
+      ? `<span style="color:${parseFloat(o.ivr)<30?'#22c55e':'#f59e0b'}">IVR ${o.ivr}</span>`
+      : `<span style="color:#475569">—</span>`;
+
+    return `<tr class="scr-row" title="${(o.confidence||'').replace(/"/g,"'")}">
+      <td>${badge}</td>
+      <td class="scr-sym"><b>${o.sym}</b></td>
+      <td>${dirBadge}<br><span class="scr-sector" style="font-size:10px">${o.signal}</span></td>
+      <td>${dirDisp}</td>
+      <td>${pfDisp}</td>
+      <td>${structBadge}</td>
+      <td style="color:var(--muted)">${o.expiry}</td>
+      <td><b>${o.dte}</b>d</td>
+      <td>${ivrDisp}</td>
+      <td style="color:#f59e0b"><b>$${(o.max_risk||400).toLocaleString()}</b></td>
+      <td>${action}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ── SocketIO handler ──────────────────────────────────────────────────────────
 socket.on("screener_data", function(data) {
-  const dtRows  = data.dt      || [];
-  const optRows = data.options || [];
-  const updEl   = document.getElementById("scr-updated");
-  const mktEl   = document.getElementById("scr-mkt-status");
-  if (updEl)  updEl.textContent = "Updated " + (data.updated_at || "—");
+  _scrLastTs = data.ts || (Date.now() / 1000);
+
+  // Status bar
+  const mktEl  = document.getElementById("scr-mkt-status");
+  const spinEl = document.getElementById("scr-spin");
   if (mktEl)  mktEl.textContent = data.market_open ? "🟢 Market Open" : "🔴 Market Closed";
+  if (spinEl) spinEl.style.display = "none";
 
-  // ── Day Trading table ─────────────────────────────────────────────────────
-  const dtBody = document.getElementById("scr-dt-tbody");
-  if (dtBody) {
-    if (!dtRows.length) {
-      dtBody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">Loading data…</td></tr>';
-    } else {
-      dtBody.innerHTML = dtRows.map((r, i) => {
-        const chgSign  = r.chg_pct >= 0 ? "+" : "";
-        const vwapSign = r.vwap_diff >= 0 ? "▲" : "▼";
-        const vwapCls  = r.vwap_diff >= 0 ? "scr-up" : "scr-down";
-        const rvCls    = r.rel_vol >= 1.5 ? "scr-up" : r.rel_vol < 0.8 ? "scr-down" : "";
-        const rsiCls   = r.rsi14 >= 60 ? "scr-up" : r.rsi14 <= 35 ? "scr-down" : "";
-        return `<tr class="scr-row" title="${r.citation || ''}">
-          <td class="scr-rank">${i+1}</td>
-          <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector||''}</span></td>
-          <td class="scr-price">$${r.price.toFixed(2)}</td>
-          <td class="${_scr_chgClass(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
-          <td class="${rvCls}">${r.rel_vol.toFixed(2)}×</td>
-          <td class="${rsiCls}">${r.rsi14.toFixed(0)}</td>
-          <td class="${vwapCls}">${vwapSign} ${Math.abs(r.vwap_diff).toFixed(1)}%</td>
-          <td>${r.day_range.toFixed(1)}%</td>
-          <td>${r.hv20}%</td>
-          <td>${_scr_setupBadge(r.setup)}</td>
-        </tr>`;
-      }).join("");
-    }
-  }
-
-  // ── Options table ─────────────────────────────────────────────────────────
-  const optBody = document.getElementById("scr-opt-tbody");
-  if (optBody) {
-    if (!optRows.length) {
-      optBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">No active opportunities — market may be closed or no signals today</td></tr>';
-    } else {
-      optBody.innerHTML = optRows.map(o => {
-        const confCls = o.confidence && o.confidence.startsWith("High") ? "scr-up" : "scr-flat";
-        return `<tr class="scr-row" title="${(o.citation||'').replace(/"/g,"'")}">
-          <td>${_scr_optBadge(o.badge)}</td>
-          <td class="scr-sym"><b>${o.sym}</b></td>
-          <td class="scr-up">${o.signal}</td>
-          <td>${o.structure}</td>
-          <td>${o.expiry}<br><span class="scr-sector">${o.dte}d DTE</span></td>
-          <td>${o.ivr !== "—" ? "IVR "+o.ivr : "—"}</td>
-          <td>$${(o.max_risk||400).toLocaleString()}</td>
-          <td class="${confCls}" style="font-size:10px;max-width:180px;white-space:normal">${o.confidence||''}</td>
-        </tr>`;
-      }).join("");
-    }
-  }
+  _renderDtTable(data.dt || []);
+  _renderOptTable(data.options || []);
+  _scrStartClock();
 });
 
 // ── Zoom / refresh (all panes) ────────────────────────────────────────────────
