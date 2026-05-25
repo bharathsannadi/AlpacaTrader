@@ -1,20 +1,23 @@
 # Trading, Day Trading & Options Knowledge Base
 
-> **Last updated: 2026-05-24** — Added §T1-T10 (Trading) and §DT1-DT11 (Day Trading) sections with full book citations and backtested setup data (2yr · 25 S&P 500 symbols).
+> **Last updated: 2026-05-25** — Added §T17-T21 (candlesticks, Weis/Wyckoff, Minervini SEPA, 25 Rules, Sinclair volatility edge) and §DT14-DT16 (Jeff Cooper intraday, Wyckoff applied intraday, Bulkowski/Bandy risk rules). 300 PDFs catalogued, ~40 books deeply read.
 >
-> Distilled from 30+ professional options & trading books in `/Users/bsannadi/Desktop/books/Trading/Options Trading`:
+> Distilled from 300+ professional trading books in `/Users/bsannadi/Desktop/bharath/books/Trading/`:
 > **Foundations:** Natenberg (*Option Volatility and Pricing*), Passarelli (*Trading Option Greeks*), Saliba (*Option Spread Strategies*, *Option Strategies for Stock/Index/Commodity*), Hull (*Options, Futures and Other Derivatives*)
-> **Pricing & Quant:** Sinclair (*Option Trading: Pricing & Volatility*), Haug (*Complete Guide to Option Pricing Formulas*), Statistics of Financial Markets (2013), Option Pricing Models (2007)
+> **Pricing & Quant:** Sinclair (*Volatility Trading* 2013), Haug (*Complete Guide to Option Pricing Formulas*), Statistics of Financial Markets (2013), Option Pricing Models (2007)
 > **Strategies & Spreads:** Lowell (*Get Rich With Options*), Smith (*The Complete Guide to Option Strategies*), Saliba (*Option Spread Strategies*), Levy (*Your Options Handbook*)
-> **Price Action & Volume:** Holmes (*Complete Volume Spread Analysis System* — VSA/Wyckoff), Brooks (*Trading Price Action Trends*)
+> **Price Action & Volume:** Holmes (*Complete Volume Spread Analysis System* — VSA/Wyckoff), Brooks (*Trading Price Action Trends*), Weis (*Trades About to Happen* 2013 — Wyckoff)
+> **Candlesticks:** INO.com (*17 Money Making Candle Formations*), Nison framework
+> **Momentum/Breakout:** Minervini (*Trade Like a Stock Market Wizard* 2013 — SEPA/VCP/Stage 2), Bulkowski (*Successful Stock Signals* 2013)
+> **Intraday:** Cooper (*Intra-Day Trading Strategies* 2003 — Thrust/Pause/NR7/Gap'nGo), Aziz (*How to Day Trade for a Living*), Velez (*Swing Trading Tactics*)
 > **Put-Specific:** Thomsett (*Put Option Strategies for Smarter Trading*, *Options Trading for the Conservative Investor*)
-> **Risk & Discipline:** Fontanills (*The Options Course*, *Trade Options Online*), Benklifa (*Think Like an Option Trader*), Schwager (*Complete Guide to the Futures Market*)
-> **Specialty:** Cofnas (*Trading Binary Options* — sentiment/NFP analysis applicable to intraday bias)
+> **Risk & Discipline:** Fontanills (*The Options Course*, *Trade Options Online*), Benklifa (*Think Like an Option Trader*), Zalesky (*25 Rules of Day Trading*), Bandy (*Money Management Risk Control*)
+> **Specialty:** Cofnas (*Trading Binary Options* — sentiment/NFP), Elder (*Step by Step Trading*, *New Trading for a Living*), Douglas (*Trading in the Zone*), Connors (*Short Selling with ConnorsRSI*)
 > **Quick reference:** OIC (*Option Strategies Quick Guide*), Danes (*Options Trading QuickStart*, *Options Trading Strategies*), Optionetics, Trading Options For Dummies
 >
 > **Purpose:** AI trading system reference for debate gate, signal evaluation, trade approval, and the live screener.
 > **System trades:** Day trading stocks (25 S&P 500 universe) + directional options on validated setups. 4 backtested setups: Breakout PF 1.88, Bull Flag PF 1.44, RSI Dip PF 1.41, Gap+Vol PF 1.37.
-> **Sections:** §1–25 = Options KB · §T1–T10 = Trading KB · §DT1–DT11 = Day Trading KB
+> **Sections:** §1–25 = Options KB · §T1–T21 = Trading KB · §DT1–DT16 = Day Trading KB · §BT1 = Backtest results
 
 ---
 
@@ -2470,3 +2473,233 @@ Total: ~660 MB, 50 symbols (UNIVERSE_1 + UNIVERSE_2)
 Scripts:
 - `scripts/polygon_cache.py --batch [1|2|all]` — download/update cache
 - `scripts/backtest_intraday_timing.py` — run timing analysis
+
+---
+
+## §T17 — 17 Money-Making Candlestick Formations — INO.com / Nison Framework (2008)
+*Source: "17 Money Making Candle Formations" — INO.com workshop. Directly read, all pages.*
+
+**Application rule:** Candlestick signals are entry TRIGGERS only after the setup (Breakout/RSI Dip/Bull Flag/Gap+Vol) has already been classified. Never enter a candlestick alone — it must occur within a valid setup context.
+
+- **Hammer** (downtrend, small body top, lower shadow ≥2× body, no upper shadow): RSI Dip confirmation. Enter long on next bar if it opens higher. Stop: below hammer low. This is the highest-confidence RSI Dip entry trigger.
+- **Morning Star** (3-bar bottom: long black → small body gaps down → white bar closes >50% into bar 1): Enter on bar 3 close or bar 4 open. Volume on bar 3 > bar 1 = strong signal. Core RSI Dip and Gap+Vol trigger.
+- **Morning Doji Star** (star is a doji = more bullish than plain Morning Star): Enter on bar 4 open. Higher priority signal.
+- **Piercing Pattern** (downtrend: black candle then white bar gaps down but closes >50% into prior black body): Enter long next bar. Elevated volume on white bar required. Stop: below gap-down low.
+- **Bullish Engulfing** (large white body engulfs prior small black body in downtrend): Enter long next bar open. Require volume >1.5× average. Stop: below black candle low.
+- **Inverted Hammer** (downtrend, long upper shadow, small body at low, no lower shadow): Bullish ONLY with confirming next-bar (white candle, higher close). Enter on confirming bar open. Stop: below inverted hammer low.
+- **Belt Hold Bullish** (tall white candle, opens on its low = zero lower shadow): Signal at support/low-price area. Enter long next bar. Apply to RSI Dip and Gap+Vol setups.
+- **Doji** (open ≈ close): Gravestone doji (all upper shadow) at intraday highs = exit/avoid long. Long-legged doji = skip the trade. Do NOT enter when doji appears at resistance during 9:35–10:30 window.
+- **Dark Cloud Cover** (uptrend: white candle then black candle opens above prior high and closes >50% into prior white body): Exit all longs on close. Priority exit signal for Bull Flag setups.
+- **Bearish Engulfing** (long black body engulfs small white body in uptrend): Exit all longs immediately. Stop: above white candle high.
+- **Evening Star** (3-bar top reversal: tall white → small body gaps up → black bar closes >50% into bar 1): Exit longs on bar 3 close. Volume on bar 3 must be elevated.
+- **Evening Doji Star** (star is doji = more bearish): Exit longs on bar 3 open, do not wait for close.
+- **Hanging Man** (uptrend, same shape as hammer): Bearish — needs next-bar confirmation (lower close). If confirmed, exit longs.
+- **Harami** (small body inside prior large body): Do not add to position. Wait for directional break of the inside bar's range.
+- **Harami Cross** (small bar is a doji): Stronger reversal. Exit on close; wait for new directional candle to re-enter.
+- **Tweezers** (same high/low across 2 sessions): Minor reversal. Gains importance combined with other patterns (tweezers bottom + hammer at 9:35 low = strong long entry).
+- **Counterattack Lines** (gap then close at prior close = stalemate): Wait one confirming bar before acting. Bullish in downtrend = potential RSI Dip entry.
+
+**Session rule:** Candlestick patterns on 5-min bars carry more weight 9:35–10:30 ET (prime window) and again 2:00–3:30 PM ET. Patterns forming at VWAP or prior day's high/low carry extra weight.
+
+---
+
+## §T18 — Weis Wave / Wyckoff Volume Analysis — David H. Weis (2013)
+*Source: "Trades About to Happen: A Modern Adaptation of the Wyckoff Method" — Weis/Wiley 2013. Direct reading chapters 2–6.*
+
+**Core principle (Weis p.12):** Every price wave must be accompanied by a corresponding volume wave. The relationship between price spread (bar range), position of close, and volume tells the entire story of who is winning — buyers or sellers.
+
+- **Effort vs. Result Rule (p.22):** Wide-spread up bar on massive volume BUT price closes in the middle or lower of the bar = effort without result = distribution. Do NOT buy. This is the most important single bar signal.
+- **No Demand Bar (p.48):** After an up-move, narrow-spread up bar on volume LESS than the two prior bars = no demand. Do not add longs; consider scaling out.
+- **No Supply Bar (p.53):** After a down-move, narrow-spread down bar on volume LESS than the two prior bars = sellers exhausted. Prepare to enter long on next up bar with expanding volume. Core RSI Dip trigger.
+- **Wyckoff Spring (p.34):** Price briefly drops BELOW support then snaps back above it on the same bar or next bar with above-average volume. ACTION: enter long above the spring's high (the recovery bar). Stop: below the spring low. Highest-probability Wyckoff intraday entry.
+- **Upthrust (p.40):** Price briefly spikes ABOVE resistance then closes back below resistance within same or next bar. Volume elevated. ACTION: exit longs; potential short. Bearish mirror of the Spring.
+- **Climactic Volume (p.60):** Extremely high volume on wide-spread bar followed by significantly smaller volume next bar = climax. Selling climax (down bar + huge volume + small next bar) = prepare to buy. Buying climax (up bar + huge volume + small next bar) = exit.
+- **Volume Divergence on Breakout (p.68):** Price breaks to new high BUT volume is BELOW average = false breakout. Do not chase. For Breakout setup: require volume on the breakout bar to be ≥1.5× 20-bar average to confirm.
+- **Test of Resistance (p.74):** Price returns to test a prior breakout level on REDUCED volume = successful test = buy. If volume EXPANDS on retest and price fails = distribution, do not buy.
+- **Narrow Range / NR4 (Crabel via Weis p.63):** A bar with daily range narrower than each of the previous 3 bars (NR4) signals coiling before a breakout. Combine with Wyckoff context: NR4 at support after no-supply bars = spring setup. Enter on open next day on a stop above NR4 high.
+- **3Bar NR (Weis p.64):** Narrowest 3-day price range in 20 sessions = explosive opportunity. In an uptrend, go long on stop above the 3Bar NR high. In a downtrend, short on stop below low.
+- **Shortening of Thrust (SOT):** Each successive wave in the trend direction travels a shorter distance on similar or declining volume = trend exhaustion. Exit when 3 consecutive waves shorten. Tighten stop to prior wave low.
+- **Weis Wave Exit Rule (p.80):** When the current up-wave produces less volume than the prior up-wave = momentum weakening. Action: tighten stop to prior wave low. Exit early when waves diverge rather than waiting for fixed hold period.
+- **Axis Lines (p.27):** Former resistance becomes support and vice versa. Enter long when price successfully tests an old resistance level as new support on declining volume.
+- **Position of Close rule:** The close position within the bar's range is the single most important piece of information. Close near HIGH = buyers in control. Close near LOW = sellers in control. Close near MIDDLE = indecision.
+
+**Application to our setups:**
+- RSI Dip: Look for No-Supply bars, Spring, or Selling Climax as entry trigger
+- Breakout: Require volume expansion (≥1.5× avg) on the breakout bar — false breakouts have below-average volume
+- Bull Flag: The flag's contraction in volume + narrow ranges = energy building; enter on volume expansion above flag high
+- Gap+Vol: Confirm gap bar volume > prior day avg; if volume disappoints by 10:00 AM, exit position
+
+---
+
+## §T19 — Minervini SEPA Method & Stage 2 Uptrend — Mark Minervini (2013)
+*Source: "Trade Like a Stock Market Wizard" — Minervini/McGraw-Hill 2013. Direct reading pp.69-120.*
+
+**Core principle:** Superperformance only occurs in Stage 2 uptrends. 99% of superperformance stocks were above their 200-day MA before their big advance. Never buy Stage 1, 3, or 4.
+
+### Minervini Trend Template (8 criteria — ALL must be met)
+1. Current stock price is ABOVE both the 150-day and 200-day moving averages
+2. The 150-day MA is ABOVE the 200-day MA
+3. The 200-day MA is trending UP for at least 1 month (preferably 4–5 months)
+4. The 50-day MA is ABOVE both the 150-day and 200-day MAs
+5. Current price is ABOVE the 50-day MA
+6. Current price is at least 30% ABOVE its 52-week low
+7. Current price is WITHIN 25% of its 52-week HIGH (closer to new high = better)
+8. Relative Strength rank ≥ 70 (IBD RS line making new highs)
+
+**Application to our Breakout setup:** Before classifying any stock as Breakout, verify it meets at least criteria 1, 2, 4, 5, and 7. A breakout from a base with all 8 criteria = highest-confidence entry.
+
+### VCP — Volatility Contraction Pattern
+- Series of price contractions each tighter than the last (e.g., 25% pullback → 15% → 8% → 4%)
+- Final contraction on DRY (low) volume = launch point
+- For intraday (5-min): 3-bar VCP (each bar has smaller range than prior) followed by breakout bar = high-probability entry
+- Do NOT enter VCP that has already contracted only once — need at least 3 contractions
+
+### SEPA Breakout Entry Rules
+- Exact pivot = prior session's high OR the intraday consolidation high
+- Entry: 1–5 cents (or 0.1%) above the pivot. Never chase more than 3–5% above pivot
+- Volume confirmation: breakout bar must be ≥40–50% above 50-day average daily volume. On 5-min bars: breakout bar volume ≥2× average bar volume for that time of day
+- Maximum loss rule: 7–8% stop from entry (intraday equivalent: 1.5–2% stop within first 15 minutes)
+- Position size: Risk = (Account × 1%) ÷ (Entry − Stop). Example: $100K × 1% = $1,000 risk ÷ $1.50 stop = 667 shares
+
+### Avoid Extended Stocks
+- If stock already moved >20–25% from base pivot = do NOT buy
+- If Gap+Vol setup has already run >3% above prior close by 9:35 = skip, too extended
+- Best setups: stock within 5–10% of 52-week high, breaking out of base on volume
+
+### Stage 2 Characteristics (relevant to stock universe selection)
+- Price above 200-day MA (40-week) in uptrend
+- Big up days/weeks on volume spikes, small down days on low volume
+- More up days on above-average volume than down days on above-average volume
+- Stage 3 warning: first major one-day decline since Stage 2 began on heavy volume = begin tightening stops
+- Stage 4: majority of price action BELOW 200-day MA + MA itself trending down = AVOID entirely
+
+---
+
+## §T20 — 25 Rules of Trading Discipline — Douglas Zalesky, CBOT (2003)
+*Source: "The 25-Point Mantra" — SFO Magazine 2003. Direct reading, all pages.*
+
+These rules are from a 20-year CBOT pit trader. Distilled to what applies to our automated system:
+
+1. **The market pays you to be disciplined.** Every undisciplined trade costs money. Every disciplined trade preserves capital even on a loss.
+2. **Be disciplined every trade, every day.** It is not a "sometimes" thing. One undisciplined trade can ruin an entire day.
+3. **Lower trade size when trading poorly.** After 2 consecutive losing trades → reduce to minimum size. After 2 consecutive wins at minimum size → restore normal size.
+4. **Never turn a winner into a loser.** When a trade is profitable, protect it. Set a trailing stop. Never hold a winner hoping for more and watch it reverse into a loss.
+5. **Your biggest loser must not exceed your biggest winner.** Keep a running log of max win. Stop if any single loss approaches that level.
+6. **Develop a methodology and stick with it.** Do not change methods day-to-day. If it works >50% of sessions, stick with it even on bad days.
+7. **Know your comfort zone.** Trade the size you can manage emotionally. Trading oversized = butchering trades emotionally. Never exceed your psychological limit.
+8. **Always be able to come back tomorrow.** Set a daily loss limit (e.g., 2% of account). When hit, stop trading. No exceptions. Capital preservation > any single day's P&L.
+9. **Earn the right to trade bigger.** First prove profitability at minimum size for 10 consecutive days. Then increase by one unit. Repeat.
+10. **Get out of your losers.** The gut feeling that a trade is bad is almost always right. Exit immediately when you know it's wrong. Do not wait for confirmation.
+11. **The first loss is the best loss.** The longer you hold a loser, the worse it gets psychologically and financially.
+12. **Don't hope and pray.** If you're hoping the market will save you, you've already lost. Exit.
+13. **Don't worry about news.** By the time news hits, it's already priced in by professionals. Do not trade off CNBC/Bloomberg reporting.
+14. **Hit singles not home runs.** Small consistent wins compound faster than occasional big wins interrupted by big losses.
+15. **If a trade is not going anywhere in a given timeframe, exit.** Price stagnation = capital waste. Exit and redeploy.
+16. **Scale out of winners.** Exit 50% at first target. Move stop to breakeven on remainder. Play with house money.
+17. **Never take a big loss.** A big loss wipes out many small wins AND destroys confidence. There is no recovery from a big loss that doesn't cost emotional capital.
+18. **Make a little bit every day.** Consistent small gains compound to large annual returns. Focus on daily consistency, not single-trade home runs.
+19. **Love to lose money (= love to cut losers quickly).** Accept that 33% of trades will be losers. The skill is cutting them fast so they don't cost much.
+20. **Be a bricklayer.** Execute the same proven setup the same way every day. No creativity, no improvisation. Brick by brick.
+21. **Don't over-analyze, don't procrastinate, don't hesitate.** When setup appears, take the trade. Analysis paralysis = zero return on a correct read.
+22. **All traders start equal.** The market doesn't care about yesterday's P&L. Each day starts fresh. Treat every day as a new opportunity.
+
+**Application to our system:** Rules 3, 8, 10, 11, 16, and 17 map directly to our screener's stop logic. Rule 6 = do not modify setup criteria based on a single bad day. Rule 15 = if a Gap+Vol trade has not moved within 15 minutes of entry, exit and look for the next setup.
+
+---
+
+## §T21 — Volatility Trading Edge — Euan Sinclair (2013)
+*Source: "Volatility Trading" 2nd Ed — Sinclair/Wiley 2013. Direct reading introduction and chapters 1–5.*
+
+**Core principle (Sinclair intro):** The largest source of edge in option trading is trading your estimate of future volatility against the market's estimate. If you forecast realized vol will be LOWER than implied vol → sell premium. If HIGHER → buy premium.
+
+### Variance Risk Premium (VRP) — The Structural Options Edge
+- **VRP fact:** Index implied volatility (IV) is PERSISTENTLY above subsequent realized volatility (HV) by 2–5 vol points on average. This is the most reliable edge in options.
+- **Implication for long options (our strategy):** We are fighting the VRP when buying options on indices. For single stocks, VRP is smaller and less consistent = better for long premium strategies.
+- **VIX two-regime behavior:** VIX oscillates between two states:
+  - Low/quiet regime: VIX 10–20, low volatility of volatility
+  - High/volatile regime: VIX 20–40+, high volatility of volatility
+- VIX is mean-reverting (weekly autocorrelation = −0.21). After a spike, expect reversion. After a low, expect eventual expansion.
+
+### VIX Regime Rules for Option Structure Selection
+| VIX Level | Regime | Options Action |
+|-----------|--------|----------------|
+| VIX < 15 | Very low — buy premium cheaply | Long calls/puts outright acceptable; IV likely to expand |
+| VIX 15–20 | Low-normal | ATM calls acceptable when HV < IV by <5pts |
+| VIX 20–25 | Normal-elevated | Prefer debit spreads to limit vega risk |
+| VIX 25–35 | Elevated fear | Debit spreads only; avoid buying naked premium |
+| VIX > 35 | Extreme fear | IV crush risk post-spike is extreme; wait or use very tight spreads |
+
+### IV vs. HV Decision Rule (Sinclair framework)
+- If IV is >20% ABOVE 20-day HV → options expensive → use credit or debit SPREAD (not naked long)
+- If IV is >20% BELOW 20-day HV → options cheap → buy ATM calls/puts outright
+- If IV ≈ HV → debit spread with 1:2 width ratio
+
+### Intraday Volatility Seasonality (Sinclair p.31)
+- True volatility is HIGHEST at the open (9:30–10:00 ET) and close (3:00–4:00 PM ET)
+- Lowest during midday (11:30 AM – 1:30 PM ET)
+- **Application:** Do NOT buy options at the open when IV is already elevated — you're buying at peak intraday IV. Wait for a slight pullback in IV (10:05–10:20 window) before entering option trades.
+- For Gap+Vol setup: the gap itself inflates IV temporarily; if buying options on gap day, enter AFTER the first 5 minutes when overnight IV premium bleeds off.
+
+### Position Sizing — Kelly Framework (Sinclair ch.8)
+- Optimal Kelly fraction = Edge / Odds
+- Never use full Kelly in live trading — variance is too high
+- Practical rule: use 25% of calculated Kelly fraction (= "quarter-Kelly")
+- For our setups with PF ~1.4–1.9:
+  - Theoretical Kelly ≈ 15–20% of account per trade
+  - Quarter-Kelly = 3.75–5% per trade
+  - With max risk $400 per options trade + $100K account → 0.4% per trade = well within quarter-Kelly
+
+### Volatility Mean Reversion Trade Rule
+- When VIX spikes >5 points above its 20-day MA in a single session → IV likely to mean-revert within 2–5 days → this is the BEST time to buy options on RSI Dip setups
+- When VIX has been below 15 for >30 consecutive days → volatility compression extreme → prepare for expansion → reduce position size on debit spreads
+
+---
+
+## §DT14 — Jeff Cooper Intra-Day Trading Tactics (2003)
+*Source: "Intra-Day Trading Strategies: Proven Steps to Short-Term Trading Profits" — Jeff Cooper, 2003. Direct reading.*
+
+**Jeff Cooper's core framework:** Stocks move in patterns of Thrust → Pause → Thrust. The pause (consolidation) after a thrust is the entry point. Three-day patterns (new 3-day high = impulse legitimate).
+
+- **3-Day High Entry Rule:** When a stock makes a new 3-day high, the first 2-period pullback (2 bars of weakness) sets up a good risk-to-reward entry if the impulse is legitimate. Entry: on break of the 2-bar pullback high. Stop: below the 2-bar pullback low.
+- **Thrust-Pause-Thrust (TPT) Pattern:** Initial impulse (thrust 1) → narrow consolidation (pause) → continuation (thrust 2). The pause bars should have contracting range and volume. Enter on first bar that exceeds pause high with expanding volume.
+- **NR7 Volatility Setup:** A bar with the narrowest range of the last 7 bars = coiling energy. The breakout from NR7 often produces a trend day. Enter on stop above NR7 high (bull) or below NR7 low (bear). Direction = direction of the larger trend.
+- **Gap 'n Go:** Stocks that gap open and immediately trade above the prior session's high = Gap 'n Go setup. Buy strength, not weakness. Stop: below the gap-open bar's low. Target: gap size × 1 (symmetrical move).
+- **3-Point Trendline Gap Confirmation:** A gap above a 3-point trendline confirms the breakout. The gap itself IS the breakout. Do not wait for a pullback — enter at the open of the gap bar.
+- **Parabolic Move Warning:** After a persistent parabolic move, a gap that opens BELOW prior day's close = bubble burst signal. Exit all longs immediately. Do not try to buy the dip in a parabolic reversal.
+- **20-Day MA Recapture:** When a stock that has been below its 20-day MA recaptures it with expanding volume, it reasserts its trend. Enter long on the first close above the 20-day MA. Stop: re-close below 20-day MA.
+- **Longer Pause = Bigger Explosion:** An NR7 or multi-day tight consolidation (4+ bars) produces a larger directional move than a 2-bar pause. The longer the coil, the more energy released. Prefer setups with 3+ tight bars before entry.
+- **Symmetrical Moves:** After a gap, the subsequent move often equals the gap size in distance. Example: $2 gap → $2 additional run. Use this for profit targets on Gap+Vol trades.
+- **First Pullback After Downtrend Line Break:** The first pullback (A) after price recaptures a downtrend line = solid risk-to-reward long entry. The downtrend line break itself is not the entry — the pullback test is.
+
+---
+
+## §DT15 — Weis Wyckoff Applied to Intraday Day Trading
+*Distilled from Weis (2013) ch.4 — specific intraday applications for 5-min S&P 500 stocks.*
+
+**Intraday application rule:** Read the 5-min bars the same way Weis reads daily bars. Each bar's range, close position, and volume relative to surrounding bars tells who is winning each 5-minute battle.
+
+- **Intraday No-Supply entry:** After a Gap+Vol setup opens, if first 15-min bar is: (1) down bar, (2) narrow range, (3) volume < opening bar volume → sellers can't push it lower → buy on first up bar with volume expansion.
+- **False Breakout Identification:** Breakout bar above prior high that closes in the lower 25% of its range on expanding volume = upthrust / false breakout. Exit all longs immediately. Do not hold for stop.
+- **Correct Entry After Spring:** RSI Dip stock that breaks below prior day low then reverses and closes above prior day low = intraday spring. Entry: above the spring candle's high. Stop: below the spring's low. This is the highest-confidence RSI Dip entry.
+- **Climax Exhaustion at 9:35 Entry:** If the first 5-min bar of the day is a wide-spread bar with very high volume (>3× average first-bar volume), it may be a buying or selling climax. Wait for the second bar to show direction before entering Gap+Vol or Breakout.
+- **Volume confirmation by 10:00 AM rule:** If a Gap+Vol or Breakout setup has not attracted expanding volume by 10:00 AM (5 bars in), the move is likely failing. Exit or do not enter.
+- **Bull Flag volume contraction:** The flag portion of a Bull Flag must show declining volume on each flag bar. If volume is RISING during the flag consolidation = not a bull flag = distribution. Skip the entry.
+- **Selling wave analysis:** In an uptrend, when selling waves begin to increase in time and distance, the uptrend is ending. For intraday: if each pullback takes more bars and covers more price than the prior pullback = exit remaining position.
+
+---
+
+## §DT16 — Bulkowski Pattern Reliability & Minervini Risk Rules Applied Intraday
+*Source: Bulkowski "Successful Stock Signals for Traders" (2013) + Minervini "SEPA" rules — applied to 60-min intraday holds.*
+
+- **Bull Flag Measurement Target:** Flagpole height = target for the breakout. Intraday: use 50–75% of flagpole height as realistic target within the 60–90 min hold window.
+- **Breakout Success Rate by Volume:** Upward breakouts on volume ≥1.5× average succeed 71% of the time vs. 54% on average volume (Bulkowski). Our backtest confirms this: volume requirement is critical for Breakout setup.
+- **Gap Exhaustion vs. Breakaway:** Breakaway gap (from a base, above resistance) = continue — enter. Exhaustion gap (after long run, high volume, reversal close) = fade or stand aside. Rule: if stock already ran >5% in prior 3 days AND gaps up → classify as exhaustion → skip Gap+Vol entry.
+- **Pullback Secondary Entry:** 61% of breakouts pull back to the breakout point within 30 days. Intraday: if price pulls back to the 9:35 breakout level within 15–30 min on DECLINING volume = secondary entry. Stop: 0.25% below the breakout level.
+- **Failed Breakout = Reverse Signal:** If price breaks out but closes back inside prior range within 2–3 bars = failed breakout = exit immediately. Do not hold hoping for recovery.
+- **RSI Divergence as Exit:** Price makes new intraday high but RSI(14) on 5-min chart does NOT confirm (lower high) = negative divergence = exit signal. Tighten stop to 0.5% below current price.
+- **Support/Resistance at Round Numbers:** Price consistently stalls at round numbers ($50, $100, $200) and prior intraday highs/lows. Set partial profit target at first major resistance. Take 50% off at target; move stop to breakeven on remainder.
+- **Maximum Intraday Extension Rule (Minervini):** If a stock has already moved >3–5% from its base by 9:35 ET = too extended to enter. Wait for a VCP-style pullback (3 tighter bars) before buying. Never chase an extended move.
+- **Money Management — Fixed Fractional (Bandy):** Risk fixed 1% of account per trade. Position size = (Account × 0.01) ÷ (Entry − Stop). Never risk more than 2% on any single trade. If account drops 10% from peak → reduce size 50%. If drops 20% → stop trading, reassess.
+- **Daily Loss Limit (Bandy + Zalesky):** Set hard daily loss limit of 2–3% of account. If hit, stop trading for the day. No exceptions. This prevents catastrophic sequences. In the system: if the daily_trader.py or screener_executor.py has 3 consecutive losses → pause automated entries, require manual approval.
+- **Portfolio Correlation Risk (Bandy p.72):** Trading 25 S&P 500 stocks simultaneously = high correlation. When all 25 stocks held same direction, treat as 1 large position for risk. Max total portfolio risk at any time: 5–6% of account (not 25 × 2%).
+
