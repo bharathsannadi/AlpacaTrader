@@ -537,9 +537,6 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
             "action":    action,
             "impulse":   impulse,
         })
-        if len(rows) >= 12:
-            break
-
     rows.sort(key=lambda r: r["rank"])
     return rows
 
@@ -580,8 +577,8 @@ def refresh_screener(daily_positions: list[dict] | None = None) -> dict:
                 pass
 
         result = {
-            "dt":          dt_rows,
-            "options":     opts,
+            "dt":          dt_rows[:10],
+            "options":     opts[:10],
             "ts":          time.time(),
             "updated_at":  datetime.now(ET).strftime("%H:%M:%S ET"),
             "market_open": _is_market_open(),
