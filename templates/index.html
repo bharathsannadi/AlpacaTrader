@@ -1548,19 +1548,20 @@
     <span id="scr-spin" style="font-size:11px;color:#f59e0b;display:none">⟳ refreshing…</span>
     <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh Now</button>
     <span style="font-size:10px;color:var(--muted);margin-left:auto">
-      ✅ Only <b>backtested setups shown</b> (Breakout PF 1.88 · RSI Dip PF 1.41 · Gap+Vol PF 1.37) ·
+      ✅ Only <b>backtested setups shown</b> (Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37) ·
       auto-refresh 90s · 25 S&amp;P 500 names
     </span>
   </div>
 
   <!-- ── Backtest summary pills ──────────────────────────────────────────── -->
   <div id="scr-bt-pills" style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0">
-    <span class="scr-pill scr-pill-good">Breakout  PF 1.88 · Win 51.5% · AvgRet +0.78%</span>
-    <span class="scr-pill scr-pill-good">RSI Dip   PF 1.41 · Win 53.7% · AvgRet +0.42%</span>
-    <span class="scr-pill scr-pill-good">Gap+Vol   PF 1.37 · Win 50.6% · AvgRet +0.41%</span>
+    <span class="scr-pill scr-pill-good">Breakout  PF 1.88 · Win 51.5% · AvgRet +0.78% · Dir 51.5%</span>
+    <span class="scr-pill scr-pill-good" title="Bull Flag: surge bar &gt;2% → tight consolidation → entry above flag high · Volatile Markets p.57 + Aziz p.61 · Impulse-Green PF 2.29">Bull Flag PF 1.44 · Win 61.5% · AvgRet +0.45% · Dir 61.5%</span>
+    <span class="scr-pill scr-pill-good" title="RSI Dip Impulse insight: Red PF=1.82 &gt; Green PF=1.76 — Red Impulse is BETTER for mean-reversion dip buys">RSI Dip   PF 1.41 · Win 53.7% · AvgRet +0.42% · Dir 53.7%</span>
+    <span class="scr-pill scr-pill-good">Gap+Vol   PF 1.37 · Win 50.6% · AvgRet +0.41% · Dir 50.6%</span>
     <span class="scr-pill scr-pill-bad" title="Backtested PF 1.00 — removed">Momentum removed (PF 1.00)</span>
     <span class="scr-pill scr-pill-bad" title="Backtested PF 0.85 — removed">VWAP Bounce removed (PF 0.85)</span>
-    <span style="font-size:10px;color:var(--muted);align-self:center">2yr · 25 symbols · next-day open→close</span>
+    <span style="font-size:10px;color:var(--muted);align-self:center">2yr · 25 symbols · next-day open→close · run 2026-05-24</span>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════ -->
@@ -1585,26 +1586,29 @@
             <th title="Price vs VWAP (Elder p.212 — institutional benchmark)">vs VWAP</th>
             <th title="Today's high-low range as % of price">Range%</th>
             <th title="20-day annualised historical volatility">HV20</th>
-            <th title="Daily RSI(2) — Connors signal trigger level">RSI2-D</th>
-            <th title="Backtested setup — only 3 valid setups shown">Setup</th>
+            <th title="Daily RSI(2) — Connors signal trigger level (66.4% bull directional accuracy)">RSI2-D</th>
+            <th title="Elder Impulse System: Green=EMA13 rising + MACD-H rising (buy OK) · Blue=mixed · Red=EMA13+MACD-H falling (NO LONGS — Elder Step-by-Step p.47)">Impulse</th>
+            <th title="Backtested setup — 4 valid setups (PF&gt;1.2): Breakout · Bull Flag · RSI Dip · Gap+Vol">Setup</th>
             <th title="Backtested profit factor (2yr, 25 syms, next-day open→close)">BT PF</th>
             <th title="Backtested next-day average return">BT Ret%</th>
-            <th title="⭐ = top backtested performer for this setup">Pick</th>
+            <th title="⭐ = top backtested performer for this setup · 📌 = O'Neill Pocket Pivot (vol > any down-day in prior 10 sessions)">Pick</th>
           </tr>
         </thead>
         <tbody id="scr-dt-tbody">
-          <tr><td colspan="14" style="text-align:center;color:var(--muted);padding:24px">
+          <tr><td colspan="15" style="text-align:center;color:var(--muted);padding:24px">
             Click <b>↻ Refresh Now</b> to load live data
           </td></tr>
         </tbody>
       </table>
     </div>
     <div style="margin-top:6px;font-size:10px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap">
-      <span><span style="color:#3b82f6">■</span> Breakout — new 52-wk high + RSI14 55-75 + rel-vol&gt;1.3  <b>PF 1.88</b></span>
-      <span><span style="color:#f97316">■</span> RSI Dip — RSI14&lt;35 oversold mean-revert  <b>PF 1.41</b></span>
+      <span><span style="color:#3b82f6">■</span> Breakout — new 50d high + RSI14 55-75 + rel-vol&gt;1.3  <b>PF 1.88</b></span>
+      <span><span style="color:#22c55e">■</span> Bull Flag — surge&gt;2%→tight range→RSI 50-75 (Volatile Markets p.57)  <b>PF 1.44 · Dir 61.5%</b></span>
+      <span><span style="color:#f97316">■</span> RSI Dip — RSI14&lt;35 oversold mean-revert  <b>PF 1.41</b> (Red Impulse OK→PF 1.82)</span>
       <span><span style="color:#eab308">■</span> Gap+Vol — gap&gt;1% + rel-vol&gt;1.5× (Aziz p.31)  <b>PF 1.37</b></span>
       <span style="color:#475569">■ Neutral — below threshold, monitoring only</span>
-      <span style="margin-left:auto">⭐ = top-5 backtested performer for setup</span>
+      <span>🟢=Impulse Green (buy zone) · 🔵=mixed · 🔴=Red (momentum: NO · RSI Dip: OK, PF 1.82)</span>
+      <span style="margin-left:auto">⭐ = top-5 backtested · 📌 = O'Neill Pocket Pivot</span>
     </div>
   </div>
 
@@ -1643,16 +1647,17 @@
     </div>
     <div style="margin-top:6px;font-size:10px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap">
       <span><span style="color:#a78bfa">⭐ Proven</span> = Connors RSI(2)&lt;10 daily · 66.4% dir-hit · PF 1.32 · multi-day hold</span>
-      <span><span style="color:#f59e0b">⭐ Top Pick</span> = top-5 backtested RSI Dip / Breakout performer · &gt;50% dir-hit</span>
-      <span><span style="color:#22c55e">📈 Valid</span> = backtested setup · 50-54% dir-hit · ⚠ use smaller size</span>
-      <span>Structure: ATM Call if HV≤45% · Debit Spread if HV&gt;45% (theta risk)</span>
+      <span><span style="color:#f59e0b">⭐ Top Pick</span> = top-5 backtested performer · Bull Flag 61.5% · RSI Dip 53.7% · Breakout 51.5%</span>
+      <span><span style="color:#22c55e">📈 Valid</span> = backtested setup · 50-62% dir-hit depending on setup · ⚠ size to max $400 risk</span>
+      <span>Structure: ATM Call if HV≤45% · Debit Spread if HV&gt;45% (Volatile Markets p.104)</span>
+      <span>Rank order: Connors 66.4% → Bull Flag 61.5% → RSI Dip 53.7% → Breakout 51.5% → Gap+Vol 50.6%</span>
     </div>
   </div>
 
   <!-- ── Backtest methodology note ──────────────────────────────────────────── -->
   <div style="font-size:10px;color:var(--muted);padding:4px 2px;display:flex;gap:20px;flex-wrap:wrap">
-    <span>📚 <b>Day trading books read:</b> Aziz (Stocks in Play) · Elder (VWAP) · O'Neil Disciple (ADV) · Livermore (leaders) · Master Traders (high-beta sectors)</span>
-    <span>📚 <b>Options books read:</b> Get Rich w/Options p.48 · Natenberg · Think Like Option Trader · KB §2/§9</span>
+    <span>📚 <b>Day trading books deep-read:</b> Aziz HTDT (Stocks in Play, Gap+Vol p.31) · Aziz Advanced (ORB, VWAP, Bull Flag) · Elder Step-by-Step (Impulse System p.47, Force Index p.39, Value Zone) · Elder New TfaL (2%/6% rules) · Connors/Alvarez (RSI2 66.4%) · O'Neill Disciple (Pocket Pivot p.132) · Raschke/Williams (Momentum Pinball, 80-20s) · Ways of Trade (Wet Climate, Thunder Periods) · Volatile Markets (Bull Flag rules) · 18 Trading Champions (first-hour edge) · 80 Experts (7-criteria rule)</span>
+    <span>📚 <b>Options books deep-read:</b> Get Rich w/Options p.48 · Saliba Option Spreads (verticals) · Volatile Markets p.104 (IV vs HV structure) · Keene on Market (HIMCRIBBIT) · Think Like Option Trader (IV=uncertainty price, 1-SD=IV/16) · Put Option Strategies (bear put spread) · Options Course (dir/dur/magnitude) · Natenberg (Vol pricing)</span>
     <span>📊 <b>Backtest:</b> 2yr · 25 symbols · next-day open→close · run 2026-05-24</span>
   </div>
 

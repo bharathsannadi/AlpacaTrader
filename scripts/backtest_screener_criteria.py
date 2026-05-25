@@ -106,6 +106,44 @@ def _classify(df: pd.DataFrame) -> pd.Series:
     mask = rsi2 < 10
     setup[mask] = "RSI2 Dip"
 
+    # ── Bull Flag (from Volatile Markets Made Easy p.57, Aziz p.61) ──────────
+    # Day N-2 or N-1: strong surge day (chg > 2% AND close in top 30% of range)
+    #                  flagpole = (close - low) / (high - low)
+    # Today: tight consolidation — range < 50% of the surge bar's range
+    # RSI between 50 and 75 (momentum but not overbought)
+    # rel-vol ≥ 1.2 (still in play)
+    prior_chg     = chg.shift(1)                           # day N-1 change
+    prior_chg2    = chg.shift(2)                           # day N-2 change
+    surge_today   = prior_chg > 2.0                        # ≥+2% surge bar
+    surge_2d_ago  = prior_chg2 > 2.0                       # or 2 bars ago
+    surge_any     = surge_today | surge_2d_ago
+
+    prior_range = (df["High"].shift(1) - df["Low"].shift(1)).replace(0, np.nan)
+    today_range = (df["High"] - df["Low"])
+    tight_flag  = today_range < 0.5 * prior_range          # consolidation
+
+    flagpole1   = (df["Close"].shift(1) - df["Low"].shift(1)) / prior_range.replace(0, np.nan)
+    strong_up1  = flagpole1 > 0.6                          # closed in top 40%
+
+    mask = surge_any & tight_flag & strong_up1 & (rsi14 >= 50) & (rsi14 <= 75) & (rel_vol >= 1.2)
+    # Bull Flag takes priority over Neutral but not over Breakout/Gap+Vol/RSI Dip
+    bull_flag_mask = mask & ~setup.isin(["Breakout", "Gap+Vol", "RSI Dip", "Momentum", "VWAP Bounce", "RSI2 Dip"])
+    setup[bull_flag_mask] = "Bull Flag"
+
+    # ── Elder Impulse Green filter (Step-by-Step p.47) ───────────────────────
+    # Compute daily EMA13 and MACD-Histogram direction
+    ema13 = df["Close"].ewm(span=13, adjust=False).mean()
+    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+    macd_line = ema13 - ema26
+    sig_line  = macd_line.ewm(span=9, adjust=False).mean()
+    macd_h    = macd_line - sig_line
+    impulse_green = (ema13 > ema13.shift(1)) & (macd_h > macd_h.shift(1))
+    impulse_red   = (ema13 < ema13.shift(1)) & (macd_h < macd_h.shift(1))
+    # Tag Impulse for analysis (not a separate setup, just a flag)
+    # Store in a new column so we can compute conditional stats
+    df["impulse_green"] = impulse_green
+    df["impulse_red"]   = impulse_red
+
     return setup
 
 
@@ -133,10 +171,12 @@ def _backtest_symbol(sym: str) -> list[dict]:
             if pd.isna(r["next_ret"]):
                 continue
             rows.append({
-                "sym":     sym,
-                "setup":   r["setup"],
-                "ret":     float(r["next_ret"]),
-                "next_up": int(r["next_up"]),
+                "sym":          sym,
+                "setup":        r["setup"],
+                "ret":          float(r["next_ret"]),
+                "next_up":      int(r["next_up"]),
+                "imp_green":    bool(r.get("impulse_green", False)),
+                "imp_red":      bool(r.get("impulse_red", False)),
             })
         return rows
     except Exception as e:
@@ -178,7 +218,7 @@ def main() -> None:
         print(f"  {i:2d}/{len(UNIVERSE)}  {sym:<6}  {len(trades)} setup days")
 
     # ── Aggregate by setup ────────────────────────────────────────────────────
-    setups = ["RSI Dip", "Momentum", "Gap+Vol", "VWAP Bounce", "Breakout", "RSI2 Dip"]
+    setups = ["RSI Dip", "Momentum", "Gap+Vol", "VWAP Bounce", "Breakout", "RSI2 Dip", "Bull Flag"]
     results: dict[str, dict] = {}
     for s in setups:
         t = [x for x in all_trades if x["setup"] == s]
@@ -207,12 +247,30 @@ def main() -> None:
         top_str = "  ".join(f"{sym}({np.mean(v):+.2f}%)" for sym, v in top)
         print(f"  {s:<14}: {top_str}")
 
+    # ── Elder Impulse filter analysis (Step-by-Step p.47) ────────────────────
+    print(f"\n{'─'*65}")
+    print("Elder Impulse System filter analysis (Green vs Red vs All):")
+    print(f"  {'Setup':<14} {'All-N':>6} {'All-PF':>7} {'Green-N':>8} {'Green-PF':>9} {'Red-N':>6} {'Red-PF':>7}")
+    for s in ["RSI Dip", "Gap+Vol", "Breakout", "Bull Flag"]:
+        t_all   = [x for x in all_trades if x["setup"] == s]
+        t_green = [x for x in t_all if x.get("imp_green")]
+        t_red   = [x for x in t_all if x.get("imp_red")]
+        def pf_calc(trd):
+            rets  = [x["ret"] for x in trd]
+            wins  = sum(r for r in rets if r > 0)
+            loss  = abs(sum(r for r in rets if r < 0))
+            return round(wins/loss, 2) if loss > 0 else 0.0
+        pf_all   = pf_calc(t_all)
+        pf_green = pf_calc(t_green)
+        pf_red   = pf_calc(t_red)
+        print(f"  {s:<14} {len(t_all):>6}  {pf_all:>6.2f}  {len(t_green):>8}  {pf_green:>8.2f}  {len(t_red):>6}  {pf_red:>6.2f}")
+
     # ── Save ──────────────────────────────────────────────────────────────────
     out = {
-        "date":    str(date.today()),
-        "lookback": LOOKBACK,
+        "date":          str(date.today()),
+        "lookback":      LOOKBACK,
         "universe_size": len(UNIVERSE),
-        "results": results,
+        "results":       results,
     }
     OUT_FILE.write_text(json.dumps(out, indent=2))
     print(f"\n  Results → {OUT_FILE}")

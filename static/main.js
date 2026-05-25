@@ -1910,20 +1910,24 @@ function showLog() {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SCREENER TAB — Two validated tables with live auto-update
-// Backtest results (2yr, 25 symbols, next-day open→close):
-//   Breakout  PF 1.88  Win 51.5%  AvgRet +0.78%
-//   RSI Dip   PF 1.41  Win 53.7%  AvgRet +0.42%
-//   Gap+Vol   PF 1.37  Win 50.6%  AvgRet +0.41%
-//   Momentum  PF 1.00  → REMOVED
+// Backtest results (2yr, 25 symbols, next-day open→close · run 2026-05-24):
+//   Breakout  PF 1.88  Win 51.5%  Dir 51.5%  AvgRet +0.78%  ✅
+//   Bull Flag PF 1.44  Win 61.5%  Dir 61.5%  AvgRet +0.45%  ✅ (Volatile Markets p.57)
+//   RSI Dip   PF 1.41  Win 53.7%  Dir 53.7%  AvgRet +0.42%  ✅
+//   Gap+Vol   PF 1.37  Win 50.6%  Dir 50.6%  AvgRet +0.41%  ✅
+//   Momentum  PF 1.00  → REMOVED (no edge)
 //   VWAP Bounce PF 0.85 → REMOVED (negative edge)
+// Elder Impulse insight: RSI Dip + Red PF=1.82 > Green PF=1.76 (mean-reversion)
+//   Impulse Red = OK for RSI Dip · NOT OK for momentum setups
 // ═════════════════════════════════════════════════════════════════════════════
 const SCR_SETUP_CFG = {
-  "Breakout":    { color: "#3b82f6", label: "Breakout",  pf: 1.88, valid: true  },
-  "RSI Dip":     { color: "#f97316", label: "RSI Dip",   pf: 1.41, valid: true  },
-  "Gap+Vol":     { color: "#eab308", label: "Gap+Vol",   pf: 1.37, valid: true  },
-  "Momentum":    { color: "#475569", label: "Momentum",  pf: 1.00, valid: false },
-  "VWAP Bounce": { color: "#475569", label: "VWAP Bounce",pf:0.85, valid: false },
-  "Neutral":     { color: "#334155", label: "Neutral",   pf: 0,    valid: false },
+  "Breakout":    { color: "#3b82f6", label: "Breakout",   pf: 1.88, valid: true  },
+  "Bull Flag":   { color: "#22c55e", label: "Bull Flag",  pf: 1.44, valid: true  },
+  "RSI Dip":     { color: "#f97316", label: "RSI Dip",    pf: 1.41, valid: true  },
+  "Gap+Vol":     { color: "#eab308", label: "Gap+Vol",    pf: 1.37, valid: true  },
+  "Momentum":    { color: "#475569", label: "Momentum",   pf: 1.00, valid: false },
+  "VWAP Bounce": { color: "#475569", label: "VWAP Bounce",pf: 0.85, valid: false },
+  "Neutral":     { color: "#334155", label: "Neutral",    pf: 0,    valid: false },
 };
 
 let _scrLastTs = 0;   // timestamp of last received update
@@ -1971,7 +1975,7 @@ function _renderDtTable(rows) {
   const all     = [...valid, ...neutral];
 
   if (!all.length) {
-    tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;color:var(--muted);padding:24px">
+    tbody.innerHTML = `<tr><td colspan="15" style="text-align:center;color:var(--muted);padding:24px">
       Loading live data… (takes ~60 s for 25 symbols)</td></tr>`;
     return;
   }
@@ -1989,12 +1993,38 @@ function _renderDtTable(rows) {
     const setupBadge = _scrBadge(cfg.label, cfg.color);
     const pfDisp   = isValid ? `<b style="color:${cfg.color}">${r.bt_pf.toFixed(2)}</b>` : `<span style="color:#475569">—</span>`;
     const retDisp  = isValid ? `<span class="scr-up">+${r.bt_ret.toFixed(3)}%</span>` : `<span style="color:#475569">—</span>`;
-    const topStar  = r.is_top ? `<span class="scr-top-star" title="Top-5 backtested performer for this setup">⭐</span>` : "";
+
+    // ── Elder Impulse System (Step-by-Step p.47) ─────────────────────────────
+    // Backtest insight: For RSI Dip (mean-reversion), Red PF=1.82 > Green PF=1.76
+    // Red Impulse = sustained selling = BETTER entry for dip buys (NOT a veto for RSI Dip)
+    // Red IS a veto for momentum setups (Breakout, Bull Flag, Gap+Vol)
+    const imp = r.impulse || "Blue";
+    const impEmoji = imp === "Green" ? "🟢" : imp === "Red" ? "🔴" : "🔵";
+    const isRsiDip = r.setup === "RSI Dip";
+    const impTitle = imp === "Green"
+      ? "Elder Impulse Green — EMA13 rising + MACD-H rising → BUY ZONE"
+      : imp === "Red"
+        ? (isRsiDip
+            ? "Elder Impulse Red — sustained selling = BETTER dip-buy entry for RSI Dip (PF 1.82 > All 1.41) — mean-reversion backtest insight"
+            : "Elder Impulse Red — EMA13 falling + MACD-H falling → NO LONGS for momentum setups (Elder p.47)")
+        : "Elder Impulse Blue — mixed signals → neutral, watch";
+    // Row highlight: only flag Red for momentum setups, not RSI Dip
+    const impStyle = imp === "Red" && isValid && !isRsiDip
+      ? 'style="background:rgba(255,61,104,0.08)"' : "";
+    const impDisp  = `<span title="${impTitle}">${impEmoji}</span>`;
+
+    // ── O'Neill Pocket Pivot (Morales p.132) ─────────────────────────────────
+    const ppStar  = r.pkt_pivot
+      ? `<span title="📌 O'Neill Pocket Pivot — today's volume > highest down-day vol in prior 10 sessions (Morales p.132)">📌</span>` : "";
+    const topStar = r.is_top
+      ? `<span class="scr-top-star" title="Top-5 backtested performer for this setup">⭐</span>` : "";
+    const pickDisp = `${topStar}${ppStar}`;
+
     const rowCls   = isValid ? "scr-row" : "scr-row scr-neutral";
     rank += isValid ? 1 : 0;
     const rankDisp = isValid ? `<b>${rank}</b>` : `<span style="color:#334155">—</span>`;
 
-    return `<tr class="${rowCls}" title="RSI2(daily)=${r.rsi2_d.toFixed(1)}  EMA20=$${r.ema20_d}  ADV=${r.adv30m}M">
+    return `<tr class="${rowCls}" ${impStyle} title="RSI2(daily)=${r.rsi2_d.toFixed(1)}  EMA20=$${r.ema20_d}  EMA13=$${(r.ema13_d||0).toFixed(2)}  FI2d=${(r.fi2d||0).toFixed(0)}  ADV=${r.adv30m}M  Impulse=${imp}">
       <td class="scr-rank">${rankDisp}</td>
       <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector}</span></td>
       <td class="scr-price">$${r.price.toFixed(2)}</td>
@@ -2005,10 +2035,11 @@ function _renderDtTable(rows) {
       <td>${r.day_range.toFixed(1)}%</td>
       <td>${r.hv20.toFixed(0)}%</td>
       <td class="${rsi2Cls}">${r.rsi2_d.toFixed(1)}</td>
+      <td title="${impTitle}">${impDisp}</td>
       <td>${setupBadge}</td>
       <td>${pfDisp}</td>
       <td>${retDisp}</td>
-      <td>${topStar}</td>
+      <td>${pickDisp}</td>
     </tr>`;
   }).join("");
 }
@@ -2036,10 +2067,10 @@ function _renderOptTable(rows) {
     const dirColor = o.direction.includes("▲") ? "#22c55e" : "#f43f5e";
     const dirBadge = `<span style="color:${dirColor};font-weight:700">${o.direction}</span>`;
 
-    // Dir hit color
+    // Dir hit color — Bull Flag 61.5% > RSI Dip 53.7% > Breakout 51.5% > Gap+Vol 50.6%
     const dirHit  = o.dir_pct || 0;
-    const dirCls  = dirHit >= 60 ? "scr-up" : dirHit >= 52 ? "" : "scr-down";
-    const dirDisp = `<span class="${dirCls}">${dirHit.toFixed(1)}%</span>`;
+    const dirCls  = dirHit >= 60 ? "scr-up" : dirHit >= 53 ? "" : "scr-down";
+    const dirDisp = `<span class="${dirCls}" title="Backtested directional accuracy: ≥60% green, 53-60% neutral, &lt;53% yellow">${dirHit.toFixed(1)}%</span>`;
 
     // PF color
     const pfColor = o.pf >= 1.3 ? "#22c55e" : o.pf >= 1.1 ? "#f59e0b" : "#f43f5e";
