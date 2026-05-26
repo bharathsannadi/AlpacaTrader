@@ -694,6 +694,28 @@
   .scr-edge-stats span { white-space: nowrap; }
   .scr-edge-stats b { color: var(--text); }
 
+  /* ── Inner tab bar ── */
+  .scr-tab-bar {
+    display: flex; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,.008); flex-shrink: 0;
+  }
+  .scr-tab {
+    padding: 9px 22px; font-size: 11.5px; font-weight: 600;
+    color: var(--muted); border: none; background: transparent;
+    cursor: pointer; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; font-family: var(--mono); letter-spacing: .03em;
+    transition: color .15s, border-color .15s;
+  }
+  .scr-tab:hover { color: var(--text); }
+  .scr-tab.active { color: var(--text); border-bottom-color: #818cf8; }
+  .scr-tab-count {
+    display: inline-block; margin-left: 7px; padding: 1px 7px;
+    border-radius: 10px; background: rgba(255,255,255,.08);
+    font-size: 10px; font-weight: 400; vertical-align: middle;
+  }
+  .scr-pane { display: none; flex: 1; overflow-y: auto; min-height: 0; flex-direction: column; }
+  .scr-pane.active { display: flex; }
+
   /* ── Section header ── */
   .scr-section-hdr {
     display: flex; align-items: center; gap: 8px;
@@ -2012,69 +2034,87 @@
     </div>
   </div>
 
-  <!-- ── TABLE 1: Signal Watch ── -->
-  <div class="scr-section-hdr">
-    <span class="scr-section-title">Signal Watch</span>
-    <span class="scr-section-sub">25 S&amp;P 500 leaders · validated setups only · click row for strategy detail</span>
-    <span class="scr-section-ref">Aziz · Elder · O'Neil · Connors</span>
-  </div>
-  <div class="scr-table-wrap">
-    <table class="scr-table" id="scr-dt-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Symbol</th>
-          <th>Price</th>
-          <th title="Day change % vs prior close">Day%</th>
-          <th title="Today vol ÷ 30d avg vol (Aziz p.31 — ≥1.5× = Stock in Play)">Rel Vol</th>
-          <th title="5-min RSI(14) intraday">RSI14</th>
-          <th title="Price vs VWAP — institutional benchmark (Elder p.212)">vs VWAP</th>
-          <th title="Elder Impulse System: 🟢 EMA13↑+MACDH↑=Buy · 🔵 Mixed=Neutral · 🔴 Both↓=No longs (Elder p.47) — exception: RSI Dip Red PF 1.82">Impulse</th>
-          <th title="Backtested setup: Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37">Setup</th>
-          <th title="Backtested profit factor — 2yr, next-day open→close">PF</th>
-          <th title="Backtested avg next-day return per signal">Ret%</th>
-          <th title="⭐ top-5 backtested · 📌 O'Neill Pocket Pivot (up-day vol > any down-day in prior 10)">Pick</th>
-        </tr>
-      </thead>
-      <tbody id="scr-dt-tbody">
-        <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
-          Click <b>↻ Refresh</b> to load live data
-        </td></tr>
-      </tbody>
-    </table>
+  <!-- ── Inner tab bar ── -->
+  <div class="scr-tab-bar">
+    <button class="scr-tab active" id="scr-tab-stocks"
+            onclick="scrSwitchTab('stocks')">
+      📈 Stocks
+      <span class="scr-tab-count" id="scr-stocks-count">—</span>
+    </button>
+    <button class="scr-tab" id="scr-tab-options"
+            onclick="scrSwitchTab('options')">
+      🎯 Options
+      <span class="scr-tab-count" id="scr-options-count">—</span>
+    </button>
   </div>
 
-  <!-- ── TABLE 2: Options Setups ── -->
-  <div class="scr-section-hdr" style="margin-top:1px">
-    <span class="scr-section-title">Options Setups</span>
-    <span class="scr-section-sub">Ranked by directional accuracy · Connors 66.4% → Bull Flag 61.5% → RSI Dip 53.7%</span>
-    <span class="scr-section-ref">IVR §2 · DTE 21-28 (Saliba) · Structure (Volatile Markets p.104)</span>
-  </div>
-  <div class="scr-table-wrap">
-    <table class="scr-table" id="scr-opt-table">
-      <thead>
-        <tr>
-          <th title="Signal quality tier">Source</th>
-          <th>Symbol</th>
-          <th title="Direction and trigger signal">Direction / Signal</th>
-          <th title="Backtested directional hit rate">Dir%</th>
-          <th title="Backtested profit factor for this setup">PF</th>
-          <th title="ATM Call if HV≤45% · Debit Spread if HV>45% (Volatile Markets p.104)">Structure</th>
-          <th title="Target expiry — prefer DTE 21-28 (Saliba)">Expiry</th>
-          <th title="Days to expiration">DTE</th>
-          <th title="IV Rank — naked if IVR<30, spread if IVR≥30 (KB §2)">IVR</th>
-          <th title="Max risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $</th>
-          <th title="Action based on backtested edge">Action</th>
-          <th title="Place limit order via Alpaca (paper by default)">Execute</th>
-        </tr>
-      </thead>
-      <tbody id="scr-opt-tbody">
-        <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
-          No active signals — Connors RSI(2)&lt;10 triggers after market close · intraday setups populate once market opens
-        </td></tr>
-      </tbody>
-    </table>
-  </div>
+  <!-- ── Pane: Stocks ── -->
+  <div class="scr-pane active" id="scr-pane-stocks">
+    <div class="scr-section-hdr">
+      <span class="scr-section-title">Signal Watch</span>
+      <span class="scr-section-sub">Top 15 · S&amp;P 500 leaders · validated setups only · click row for strategy detail</span>
+      <span class="scr-section-ref">Aziz · Elder · O'Neil · Connors</span>
+    </div>
+    <div class="scr-table-wrap">
+      <table class="scr-table" id="scr-dt-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Symbol</th>
+            <th>Price</th>
+            <th title="Day change % vs prior close">Day%</th>
+            <th title="Today vol ÷ 30d avg vol (Aziz p.31 — ≥1.5× = Stock in Play)">Rel Vol</th>
+            <th title="5-min RSI(14) intraday">RSI14</th>
+            <th title="Price vs VWAP — institutional benchmark (Elder p.212)">vs VWAP</th>
+            <th title="Elder Impulse System: 🟢 EMA13↑+MACDH↑=Buy · 🔵 Mixed=Neutral · 🔴 Both↓=No longs (Elder p.47) — exception: RSI Dip Red PF 1.82">Impulse</th>
+            <th title="Backtested setup: Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37">Setup</th>
+            <th title="Backtested profit factor — 2yr, next-day open→close">PF</th>
+            <th title="Backtested avg next-day return per signal">Ret%</th>
+            <th title="⭐ top-5 backtested · 📌 O'Neill Pocket Pivot (up-day vol > any down-day in prior 10)">Pick</th>
+          </tr>
+        </thead>
+        <tbody id="scr-dt-tbody">
+          <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+            Click <b>↻ Refresh</b> to load live data
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div><!-- /scr-pane-stocks -->
+
+  <!-- ── Pane: Options ── -->
+  <div class="scr-pane" id="scr-pane-options">
+    <div class="scr-section-hdr">
+      <span class="scr-section-title">Options Setups</span>
+      <span class="scr-section-sub">Top 15 · ranked by directional accuracy · Connors 66.4% → Bull Flag 61.5% → RSI Dip 53.7%</span>
+      <span class="scr-section-ref">IVR §2 · DTE 21-28 (Saliba) · Structure (Volatile Markets p.104)</span>
+    </div>
+    <div class="scr-table-wrap">
+      <table class="scr-table" id="scr-opt-table">
+        <thead>
+          <tr>
+            <th title="Signal quality tier">Source</th>
+            <th>Symbol</th>
+            <th title="Direction and trigger signal">Direction / Signal</th>
+            <th title="Backtested directional hit rate">Dir%</th>
+            <th title="Backtested profit factor for this setup">PF</th>
+            <th title="ATM Call if HV≤45% · Debit Spread if HV>45% (Volatile Markets p.104)">Structure</th>
+            <th title="Target expiry — prefer DTE 21-28 (Saliba)">Expiry</th>
+            <th title="Days to expiration">DTE</th>
+            <th title="IV Rank — naked if IVR<30, spread if IVR≥30 (KB §2)">IVR</th>
+            <th title="Max risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $</th>
+            <th title="Action based on backtested edge">Action</th>
+            <th title="Place limit order via Alpaca (paper by default)">Execute</th>
+          </tr>
+        </thead>
+        <tbody id="scr-opt-tbody">
+          <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+            No active signals — Connors RSI(2)&lt;10 triggers after market close · intraday setups populate once market opens
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div><!-- /scr-pane-options -->
 
 </div><!-- /screener-panel -->
 

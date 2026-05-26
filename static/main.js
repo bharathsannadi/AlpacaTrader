@@ -1991,6 +1991,16 @@ function scrRefresh() {
   socket.emit("get_screener", { force: true });
 }
 
+// ── Inner screener tab switch ─────────────────────────────────────────────────
+function scrSwitchTab(tab) {
+  ["stocks", "options"].forEach(t => {
+    const btn  = document.getElementById("scr-tab-" + t);
+    const pane = document.getElementById("scr-pane-" + t);
+    if (btn)  btn.classList.toggle("active",  t === tab);
+    if (pane) pane.classList.toggle("active", t === tab);
+  });
+}
+
 function _scrStartClock() {
   if (_scrAutoId) return;
   _scrAutoId = setInterval(() => {
@@ -2017,7 +2027,11 @@ function _renderDtTable(rows) {
 
   const valid   = rows.filter(r => r.valid);
   const neutral = rows.filter(r => !r.valid);
-  const all     = [...valid, ...neutral];
+  const all     = [...valid, ...neutral].slice(0, 15);
+
+  // Update tab count badge
+  const countEl = document.getElementById("scr-stocks-count");
+  if (countEl) countEl.textContent = all.length || "—";
 
   if (!all.length) {
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
@@ -2108,14 +2122,20 @@ function _renderOptTable(rows) {
   const tbody = document.getElementById("scr-opt-tbody");
   if (!tbody) return;
 
-  if (!rows.length) {
+  const display = rows.slice(0, 15);
+
+  // Update tab count badge
+  const optCountEl = document.getElementById("scr-options-count");
+  if (optCountEl) optCountEl.textContent = display.length || "—";
+
+  if (!display.length) {
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">
       No active signals today — Connors RSI(2) &lt; 10 triggers after market close ·
       intraday setups populate once market opens</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = rows.map((o, idx) => {
+  tbody.innerHTML = display.map((o, idx) => {
     // Badge color by source quality
     const badgeColor =
       o.badge.includes("Proven")   ? "#a78bfa" :
@@ -2193,7 +2213,7 @@ function _renderOptTable(rows) {
   }).join("");
 
   // Store rows for execute function to reference
-  window._scrOptRows = rows;
+  window._scrOptRows = display;
 }
 
 // ── SocketIO handlers ─────────────────────────────────────────────────────────
