@@ -59,20 +59,36 @@ the dependencies because Homebrew Python and the venv site-packages are split.
 
 ## How to test
 
-There is **no test suite yet** — adding one is the top item on the post-safety
-todo list. Until then, manual verification:
+```bash
+# Install dev dependencies (one-time)
+pip install -r requirements-dev.txt
+
+# Run the full suite
+PYTHONPATH=venv/lib/python3.11/site-packages \
+  /usr/local/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/bin/python3.11 \
+  -m pytest tests/ -v
+
+# Or with the venv activated:
+source venv/bin/activate
+pytest tests/ -v
+```
+
+The suite is hermetic — no network calls, no Alpaca, no real order placement.
+It covers `security.py` validators + lockout, `screener_executor` fill
+verification + risk constants, and the auto-exec dedup persistence layer. See
+[`tests/README.md`](tests/README.md) for what's covered and what's still
+manual-only. Whole suite should finish in under 25 seconds.
+
+**Manual smoke checks** (post-deploy or post-restart):
 
 ```bash
-# Server health
+# Server health (includes logged_in flag)
 curl -s http://localhost:5000/health
 
-# Module imports (catches syntax errors quickly)
+# Module imports (catches syntax errors before reload)
 PYTHONPATH=venv/lib/python3.11/site-packages \
   /usr/local/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/bin/python3.11 \
   -c "import sys; sys.path.insert(0,'scripts'); import app; print('OK')"
-
-# Test Alpaca credentials in .env
-# (see scripts/app.py:_auto_login for the canonical path)
 ```
 
 ---

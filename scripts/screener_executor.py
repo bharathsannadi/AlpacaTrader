@@ -56,6 +56,62 @@ def _make_clients():
     return tc, oc, paper
 
 
+def _normalize_alpaca_status(raw: str) -> str:
+    """Collapse Alpaca's many status enum values into the categories our
+    rollback / dedup logic actually cares about."""
+    s = (raw or "").lower().split(".")[-1]
+    if s in ("filled", "done_for_day"):
+        return "filled"
+    if s == "partially_filled":
+        return "partial"
+    if s in ("canceled", "cancelled", "expired", "rejected", "suspended"):
+        return "rejected"
+    return "pending"   # new, accepted, pending_new, accepted_for_bidding, etc.
+
+
+def _verify_fill(tc, order_id: str, timeout_sec: int = 30,
+                 poll_interval: float = 2.0) -> dict:
+    """Poll Alpaca for the order's terminal status.
+
+    Returns a dict the caller can use to decide success / failure / rollback:
+        status       — "filled" | "partial" | "rejected" | "pending"
+        filled_qty   — int
+        filled_avg_price — float | None
+        raw_status   — Alpaca's raw status string (for logs)
+
+    "pending" means we timed out before the order reached a terminal state.
+    For limit orders that's expected when our limit is far from the touch;
+    the caller should NOT treat pending as a hard failure, only as "unknown
+    yet". Terminal-rejection caller can then trigger rollback safely.
+    """
+    import time as _time
+    terminal = {"filled", "partial", "rejected"}
+    deadline = _time.time() + timeout_sec
+    last = {"status": "pending", "filled_qty": 0,
+            "filled_avg_price": None, "raw_status": "unknown"}
+    while _time.time() < deadline:
+        try:
+            order = tc.get_order_by_id(order_id)
+            raw   = str(order.status)
+            cat   = _normalize_alpaca_status(raw)
+            try:
+                fq = int(order.filled_qty or 0)
+            except (TypeError, ValueError):
+                fq = 0
+            try:
+                fap = float(order.filled_avg_price) if order.filled_avg_price else None
+            except (TypeError, ValueError):
+                fap = None
+            last = {"status": cat, "filled_qty": fq,
+                    "filled_avg_price": fap, "raw_status": raw.split(".")[-1]}
+            if cat in terminal:
+                return last
+        except Exception as e:
+            log.warning(f"  fill check error for {order_id}: {e}")
+        _time.sleep(poll_interval)
+    return last
+
+
 def _live_option_mid(opt_client, occ: str) -> float | None:
     """Get live mid price for an OCC symbol via Alpaca data API.
     Falls back to yfinance if Alpaca unavailable."""
@@ -271,6 +327,24 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         log.info(f"  BTO {atm_occ}  lmt=${long_limit:.2f}  id={long_order_id}  paper={paper}")
         result["long_order_id"] = long_order_id
 
+        # ── Fill verification (BTO) ──────────────────────────────────────────
+        # Catches the case where submit_order succeeded but Alpaca rejected
+        # the order downstream (insufficient buying power, bad contract, etc.)
+        long_fill = _verify_fill(tc, long_order_id)
+        result["long_fill_status"]   = long_fill["status"]
+        result["long_filled_qty"]    = long_fill["filled_qty"]
+        result["long_fill_price"]    = long_fill["filled_avg_price"]
+        log.info(f"  BTO fill: {long_fill['raw_status']}  qty={long_fill['filled_qty']}  "
+                 f"avg=${long_fill['filled_avg_price'] or 0:.2f}")
+
+        if long_fill["status"] == "rejected":
+            # Order was rejected downstream — no position taken, no rollback
+            # needed. Mark trade as failed and return.
+            result["error"]   = f"BTO rejected by Alpaca: {long_fill['raw_status']}"
+            result["message"] = f"❌ {sym} BTO rejected: {long_fill['raw_status']}"
+            log.error(result["message"])
+            return result
+
         # ── STO short leg (spread) ────────────────────────────────────────────
         short_order_id   = None
         actual_short_mid = 0.0
@@ -290,6 +364,20 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                 short_order_id = str(order.id)
                 actual_short_mid = live_short_mid
                 log.info(f"  STO {short_occ}  lmt=${short_limit:.2f}  id={short_order_id}")
+
+                # Verify STO didn't get rejected downstream. If it did, we
+                # have an unhedged long — trigger the same rollback path as
+                # a submit failure (cancel BTO if unfilled, flatten if filled).
+                short_fill = _verify_fill(tc, short_order_id)
+                result["short_fill_status"] = short_fill["status"]
+                result["short_filled_qty"]  = short_fill["filled_qty"]
+                result["short_fill_price"]  = short_fill["filled_avg_price"]
+                log.info(f"  STO fill: {short_fill['raw_status']}  "
+                         f"qty={short_fill['filled_qty']}")
+                if short_fill["status"] == "rejected":
+                    raise RuntimeError(
+                        f"STO rejected downstream by Alpaca: {short_fill['raw_status']}"
+                    )
             except Exception as e:
                 # ── Naked-leg rollback ─────────────────────────────────────
                 # The STO failed AFTER the BTO was submitted. To avoid being
