@@ -39,3 +39,4 @@ venv/
 .claude/
 .claude/session_summary.md
 .claude/settings.local.json
+logs/

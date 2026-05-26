@@ -161,19 +161,53 @@ All settings are adjustable from the dashboard UI without restarting the server.
 ## Project structure
 
 ```
+CLAUDE.md              Claude Code agent guidance — read this first if editing
+.env.example           Documented credential template (copy to .env, chmod 600)
+
 scripts/
-  app.py               Flask + SocketIO server, state management, auto-scheduler
+  app.py               Flask + SocketIO server, state, auto-scheduler, _auto_login
   spy_auto_trader.py   Trading logic, Alpaca API calls, indicator stack
+  daily_trader.py      Connors RSI(2) daily-bar strategy
+  screener_engine.py   Multi-strategy live screener
+  screener_executor.py Options order placement (manual + auto-execute)
   security.py          Login lockout, input validators, security headers
   news_filter.py       Finnhub / yfinance headline scan → veto flag
   trade_memory.py      ChromaDB trade memory with custom numpy embedder
   debate.py            Bull/Bear LLM debate layer (Claude Haiku)
-templates/
-  index.html           Dashboard UI
-static/
-  main.js              Chart, approval modal, drag-drop persistence
-  lightweight-charts.js  TradingView charting library
+
+templates/index.html   Dashboard UI (single template)
+static/main.js         Chart, screener, backtest, approval modal
+
+docs/
+  README.md            Index of operational docs
+  DEPLOYMENT.md        First-time setup, launchd install
+  AUTO_EXECUTE.md      Headless options auto-execution + safety rails
+  RUNBOOK.md           Daily ops, troubleshooting, "why isn't it trading?"
+
+deploy/launchd/        launchd plist templates (under version control)
+
+data/                  Runtime state (gitignored) — auto_exec_state.json etc.
 ```
+
+---
+
+## Headless trading (NEW)
+
+The server can now auto-start at machine boot and trade options without any
+browser interaction:
+
+1. `_auto_login` reads `ALPACA_AUTO_*` from `.env` and connects to Alpaca on startup
+2. The screener auto-refreshes every 90s during market hours
+3. If **⬛ Auto-Execute** is armed (button in screener topbar), ✅ BUY rows
+   are auto-placed via `screener_executor`, respecting:
+   - $400 max per trade
+   - 3 orders per day cap
+   - One execution per symbol per day (persisted across restarts)
+   - 2% daily loss circuit breaker (auto-disarms on breach)
+   - Naked-leg rollback if a debit-spread STO fails
+
+Full details in [`docs/AUTO_EXECUTE.md`](docs/AUTO_EXECUTE.md). Default is
+disarmed — you have to click the button in the UI to enable it.
 
 ---
 
