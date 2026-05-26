@@ -1983,11 +1983,61 @@ def _run_backtest_task(symbols: list, years: float, source: str, bar_size: str,
     _emit(f"✅ Backtest complete — {len(results)} result rows")
 
 
+# ── Auto-login at startup ─────────────────────────────────────────────────────
+def _auto_login():
+    """
+    If ALPACA_AUTO_KEY + ALPACA_AUTO_SECRET are present in .env (or environment),
+    connect to Alpaca automatically at startup — no browser login required.
+    The server begins monitoring positions and executing scheduled trades
+    immediately. Any browser that connects later will still see the login
+    overlay (for UI auth) but the backend is already live.
+    """
+    socketio.sleep(3)   # let the server fully bind before hitting Alpaca
+
+    raw_key    = os.environ.get("ALPACA_AUTO_KEY", "").strip()
+    raw_secret = os.environ.get("ALPACA_AUTO_SECRET", "").strip()
+    raw_paper  = os.environ.get("ALPACA_AUTO_PAPER", "true").strip().lower()
+
+    if not raw_key or not raw_secret:
+        log.info("[auto-login] No credentials in .env — waiting for browser login.")
+        return
+
+    try:
+        api_key    = validate_api_key(raw_key)
+        api_secret = validate_api_secret(raw_secret)
+        paper      = raw_paper not in ("false", "0", "no", "live")
+    except ValueError as e:
+        log.error(f"[auto-login] Invalid credentials in .env: {e}")
+        return
+
+    account, ok, err = trader.init_clients(api_key, api_secret, paper=paper)
+    if not ok:
+        log.error(f"[auto-login] Alpaca connection failed: {err}")
+        return
+
+    with _state_lock:
+        state["logged_in"]  = True
+        state["paper_mode"] = paper
+
+    trader.init_memory(enabled=state.get("trade_memory_enabled", True))
+    trader.init_debate(enabled=state.get("debate_enabled", True))
+    trader.init_news_filter(enabled=state.get("news_filter_enabled", True))
+    trader.DRY_RUN            = state.get("dry_run", False)
+    trade_approval.auto_trade = state.get("auto_trade", True)
+
+    mode_str = "PAPER" if paper else "LIVE"
+    log.info(
+        f"[auto-login] ✅ Connected to Alpaca {mode_str} — "
+        f"key={api_key[:6]}… equity=${float(account.equity):,.2f}"
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
     socketio.start_background_task(position_monitor)
+    socketio.start_background_task(_auto_login)  # connect to Alpaca on boot if .env has creds
 
     print("\n" + "=" * 55)
     print("  SPY Auto Trader — Dashboard")
