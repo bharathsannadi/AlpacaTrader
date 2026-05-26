@@ -1894,8 +1894,15 @@ def _run_backtest_task(symbols: list, years: float, source: str, bar_size: str,
     def _emit(msg: str, level: str = "INFO"):
         socketio.emit("backtest_log", {"message": msg, "level": level}, to=sid)
 
-    intraday_strats = [s for s in strategies if s in ("orb", "vwap", "ema", "rsi_gate")]
-    daily_strats    = [s for s in strategies if s in ("breakout", "bull_flag", "rsi_dip", "gap_vol")]
+    _INTRADAY_KEYS = {"orb", "vwap", "ema", "rsi_gate"}
+    _DAILY_KEYS    = {
+        # Core validated (KB §DT1–DT5)
+        "breakout", "bull_flag", "rsi_dip", "gap_vol",
+        # Extended KB-derived strategies
+        "rsi_dip_red", "nr7", "bb_squeeze", "pocket_pivot", "pbs", "turtle_soup",
+    }
+    intraday_strats = [s for s in strategies if s in _INTRADAY_KEYS]
+    daily_strats    = [s for s in strategies if s in _DAILY_KEYS]
     days_intraday   = min(59, int(years * 365))   # yfinance 5-min cap
 
     _emit(f"── Backtest ─ {len(symbols)} symbols · {years}yr · {source} · {bar_size} bars ──")

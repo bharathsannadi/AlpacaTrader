@@ -373,8 +373,26 @@ def _generate_signals_filtered(day_bars: pd.DataFrame, strategies: list) -> list
 def _generate_daily_signals(daily_df: pd.DataFrame, strategies: list,
                             vol_min: float = 1.2) -> list[dict]:
     """
-    Replay our 4 screener daily setups on historical daily bars.
-    strategies: subset of ["breakout","bull_flag","rsi_dip","gap_vol"]
+    Replay screener daily setups on historical daily bars.
+
+    All KB rules implemented (cross-referenced from knowledge_base.md):
+      §DT2 Breakout    – new 50d high, RSI14 55-78, relVol>vol_min,
+                         NOT chasing (≤3% above high50), Impulse not Red
+      §DT4 RSI Dip     – RSI14<35, RSI2<20, ABOVE 200-day MA (§T9 critical filter)
+                         Red Impulse is BETTER (PF 1.82) — not filtered out
+      §DT5 Gap+Vol     – gap>1%, relVol≥max(vol_min,1.5)
+      §DT3 Bull Flag   – 4d surge>3%, today_range<65% prev_range, RSI50-78,
+                         Impulse not Red
+      §T6  RSI Dip+Red – RSI Dip + Red Impulse + FI2d<0 = best sub-condition PF 1.82
+      §DT14 NR7        – narrowest range in 7 bars → volatility breakout (Cooper)
+      §T13  BB Squeeze – Bollinger Bandwidth at 6-month low → directional breakout
+      §T8   Pocket Pivot – up-day volume > max down-day vol of prior 10 sessions
+      §T22  PBS        – Pristine Buy Setup: 3+ consec lower-H/lower-L/red bars
+      §DT8  Turtle Soup – new 20-day low then recovery = false breakdown (Raschke)
+
+    strategies: subset of ["breakout","bull_flag","rsi_dip","gap_vol",
+                            "rsi_dip_red","nr7","bb_squeeze",
+                            "pocket_pivot","pbs","turtle_soup"]
     """
     signals = []
     if len(daily_df) < 55:
@@ -382,62 +400,190 @@ def _generate_daily_signals(daily_df: pd.DataFrame, strategies: list,
 
     df = daily_df.copy()
 
-    # RSI 14
+    # ── RSI 14
     delta = df["Close"].diff()
     gain  = delta.clip(lower=0); loss = (-delta).clip(lower=0)
     ag    = gain.ewm(span=14, adjust=False).mean()
     al    = loss.ewm(span=14, adjust=False).mean()
     df["rsi14"] = 100 - (100 / (1 + ag / al.replace(0, np.nan)))
 
-    # RSI 2
+    # ── RSI 2
     g2 = delta.clip(lower=0); l2 = (-delta).clip(lower=0)
     ag2 = g2.ewm(span=2, adjust=False).mean(); al2 = l2.ewm(span=2, adjust=False).mean()
-    df["rsi2"]  = 100 - (100 / (1 + ag2 / al2.replace(0, np.nan)))
+    df["rsi2"] = 100 - (100 / (1 + ag2 / al2.replace(0, np.nan)))
 
-    # 50-day prior high (shift 1 so today's bar doesn't include itself)
+    # ── 50-day prior high (shift 1 so today's bar doesn't include itself)
     df["high50"] = df["High"].rolling(51).max().shift(1)
 
-    # 20-day ADV
-    df["adv20"]    = df["Volume"].rolling(20).mean().shift(1)
+    # ── 20-day ADV & vol ratio
+    df["adv20"]     = df["Volume"].rolling(20).mean().shift(1)
     df["vol_ratio"] = df["Volume"] / df["adv20"].replace(0, np.nan)
 
-    # Gap %
+    # ── Gap %
     df["gap_pct"] = (df["Open"] / df["Close"].shift(1) - 1) * 100
 
+    # ── 200-day MA — §T9: "do NOT use RSI(2) on stocks below 200-day MA. Ever."
+    df["ma200"] = df["Close"].rolling(200).mean()
+
+    # ── Elder Impulse System (§T6): EMA13 direction + MACD-Histogram direction
+    #    Green = both rising (momentum setups: enter) | Red = both falling
+    #    For Breakout/Bull Flag: Red = avoid. For RSI Dip: Red = BETTER (PF 1.82)
+    df["ema13"]    = df["Close"].ewm(span=13, adjust=False).mean()
+    df["ema26"]    = df["Close"].ewm(span=26, adjust=False).mean()
+    macd_line      = df["ema13"] - df["ema26"]
+    macd_signal    = macd_line.ewm(span=9, adjust=False).mean()
+    df["macd_h"]   = macd_line - macd_signal
+    df["ema13_up"] = df["ema13"] > df["ema13"].shift(1)
+    df["macdh_up"] = df["macd_h"] > df["macd_h"].shift(1)
+    df["impulse_green"] = df["ema13_up"] & df["macdh_up"]
+    df["impulse_red"]   = (~df["ema13_up"]) & (~df["macdh_up"])
+
+    # ── Force Index FI2d (Elder §T7): 2-day EMA of (Close − PrevClose) × Volume
+    #    FI2d < 0 during dip = "real" selling pressure → optimal RSI Dip entry
+    fi_raw     = (df["Close"] - df["Close"].shift(1)) * df["Volume"]
+    df["fi2d"] = fi_raw.ewm(span=2, adjust=False).mean()
+
+    # ── 20-day low for Turtle Soup (Raschke §DT8)
+    df["low20"] = df["Low"].rolling(21).min().shift(1)
+
+    # ── Bollinger Band Squeeze (§T13 Method I, §DT12)
+    #    Bandwidth = (Upper - Lower) / Middle; at 6-month low → coiling → breakout
+    bb_mid    = df["Close"].rolling(20).mean()
+    bb_std    = df["Close"].rolling(20).std()
+    bb_bw     = (bb_mid + 2*bb_std - (bb_mid - 2*bb_std)) / bb_mid.replace(0, np.nan)
+    bw_6m_min = bb_bw.rolling(126).min()
+    df["bb_squeeze"] = (bb_bw <= bw_6m_min * 1.05).fillna(False)  # ≤5% above 6-month min
+
+    # ── NR7 — Narrowest Range of last 7 bars (Cooper §DT14)
+    #    "The breakout from NR7 often produces a trend day" — buy stop above NR7 high
+    df["day_range"]  = df["High"] - df["Low"]
+    range7_max       = df["day_range"].rolling(7).max().shift(1)
+    df["nr7"]        = (df["day_range"] < range7_max).fillna(False)
+
+    # ── Pocket Pivot (Morales/Kacher §T8)
+    #    Up day AND today's volume > highest down-day volume of prior 10 sessions
+    #    Signals hidden institutional accumulation before the full breakout
+    is_up            = df["Close"] >= df["Open"]
+    vol_on_down_days = df["Volume"].where(~is_up, 0)
+    max_down_vol10   = vol_on_down_days.rolling(10).max().shift(1)
+    df["pocket_pivot"] = (is_up & (df["Volume"] > max_down_vol10)).fillna(False)
+
+    # ── Pristine Buy Setup / PBS (Velez §T22)
+    #    3+ consecutive bars: lower high + lower low + red close = Minor Stage 4 in Major Stage 2
+    #    Entry: buy when stock trades above prior day's high
+    lower_high  = (df["High"]  < df["High"].shift(1)).astype(int)
+    lower_low   = (df["Low"]   < df["Low"].shift(1)).astype(int)
+    red_bar     = (df["Close"] < df["Open"]).astype(int)
+    all_pbs     = lower_high & lower_low & red_bar
+    df["pbs_3"] = all_pbs.rolling(3).sum().shift(1)  # count of prior 3 bars all meeting criteria
+
     for i in range(55, len(df)):
-        row  = df.iloc[i]
+        row     = df.iloc[i]
         close   = float(row["Close"])
+        high_   = float(row["High"])
+        low_    = float(row["Low"])
         rsi14   = float(row["rsi14"])  if pd.notna(row["rsi14"])   else 50.0
         rsi2    = float(row["rsi2"])   if pd.notna(row["rsi2"])    else 50.0
         high50  = float(row["high50"]) if pd.notna(row["high50"])  else close
         vol_r   = float(row["vol_ratio"]) if pd.notna(row["vol_ratio"]) else 1.0
         gap_pct = float(row["gap_pct"])   if pd.notna(row["gap_pct"])   else 0.0
+        ma200   = float(row["ma200"])  if pd.notna(row["ma200"])   else 0.0
+        fi2d    = float(row["fi2d"])   if pd.notna(row["fi2d"])    else 0.0
+        low20   = float(row["low20"])  if pd.notna(row["low20"])   else low_
+        impulse_green = bool(row["impulse_green"]) if pd.notna(row["impulse_green"]) else False
+        impulse_red   = bool(row["impulse_red"])   if pd.notna(row["impulse_red"])   else False
+        bb_squeeze    = bool(row["bb_squeeze"])    if pd.notna(row["bb_squeeze"])    else False
+        nr7           = bool(row["nr7"])           if pd.notna(row["nr7"])           else False
+        pocket_pivot  = bool(row["pocket_pivot"])  if pd.notna(row["pocket_pivot"])  else False
+        pbs_3         = float(row["pbs_3"]) if pd.notna(row["pbs_3"]) else 0.0
 
-        # ── BREAKOUT ──
+        # 200-day MA filter (NaN until bar 200; signals simply don't fire before then)
+        above_200ma = (ma200 > 0 and close > ma200)
+
+        # ── BREAKOUT (§DT2) ──────────────────────────────────────────────────
+        # New 50d high · RSI14 55-78 · relVol>vol_min
+        # Chase filter (§DT2): skip if already >3% above the 50d high
+        # Impulse filter (§T6): Green/Blue OK; Red = no momentum setups
         if "breakout" in strategies:
-            if close > high50 and 55 <= rsi14 <= 78 and vol_r >= vol_min:
+            not_chasing = close <= high50 * 1.03   # §DT2: "do NOT chase >3% from high"
+            impulse_ok  = not impulse_red           # §T6: Breakout+Red PF=0.00
+            if (close > high50 and not_chasing and
+                    55 <= rsi14 <= 78 and vol_r >= vol_min and impulse_ok):
                 signals.append({"time": df.index[i], "setup": "Breakout",
                     "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
 
-        # ── RSI DIP ──
+        # ── RSI DIP (§DT4, §T9) ──────────────────────────────────────────────
+        # RSI14<35 · RSI2<20 · ABOVE 200MA (§T9 critical: "edge evaporates below 200MA")
+        # Red Impulse acceptable & BETTER (§T6: PF 1.82 vs 1.41) — NOT filtered out
         if "rsi_dip" in strategies:
-            if rsi14 < 35 and rsi2 < 20:
+            if rsi14 < 35 and rsi2 < 20 and above_200ma:
                 signals.append({"time": df.index[i], "setup": "RSI Dip",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r,
+                    "impulse_red": impulse_red, "fi2d_neg": fi2d < 0})
+
+        # ── RSI DIP + RED IMPULSE (§T6 best sub-group: PF 1.82) ─────────────
+        # RSI Dip + Red Impulse + FI2d<0 = all three mean-reversion signals aligned
+        # "Maximum conviction" (Elder §T7): extreme oversold + sustained selling + bearish momentum
+        if "rsi_dip_red" in strategies:
+            if rsi14 < 35 and rsi2 < 20 and above_200ma and impulse_red and fi2d < 0:
+                signals.append({"time": df.index[i], "setup": "RSI Dip+Red",
                     "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
 
-        # ── GAP + VOL ──
+        # ── GAP + VOL (§DT5) ─────────────────────────────────────────────────
         if "gap_vol" in strategies:
             if gap_pct > 1.0 and vol_r >= max(vol_min, 1.5):
                 signals.append({"time": df.index[i], "setup": "Gap+Vol",
                     "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
 
-        # ── BULL FLAG ──
+        # ── BULL FLAG (§DT3) ─────────────────────────────────────────────────
+        # Prior 4d surge >3% · today_range <65% of prior range · RSI 50-78
+        # Impulse filter (§T6): Green PF 2.29; Red never naturally occurs
         if "bull_flag" in strategies and i >= 4:
-            surge = (float(df.iloc[i-1]["Close"]) / float(df.iloc[i-4]["Close"]) - 1) * 100
-            today_range = (float(row["High"]) - float(row["Low"])) / max(close, 0.01)
-            prev_range  = (float(df.iloc[i-1]["High"]) - float(df.iloc[i-1]["Low"])) / max(float(df.iloc[i-1]["Close"]), 0.01)
-            if surge > 3.0 and today_range < prev_range * 0.65 and 50 <= rsi14 <= 78:
+            surge      = (float(df.iloc[i-1]["Close"]) / float(df.iloc[i-4]["Close"]) - 1) * 100
+            t_range    = (high_ - low_) / max(close, 0.01)
+            p_range    = ((float(df.iloc[i-1]["High"]) - float(df.iloc[i-1]["Low"])) /
+                         max(float(df.iloc[i-1]["Close"]), 0.01))
+            impulse_ok = not impulse_red
+            if surge > 3.0 and t_range < p_range * 0.65 and 50 <= rsi14 <= 78 and impulse_ok:
                 signals.append({"time": df.index[i], "setup": "Bull Flag",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── NR7 — Narrowest Range 7 (Cooper §DT14) ──────────────────────────
+        # Today's range < any of prior 7 bars = coiling energy → explosive move
+        # Long-only (above 200MA): direction = trend
+        if "nr7" in strategies and nr7 and above_200ma:
+            signals.append({"time": df.index[i], "setup": "NR7",
+                "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── BOLLINGER BAND SQUEEZE (§T13, §DT12) ────────────────────────────
+        # Bandwidth at 6-month low = volatility compression → breakout imminent
+        # Filter: above 200MA + Green Impulse (trend-confirmed squeeze)
+        if "bb_squeeze" in strategies and bb_squeeze and above_200ma and impulse_green:
+            signals.append({"time": df.index[i], "setup": "BB Squeeze",
+                "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── POCKET PIVOT (Morales/Kacher §T8) ───────────────────────────────
+        # Up-day volume > highest down-day volume of prior 10 sessions
+        # Must be near 50d area (≤10% extended) + above 200MA
+        if "pocket_pivot" in strategies and pocket_pivot and above_200ma:
+            if close <= high50 * 1.10:  # not extended more than 10% above 50d high
+                signals.append({"time": df.index[i], "setup": "Pocket Pivot",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── PRISTINE BUY SETUP / PBS (Velez §T22) ───────────────────────────
+        # 3+ consecutive bars: lower high + lower low + red close (Minor Stage 4 pullback)
+        # Entry: buy when today's price > prior day's high (continuation signal)
+        if "pbs" in strategies and pbs_3 >= 3 and above_200ma:
+            signals.append({"time": df.index[i], "setup": "PBS",
+                "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── TURTLE SOUP / 20-Day Low Reversal (Raschke §DT8) ────────────────
+        # Prior day made new 20-day low (stop-run), today recovers above 20d low = false breakdown
+        # Confirms exhaustion (also excellent when combined with RSI Dip)
+        if "turtle_soup" in strategies and i >= 1 and pd.notna(row["low20"]):
+            prev_low = float(df.iloc[i-1]["Low"])
+            if prev_low <= low20 and close > low20 and above_200ma:
+                signals.append({"time": df.index[i], "setup": "Turtle Soup",
                     "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
 
     return signals
@@ -539,11 +685,23 @@ def run_daily_backtest(symbol: str, years: float, source: str = "yfinance",
     signals = _generate_daily_signals(df, strategies, vol_min=vol_min)
     print(f"  Total signals: {len(signals)}")
 
+    # Map strategy keys → display names (covers all KB-validated strategies)
+    setup_map = {
+        "breakout":     "Breakout",
+        "bull_flag":    "Bull Flag",
+        "rsi_dip":      "RSI Dip",
+        "gap_vol":      "Gap+Vol",
+        "rsi_dip_red":  "RSI Dip+Red",
+        "nr7":          "NR7",
+        "bb_squeeze":   "BB Squeeze",
+        "pocket_pivot": "Pocket Pivot",
+        "pbs":          "PBS",
+        "turtle_soup":  "Turtle Soup",
+    }
+
     results = []
     for setup in strategies:
-        setup_map = {"breakout": "Breakout", "bull_flag": "Bull Flag",
-                     "rsi_dip": "RSI Dip", "gap_vol": "Gap+Vol"}
-        setup_name = setup_map.get(setup, setup)
+        setup_name = setup_map.get(setup, setup.replace("_", " ").title())
         sigs = [s for s in signals if s["setup"] == setup_name]
 
         # Use tighter stops for daily holds
@@ -885,7 +1043,9 @@ if __name__ == "__main__":
     parser.add_argument("--bar-size",   default="daily", choices=["daily","5min"])
     parser.add_argument("--strategies", nargs="+",
                         default=["breakout","bull_flag","rsi_dip","gap_vol"],
-                        help="Strategies: breakout bull_flag rsi_dip gap_vol orb vwap ema rsi_gate")
+                        help=("Daily strategies: breakout bull_flag rsi_dip gap_vol "
+                              "rsi_dip_red nr7 bb_squeeze pocket_pivot pbs turtle_soup | "
+                              "Intraday: orb vwap ema rsi_gate"))
     parser.add_argument("--stop",       type=float, default=0.08, help="Stop loss fraction (default: 0.08)")
     parser.add_argument("--target",     type=float, default=0.25, help="Profit target fraction (default: 0.25)")
     parser.add_argument("--vol-min",    type=float, default=1.2,  help="Min volume ratio (default: 1.2)")

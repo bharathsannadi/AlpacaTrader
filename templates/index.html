@@ -288,51 +288,193 @@
   .bt-tab { color: var(--cyan) !important; border-bottom-color: transparent !important; }
   .bt-tab.active { background: rgba(34,211,238,0.08) !important; border-bottom-color: var(--cyan) !important; }
 
-  /* ── Backtest panel ── */
-  .bt-panel { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-  .bt-header { display: flex; align-items: center; justify-content: space-between; }
-  .bt-close-btn {
-    background: none; border: 1px solid var(--border); color: var(--muted);
-    border-radius: 4px; padding: 3px 10px; font-size: 11px; cursor: pointer;
-    transition: all .2s;
+  /* ═══════════════════════════════════════════════════════
+     BACKTEST PANEL — Professional Redesign
+     All config via dropdowns · clean section layout
+  ═══════════════════════════════════════════════════════ */
+
+  /* Panel shell */
+  .bt-panel { padding: 0 !important; display: flex; flex-direction: column; min-height: 0; }
+
+  /* Header bar */
+  .bt-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.015); flex-shrink: 0;
   }
-  .bt-close-btn:hover { color: var(--cyan); border-color: var(--cyan); }
-  .bt-controls { display: flex; flex-direction: column; gap: 10px; }
-  .bt-ctrl-group { display: flex; flex-direction: column; gap: 5px; }
-  .bt-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .bt-symbol-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-  .bt-sym-check {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 11px; font-family: var(--mono); font-weight: 600;
-    color: var(--text); cursor: pointer; padding: 3px 8px;
-    border: 1px solid var(--border); border-radius: 4px;
-    background: rgba(255,255,255,0.03); transition: all .15s;
+  .bt-header-left  { display: flex; align-items: center; gap: 8px; }
+  .bt-header-icon  { font-size: 14px; line-height: 1; }
+  .bt-header-title { font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: .03em; }
+  .bt-header-badge {
+    font-size: 10px; color: var(--muted); background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 1px 8px; font-family: var(--mono);
   }
-  .bt-sym-check:hover { border-color: var(--cyan); color: var(--cyan); }
-  .bt-sym-check input { accent-color: var(--cyan); }
-  .bt-days-btns { display: flex; gap: 4px; flex-wrap: wrap; }
-  .bt-day-btn {
+
+  /* Scrollable body */
+  .bt-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+  /* ── Config grid: 3 columns of dropdowns ── */
+  .bt-cfg-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .bt-field {
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 11px 12px; background: var(--card);
+  }
+  .bt-field-label {
+    font-size: 9px; font-weight: 700; color: var(--muted-2);
+    text-transform: uppercase; letter-spacing: .65px; white-space: nowrap;
+  }
+
+  /* Universal select style */
+  .bt-select {
+    width: 100%; padding: 6px 28px 6px 9px;
+    background: rgba(255,255,255,0.05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2364748b'/%3E%3C/svg%3E") no-repeat right 8px center;
+    border: 1px solid var(--border); color: var(--text);
+    border-radius: 5px; font-size: 11px; font-family: var(--mono);
+    cursor: pointer; -webkit-appearance: none; appearance: none;
+    transition: border-color .15s;
+  }
+  .bt-select:focus   { outline: none; border-color: var(--cyan); }
+  .bt-select:hover   { border-color: rgba(148,163,184,.45); }
+  .bt-select option  { background: #0d1526; }
+
+  /* Compact select variant */
+  .bt-select-sm {
+    width: auto; padding: 4px 24px 4px 8px; font-size: 10px;
+    background-position: right 6px center; border-radius: 4px;
+  }
+
+  /* ── Sections ── */
+  .bt-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .bt-section-hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 9px;
+  }
+  .bt-section-label {
+    font-size: 9px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .65px;
+  }
+  .bt-section-actions { display: flex; align-items: center; gap: 7px; }
+
+  /* Count badge */
+  .bt-count-tag {
+    font-size: 10px; color: var(--muted); font-family: var(--mono);
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1px 8px;
+  }
+
+  /* Text-only button */
+  .bt-text-btn {
+    background: none; border: none; color: var(--muted);
+    font-size: 10px; font-family: var(--mono); cursor: pointer; padding: 2px 4px;
+    transition: color .12s;
+  }
+  .bt-text-btn:hover { color: var(--red); }
+
+  /* ── Symbol input row ── */
+  .bt-sym-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .bt-input {
+    flex: 1; padding: 6px 10px;
     background: rgba(255,255,255,0.04); border: 1px solid var(--border);
-    color: var(--muted); border-radius: 4px; padding: 3px 10px;
-    font-size: 11px; font-family: var(--mono); cursor: pointer; transition: all .15s;
+    color: var(--text); border-radius: 5px;
+    font-size: 11px; font-family: var(--mono);
+    transition: border-color .15s;
   }
-  .bt-day-btn:hover  { color: var(--text); border-color: var(--text); }
-  .bt-day-btn.active { color: var(--cyan); border-color: var(--cyan); background: rgba(34,211,238,0.08); }
-  .bt-run-btn { align-self: flex-start; padding: 6px 20px; font-size: 12px; margin-top: 4px; }
-  .bt-run-btn:disabled { opacity: .5; cursor: not-allowed; }
-  .bt-section-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
-  .bt-table-wrap { overflow-x: auto; }
+  .bt-input:focus { outline: none; border-color: var(--cyan); }
+  .bt-input::placeholder { color: rgba(100,116,139,.5); }
+  .bt-btn-add {
+    padding: 6px 14px; background: rgba(34,211,238,0.1);
+    border: 1px solid rgba(34,211,238,0.3); color: var(--cyan);
+    border-radius: 5px; font-size: 11px; font-family: var(--mono);
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .bt-btn-add:hover { background: rgba(34,211,238,0.17); border-color: var(--cyan); }
+
+  /* Symbol chips */
+  .bt-chips { display: flex; flex-wrap: wrap; gap: 5px; min-height: 24px; }
+  .bt-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(34,211,238,0.08); border: 1px solid rgba(34,211,238,0.22);
+    color: var(--cyan); border-radius: 5px; padding: 3px 9px;
+    font-size: 11px; font-family: var(--mono); font-weight: 600;
+  }
+  .bt-chip-x {
+    cursor: pointer; color: rgba(148,163,184,.45);
+    font-size: 14px; line-height: 1; transition: color .1s;
+  }
+  .bt-chip-x:hover { color: var(--red); }
+
+  /* ── Strategy pill grid ── */
+  .bt-strat-sub-label {
+    font-size: 9px; font-weight: 700; color: rgba(100,116,139,.8);
+    text-transform: uppercase; letter-spacing: .6px;
+    margin: 8px 0 5px; padding-left: 1px;
+  }
+  .bt-strat-sub-label:first-child { margin-top: 0; }
+  .bt-strat-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  }
+  .bt-strat-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 9px; cursor: pointer;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 5px; font-size: 10.5px; font-family: var(--mono);
+    color: rgba(148,163,184,.7); transition: all .12s;
+    white-space: nowrap; overflow: hidden; user-select: none;
+  }
+  .bt-strat-pill:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+  .bt-strat-pill:has(input:checked) {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.18);
+    color: var(--text);
+  }
+  .bt-strat-pill input { display: none; }
+  .bt-pill-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; opacity: .4; transition: opacity .12s; }
+  .bt-strat-pill:has(input:checked) .bt-pill-dot { opacity: 1; }
+
+  /* ── Run button ── */
+  .bt-run-wrap { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .bt-run-btn {
+    width: 100%; padding: 10px 0;
+    background: linear-gradient(135deg, rgba(0,229,160,0.12) 0%, rgba(34,211,238,0.09) 100%);
+    border: 1px solid rgba(0,229,160,0.3); color: var(--green);
+    border-radius: 6px; font-size: 12px; font-weight: 700;
+    font-family: var(--mono); cursor: pointer; letter-spacing: .06em;
+    transition: all .15s;
+  }
+  .bt-run-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(0,229,160,0.2) 0%, rgba(34,211,238,0.15) 100%);
+    border-color: var(--green); box-shadow: 0 0 14px rgba(0,229,160,0.08);
+  }
+  .bt-run-btn:disabled { opacity: .38; cursor: not-allowed; }
+
+  /* ── Results ── */
+  .bt-results-wrap { padding: 0; }
+  .bt-results-hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px; background: rgba(255,255,255,0.015);
+    border-bottom: 1px solid var(--border);
+  }
+  .bt-results-title { font-size: 9px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .65px; }
+  .bt-results-meta  { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+  .bt-table-wrap { overflow-x: auto; padding: 0; }
   .bt-table {
     width: 100%; border-collapse: collapse;
     font-size: 11px; font-family: var(--mono);
   }
   .bt-table th {
-    text-align: left; padding: 5px 8px;
-    color: var(--muted); font-weight: 600; font-size: 10px;
+    text-align: left; padding: 7px 10px;
+    color: var(--muted); font-weight: 700; font-size: 9px;
+    letter-spacing: .04em; text-transform: uppercase;
     border-bottom: 1px solid var(--border); white-space: nowrap;
+    background: rgba(255,255,255,0.02);
   }
   .bt-table td {
-    padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.035);
     white-space: nowrap;
   }
   .bt-table tr:hover td { background: rgba(255,255,255,0.03); }
@@ -340,94 +482,50 @@
   .bt-red   { color: var(--red);   font-weight: 700; }
   .bt-cyan  { color: var(--cyan);  font-weight: 700; }
   .bt-muted { color: var(--muted); }
-  .bt-edge-yes { color: var(--green); font-weight: 700; }
-  .bt-edge-no  { color: var(--red);   font-weight: 700; }
-  .bt-edge-marg{ color: #f59e0b;      font-weight: 700; }
-  .bt-note { font-size: 10px; color: var(--muted); font-style: italic; margin-top: 6px; line-height: 1.5; }
-  .bt-log {
-    background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid var(--border);
-    padding: 8px 10px; font-family: var(--mono); font-size: 11px;
-    max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  .bt-edge-yes  { color: var(--green); font-weight: 700; }
+  .bt-edge-no   { color: var(--red);   font-weight: 700; }
+  .bt-edge-marg { color: #f59e0b;      font-weight: 700; }
+  .bt-footnote {
+    font-size: 10px; color: rgba(100,116,139,.65);
+    padding: 7px 14px 10px; line-height: 1.55; border-top: 1px solid var(--border);
   }
-  .bt-log-line { line-height: 1.5; }
-  .bt-log-line.ok  { color: var(--green); }
-  .bt-log-line.err { color: var(--red);   }
-  .bt-log-line.inf { color: var(--muted); }
 
-  /* ── Backtest enhanced controls ── */
-  .bt-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .bt-select {
-    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
-    color: var(--text); border-radius: 4px; padding: 4px 8px;
-    font-size: 11px; font-family: var(--mono); cursor: pointer; width: 100%;
-  }
-  .bt-select:focus { outline: none; border-color: var(--cyan); }
-  .bt-seg { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-  .bt-seg-btn {
-    flex: 1; background: none; border: none; border-right: 1px solid var(--border);
-    color: var(--muted); font-size: 11px; font-family: var(--mono); padding: 4px 0;
-    cursor: pointer; transition: all .15s;
-  }
-  .bt-seg-btn:last-child { border-right: none; }
-  .bt-seg-btn.active { background: rgba(34,211,238,0.12); color: var(--cyan); }
-  .bt-seg-btn:hover:not(.active) { background: rgba(255,255,255,0.04); color: var(--text); }
-  .bt-sym-input-row { display: flex; gap: 5px; margin-bottom: 6px; }
-  .bt-sym-input {
-    flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
-    color: var(--text); border-radius: 4px; padding: 4px 8px;
-    font-size: 11px; font-family: var(--mono);
-  }
-  .bt-sym-input:focus { outline: none; border-color: var(--cyan); }
-  .bt-small-btn {
-    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
-    color: var(--muted); border-radius: 4px; padding: 3px 8px;
-    font-size: 10px; cursor: pointer; transition: all .15s; white-space: nowrap;
-  }
-  .bt-small-btn:hover { color: var(--text); border-color: var(--text); }
-  .bt-add-btn:hover { color: var(--cyan); border-color: var(--cyan); }
-  .bt-rand-btn:hover { color: #a78bfa; border-color: #a78bfa; }
-  .bt-chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; margin-top: 4px; }
-  .bt-chip {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: rgba(34,211,238,0.1); border: 1px solid rgba(34,211,238,0.3);
-    color: var(--cyan); border-radius: 4px; padding: 2px 6px;
-    font-size: 11px; font-family: var(--mono); font-weight: 600;
-  }
-  .bt-chip-x { cursor: pointer; color: rgba(148,163,184,.6); font-size: 12px; line-height: 1; }
-  .bt-chip-x:hover { color: var(--red); }
-  .bt-strategy-group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-  .bt-strat-hdr {
-    font-size: 9px; color: var(--muted); text-transform: uppercase;
-    letter-spacing: .5px; width: 100%; padding-top: 2px;
-  }
-  .bt-strat-check {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 11px; font-family: var(--mono); color: var(--muted);
-    cursor: pointer; padding: 2px 7px;
-    border: 1px solid var(--border); border-radius: 4px;
-    background: rgba(255,255,255,0.02); transition: all .15s;
-  }
-  .bt-strat-check:has(input:checked) {
-    border-color: rgba(34,211,238,0.4); color: var(--cyan);
-    background: rgba(34,211,238,0.07);
-  }
-  .bt-strat-check input { accent-color: var(--cyan); }
-  .bt-param-grid { display: flex; flex-direction: column; gap: 6px; }
-  .bt-param-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .bt-param-lbl { font-size: 10px; color: var(--muted); min-width: 82px; }
-  .bt-sym-toolbar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 5px; }
-  .bt-results-meta { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  /* ── Setup badges ── */
   .bt-setup-badge {
-    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    display: inline-block; padding: 2px 6px; border-radius: 3px;
     font-size: 10px; font-weight: 600; letter-spacing: .02em;
   }
-  .bt-setup-brk  { background: rgba(99,102,241,.2); color: #818cf8; }
+  .bt-setup-brk  { background: rgba(99,102,241,.2);  color: #818cf8; }
   .bt-setup-bfl  { background: rgba(34,197,94,.15);  color: #4ade80; }
   .bt-setup-rsi  { background: rgba(245,158,11,.15); color: #fbbf24; }
   .bt-setup-gap  { background: rgba(239,68,68,.15);  color: #f87171; }
   .bt-setup-orb  { background: rgba(34,211,238,.15); color: #22d3ee; }
   .bt-setup-vwap { background: rgba(168,85,247,.15); color: #c084fc; }
   .bt-setup-intr { background: rgba(148,163,184,.12); color: #94a3b8; }
+  .bt-setup-rdr  { background: rgba(220,38,38,.20);  color: #fca5a5; }
+  .bt-setup-nr7  { background: rgba(124,58,237,.18); color: #a78bfa; }
+  .bt-setup-bbsq { background: rgba(20,184,166,.15); color: #2dd4bf; }
+  .bt-setup-pp   { background: rgba(249,115,22,.15); color: #fb923c; }
+  .bt-setup-pbs  { background: rgba(236,72,153,.15); color: #f472b6; }
+  .bt-setup-ts   { background: rgba(132,204,22,.15); color: #a3e635; }
+
+  /* ── Log ── */
+  .bt-log-hdr {
+    display: flex; align-items: center; padding: 6px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 9px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .6px;
+    background: rgba(255,255,255,0.015);
+  }
+  .bt-log {
+    background: rgba(0,0,0,0.28); font-family: var(--mono); font-size: 10.5px;
+    max-height: 190px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
+    padding: 8px 12px;
+  }
+  .bt-log-line { line-height: 1.55; }
+  .bt-log-line.ok  { color: var(--green); }
+  .bt-log-line.err { color: var(--red);   }
+  .bt-log-line.inf { color: var(--muted); }
 
   /* ── Open Positions card ── */
   .pos-empty { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0; }
@@ -1576,127 +1674,198 @@
 
     <!-- ── Backtest Panel ────────────────────────────────────────────── -->
     <div id="backtest-panel" class="card bt-panel" style="display:none">
+
+      <!-- Header -->
       <div class="bt-header">
-        <span class="card-title" style="margin:0">📊 Backtest</span>
-        <button class="bt-close-btn" onclick="hideBacktest()" title="Back to chart">✕ Chart</button>
+        <div class="bt-header-left">
+          <span class="bt-header-icon">📊</span>
+          <span class="bt-header-title">Backtest Engine</span>
+          <span class="bt-header-badge" id="bt-sym-count">1 symbol</span>
+        </div>
+        <button class="bt-close-btn" onclick="hideBacktest()">← Chart</button>
       </div>
 
-      <!-- ── Controls ── -->
-      <div class="bt-controls">
+      <!-- Scrollable body -->
+      <div class="bt-body">
 
-        <!-- Row 1: Source + Bar Size -->
-        <div class="bt-row-2col">
-          <div class="bt-ctrl-group">
-            <label class="bt-label">Data Source</label>
+        <!-- ── 3×2 config grid — all dropdowns ── -->
+        <div class="bt-cfg-grid">
+          <div class="bt-field">
+            <label class="bt-field-label">Data Source</label>
             <select class="bt-select" id="bt-source" onchange="_btSource=this.value">
               <option value="yfinance">yfinance (free)</option>
-              <option value="polygon">Polygon (API key)</option>
-              <option value="alpaca">Alpaca (API key)</option>
+              <option value="polygon">Polygon (paid API)</option>
+              <option value="alpaca">Alpaca (paid API)</option>
             </select>
           </div>
-          <div class="bt-ctrl-group">
-            <label class="bt-label">Bar Size</label>
-            <div class="bt-seg">
-              <button class="bt-seg-btn" id="bt-bar-5min" onclick="setBtBarSize('5min')">5-min</button>
-              <button class="bt-seg-btn active" id="bt-bar-daily" onclick="setBtBarSize('daily')">Daily</button>
+          <div class="bt-field">
+            <label class="bt-field-label">Resolution</label>
+            <select class="bt-select" id="bt-bar-size" onchange="setBtBarSize(this.value)">
+              <option value="daily" selected>Daily bars</option>
+              <option value="5min">5-min intraday (≤59d)</option>
+            </select>
+          </div>
+          <div class="bt-field">
+            <label class="bt-field-label">Lookback Period</label>
+            <select class="bt-select" id="bt-period" onchange="setBtPeriod(parseFloat(this.value))">
+              <option value="0.5">6 months</option>
+              <option value="1" selected>1 year</option>
+              <option value="2">2 years</option>
+              <option value="3">3 years</option>
+              <option value="5">5 years</option>
+            </select>
+          </div>
+          <div class="bt-field">
+            <label class="bt-field-label">Stop Loss</label>
+            <select class="bt-select" id="bt-stop" onchange="setBtStop(parseFloat(this.value))">
+              <option value="0.08">8% — tight</option>
+              <option value="0.12">12%</option>
+              <option value="0.15">15%</option>
+              <option value="0.20">20%</option>
+              <option value="0.30" selected>30% — options</option>
+              <option value="0.50">50% — wide</option>
+            </select>
+          </div>
+          <div class="bt-field">
+            <label class="bt-field-label">Profit Target</label>
+            <select class="bt-select" id="bt-target" onchange="setBtTarget(parseFloat(this.value))">
+              <option value="0.25">25%</option>
+              <option value="0.50">50%</option>
+              <option value="0.75">75%</option>
+              <option value="1.00" selected>100%</option>
+              <option value="1.50">150%</option>
+              <option value="2.00">200%</option>
+            </select>
+          </div>
+          <div class="bt-field">
+            <label class="bt-field-label">Min Volume Ratio</label>
+            <select class="bt-select" id="bt-vol" onchange="setBtVol(parseFloat(this.value))">
+              <option value="1.0">1.0× — any volume</option>
+              <option value="1.2" selected>1.2× — above avg</option>
+              <option value="1.5">1.5× — elevated</option>
+              <option value="2.0">2.0× — spike only</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- ── Symbols ── -->
+        <div class="bt-section">
+          <div class="bt-section-hdr">
+            <span class="bt-section-label">Symbols</span>
+            <div class="bt-section-actions">
+              <button class="bt-text-btn" onclick="btRandom(5)">🎲 5</button>
+              <button class="bt-text-btn" onclick="btRandom(10)">🎲 10</button>
+              <button class="bt-text-btn" onclick="btRandom(25)">🎲 25</button>
+              <button class="bt-text-btn" onclick="btClear()" style="color:var(--red);opacity:.7">Clear</button>
             </div>
           </div>
-        </div>
-
-        <!-- Row 2: Period -->
-        <div class="bt-ctrl-group">
-          <label class="bt-label">Period</label>
-          <div class="bt-days-btns" id="bt-period-btns">
-            <button class="bt-day-btn"        data-years="0.5" onclick="setBtPeriod(0.5)">6 mo</button>
-            <button class="bt-day-btn active" data-years="1"   onclick="setBtPeriod(1)">1 yr</button>
-            <button class="bt-day-btn"        data-years="2"   onclick="setBtPeriod(2)">2 yr</button>
-            <button class="bt-day-btn"        data-years="3"   onclick="setBtPeriod(3)">3 yr</button>
-            <button class="bt-day-btn"        data-years="5"   onclick="setBtPeriod(5)">5 yr</button>
-          </div>
-          <div id="bt-period-note" style="margin-top:3px;font-size:10px;color:var(--muted)">
-            Daily bars · yfinance up to 5 yr · 5-min bars capped at 59 days
-          </div>
-        </div>
-
-        <!-- Row 3: Symbols -->
-        <div class="bt-ctrl-group">
-          <div class="bt-sym-toolbar">
-            <label class="bt-label" style="margin:0">Symbols</label>
-            <button class="bt-small-btn bt-rand-btn" onclick="btRandom(5)">🎲 5</button>
-            <button class="bt-small-btn bt-rand-btn" onclick="btRandom(10)">🎲 10</button>
-            <button class="bt-small-btn bt-rand-btn" onclick="btRandom(25)">🎲 25</button>
-            <button class="bt-small-btn" onclick="btClear()" style="margin-left:2px">Clear</button>
-            <span style="font-size:10px;color:var(--muted);margin-left:auto" id="bt-sym-count">1 symbol</span>
-          </div>
-          <div class="bt-sym-input-row">
-            <input type="text" class="bt-sym-input" id="bt-sym-input"
+          <div class="bt-sym-row">
+            <input type="text" class="bt-input" id="bt-sym-input"
               placeholder="AAPL, TSLA, NVDA…"
               onkeydown="if(event.key==='Enter')btAddSymbol()"/>
-            <button class="bt-small-btn bt-add-btn" onclick="btAddSymbol()">+ Add</button>
+            <button class="bt-btn-add" onclick="btAddSymbol()">+ Add</button>
           </div>
           <div class="bt-chips" id="bt-chips"></div>
         </div>
 
-        <!-- Row 4: Strategies -->
-        <div class="bt-ctrl-group">
-          <label class="bt-label">Strategies</label>
-          <div class="bt-strategy-group">
-            <span class="bt-strat-hdr">📈 Daily Setups (daily bars)</span>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="breakout" checked> Breakout 50d</label>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="bull_flag" checked> Bull Flag</label>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="rsi_dip" checked> RSI Dip</label>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="gap_vol" checked> Gap + Volume</label>
+        <!-- ── Strategies ── -->
+        <div class="bt-section">
+          <div class="bt-section-hdr">
+            <span class="bt-section-label">Strategies</span>
+            <div class="bt-section-actions">
+              <select class="bt-select bt-select-sm" onchange="btSetStratPreset(this.value);this.value=''">
+                <option value="">Quick preset…</option>
+                <option value="core">Core Daily (4)</option>
+                <option value="extended">+ Extended (10)</option>
+                <option value="intraday">Intraday only</option>
+                <option value="all">Select all</option>
+                <option value="none">Clear all</option>
+              </select>
+            </div>
           </div>
-          <div class="bt-strategy-group" style="margin-top:5px">
-            <span class="bt-strat-hdr">⚡ Intraday Signals (5-min bars, ≤59d)</span>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="orb"> ORB Breakout</label>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="vwap"> VWAP Cross</label>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="ema"> EMA Align</label>
-            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="rsi_gate"> RSI Gate</label>
+
+          <div class="bt-strat-sub-label">📈 Core Daily — validated (KB §DT1–DT5)</div>
+          <div class="bt-strat-grid">
+            <label class="bt-strat-pill" title="New 50d high · RSI14 55-78 · relVol>1.3 · ≤3% from high · Impulse not Red (§DT2)">
+              <input type="checkbox" name="bt-strat" value="breakout" checked>
+              <span class="bt-pill-dot" style="background:#818cf8"></span>Breakout
+            </label>
+            <label class="bt-strat-pill" title="4d surge>3% · tight range · RSI 50-78 · Green Impulse PF 2.29 (§DT3)">
+              <input type="checkbox" name="bt-strat" value="bull_flag" checked>
+              <span class="bt-pill-dot" style="background:#4ade80"></span>Bull Flag
+            </label>
+            <label class="bt-strat-pill" title="RSI14<35 · RSI2<20 · ABOVE 200MA · Red Impulse OK PF 1.82 (§DT4 §T9)">
+              <input type="checkbox" name="bt-strat" value="rsi_dip" checked>
+              <span class="bt-pill-dot" style="background:#fbbf24"></span>RSI Dip
+            </label>
+            <label class="bt-strat-pill" title="Gap>1% · relVol>1.5× · works in any Impulse (§DT5)">
+              <input type="checkbox" name="bt-strat" value="gap_vol" checked>
+              <span class="bt-pill-dot" style="background:#f87171"></span>Gap+Vol
+            </label>
+          </div>
+
+          <div class="bt-strat-sub-label">🔬 Extended Daily — KB rules (§T6–T22)</div>
+          <div class="bt-strat-grid">
+            <label class="bt-strat-pill" title="RSI Dip + Red Impulse + FI2d<0 — all mean-rev signals aligned (§T6 §T7)">
+              <input type="checkbox" name="bt-strat" value="rsi_dip_red">
+              <span class="bt-pill-dot" style="background:#fca5a5"></span>Dip+Red
+            </label>
+            <label class="bt-strat-pill" title="Narrowest range in 7 bars → explosive move next bar (Cooper §DT14)">
+              <input type="checkbox" name="bt-strat" value="nr7">
+              <span class="bt-pill-dot" style="background:#a78bfa"></span>NR7
+            </label>
+            <label class="bt-strat-pill" title="Bollinger Bandwidth at 6-month low → breakout imminent (§T13)">
+              <input type="checkbox" name="bt-strat" value="bb_squeeze">
+              <span class="bt-pill-dot" style="background:#2dd4bf"></span>BB Squeeze
+            </label>
+            <label class="bt-strat-pill" title="Up-day vol > max down-day vol of prior 10 sessions = hidden accumulation (§T8)">
+              <input type="checkbox" name="bt-strat" value="pocket_pivot">
+              <span class="bt-pill-dot" style="background:#fb923c"></span>Pkt Pivot
+            </label>
+            <label class="bt-strat-pill" title="3+ consec lower-H/lower-L/red bars → buy above prior high (Velez §T22)">
+              <input type="checkbox" name="bt-strat" value="pbs">
+              <span class="bt-pill-dot" style="background:#f472b6"></span>PBS
+            </label>
+            <label class="bt-strat-pill" title="New 20-day low → recovery = false breakdown stop-run (Raschke §DT8)">
+              <input type="checkbox" name="bt-strat" value="turtle_soup">
+              <span class="bt-pill-dot" style="background:#a3e635"></span>Turtle Soup
+            </label>
+          </div>
+
+          <div class="bt-strat-sub-label">⚡ Intraday — 5-min bars, ≤59 days</div>
+          <div class="bt-strat-grid">
+            <label class="bt-strat-pill">
+              <input type="checkbox" name="bt-strat" value="orb">
+              <span class="bt-pill-dot" style="background:#22d3ee"></span>ORB
+            </label>
+            <label class="bt-strat-pill">
+              <input type="checkbox" name="bt-strat" value="vwap">
+              <span class="bt-pill-dot" style="background:#c084fc"></span>VWAP
+            </label>
+            <label class="bt-strat-pill">
+              <input type="checkbox" name="bt-strat" value="ema">
+              <span class="bt-pill-dot" style="background:#94a3b8"></span>EMA Align
+            </label>
+            <label class="bt-strat-pill">
+              <input type="checkbox" name="bt-strat" value="rsi_gate">
+              <span class="bt-pill-dot" style="background:#94a3b8"></span>RSI Gate
+            </label>
           </div>
         </div>
 
-        <!-- Row 5: Parameters -->
-        <div class="bt-ctrl-group">
-          <label class="bt-label">Parameters</label>
-          <div class="bt-param-grid">
-            <div class="bt-param-item">
-              <span class="bt-param-lbl">Stop Loss</span>
-              <div class="bt-days-btns">
-                <button class="bt-day-btn" data-stop="0.15" onclick="setBtStop(0.15)">15%</button>
-                <button class="bt-day-btn" data-stop="0.20" onclick="setBtStop(0.20)">20%</button>
-                <button class="bt-day-btn active" data-stop="0.30" onclick="setBtStop(0.30)">30%</button>
-                <button class="bt-day-btn" data-stop="0.50" onclick="setBtStop(0.50)">50%</button>
-              </div>
-            </div>
-            <div class="bt-param-item">
-              <span class="bt-param-lbl">Profit Target</span>
-              <div class="bt-days-btns">
-                <button class="bt-day-btn" data-tgt="0.50" onclick="setBtTarget(0.50)">50%</button>
-                <button class="bt-day-btn" data-tgt="0.75" onclick="setBtTarget(0.75)">75%</button>
-                <button class="bt-day-btn active" data-tgt="1.00" onclick="setBtTarget(1.00)">100%</button>
-                <button class="bt-day-btn" data-tgt="1.50" onclick="setBtTarget(1.50)">150%</button>
-              </div>
-            </div>
-            <div class="bt-param-item">
-              <span class="bt-param-lbl">Min Vol Ratio</span>
-              <div class="bt-days-btns">
-                <button class="bt-day-btn" data-vol="1.0" onclick="setBtVol(1.0)">1.0×</button>
-                <button class="bt-day-btn active" data-vol="1.2" onclick="setBtVol(1.2)">1.2×</button>
-                <button class="bt-day-btn" data-vol="1.5" onclick="setBtVol(1.5)">1.5×</button>
-                <button class="bt-day-btn" data-vol="2.0" onclick="setBtVol(2.0)">2.0×</button>
-              </div>
-            </div>
-          </div>
+        <!-- ── Run button ── -->
+        <div class="bt-run-wrap">
+          <button class="bt-run-btn" id="bt-run-btn" onclick="runBacktest()">▶ Run Backtest</button>
         </div>
 
-        <button class="btn-run bt-run-btn" id="bt-run-btn" onclick="runBacktest()">▶ Run Backtest</button>
-      </div>
+      </div><!-- /bt-body -->
 
       <!-- ── Results table ── -->
       <div id="bt-results" style="display:none">
-        <div class="bt-section-title">Results</div>
-        <div id="bt-results-meta" class="bt-results-meta"></div>
+        <div class="bt-results-hdr">
+          <span class="bt-results-title">Results</span>
+          <span class="bt-results-meta" id="bt-results-meta"></span>
+        </div>
         <div class="bt-table-wrap">
           <table class="bt-table" id="bt-table">
             <thead>
@@ -1709,15 +1878,16 @@
             <tbody id="bt-tbody"></tbody>
           </table>
         </div>
-        <div class="bt-note">
+        <div class="bt-footnote">
           ⚠️ Intraday P&L uses delta-proxy model (2× leverage). Daily P&L uses direct price move.
           PF &gt; 1.5 = edge present. Results are signal quality indicators, not exact dollar returns.
         </div>
       </div>
 
       <!-- ── Log stream ── -->
-      <div class="bt-section-title" id="bt-log-title" style="display:none">Log</div>
+      <div class="bt-log-hdr" id="bt-log-title" style="display:none">Run Log</div>
       <div id="bt-log" class="bt-log"></div>
+
     </div>
 
   </div><!-- /right-panel -->

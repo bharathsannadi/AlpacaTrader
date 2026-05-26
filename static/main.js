@@ -2353,40 +2353,25 @@ function btRenderChips() {
 }
 
 // ── Period / bar / param setters ──────────────────────────────────────────────
-function setBtPeriod(y) {
-  _btYears = y;
-  document.querySelectorAll("[data-years]").forEach(b =>
-    b.classList.toggle("active", parseFloat(b.dataset.years) === y));
-}
+function setBtPeriod(y)  { _btYears    = y; }
+function setBtBarSize(v) { _btBarSize  = v; }
+function setBtStop(v)    { _btStopPct  = v; }
+function setBtTarget(v)  { _btTargetPct = v; }
+function setBtVol(v)     { _btVolMin   = v; }
 
-function setBtBarSize(v) {
-  _btBarSize = v;
-  document.getElementById("bt-bar-5min").classList.toggle("active", v === "5min");
-  document.getElementById("bt-bar-daily").classList.toggle("active", v === "daily");
-  const note = document.getElementById("bt-period-note");
-  if (note) {
-    note.textContent = v === "5min"
-      ? "⚡ 5-min bars · capped at 59 days (yfinance limit) regardless of period selected"
-      : "📅 Daily bars · yfinance up to 5 yr · Polygon/Alpaca support longer history";
-  }
-}
-
-function setBtStop(v) {
-  _btStopPct = v;
-  document.querySelectorAll("[data-stop]").forEach(b =>
-    b.classList.toggle("active", parseFloat(b.dataset.stop) === v));
-}
-
-function setBtTarget(v) {
-  _btTargetPct = v;
-  document.querySelectorAll("[data-tgt]").forEach(b =>
-    b.classList.toggle("active", parseFloat(b.dataset.tgt) === v));
-}
-
-function setBtVol(v) {
-  _btVolMin = v;
-  document.querySelectorAll("[data-vol]").forEach(b =>
-    b.classList.toggle("active", parseFloat(b.dataset.vol) === v));
+// ── Strategy preset selector ───────────────────────────────────────────────────
+function btSetStratPreset(preset) {
+  const all = [...document.querySelectorAll("[name='bt-strat']")];
+  const core      = ["breakout","bull_flag","rsi_dip","gap_vol"];
+  const extended  = ["rsi_dip_red","nr7","bb_squeeze","pocket_pivot","pbs","turtle_soup"];
+  const intraday  = ["orb","vwap","ema","rsi_gate"];
+  all.forEach(cb => {
+    if (preset === "core")      cb.checked = core.includes(cb.value);
+    else if (preset === "extended") cb.checked = core.includes(cb.value) || extended.includes(cb.value);
+    else if (preset === "intraday") cb.checked = intraday.includes(cb.value);
+    else if (preset === "all")  cb.checked = true;
+    else if (preset === "none") cb.checked = false;
+  });
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
@@ -2444,12 +2429,25 @@ socket.on("backtest_results", (d) => {
   const meta  = document.getElementById("bt-results-meta");
   if (!tbody || !d.results || !d.results.length) return;
 
-  // Setup badge class
+  // Setup badge class — covers all KB-validated strategies
   const setupBadge = (setup) => {
     const cls = {
-      "Breakout": "bt-setup-brk", "Bull Flag": "bt-setup-bfl",
-      "RSI Dip": "bt-setup-rsi", "Gap+Vol": "bt-setup-gap",
-      "ORB": "bt-setup-orb",     "VWAP": "bt-setup-vwap",
+      // Core validated (§DT1–DT5)
+      "Breakout":     "bt-setup-brk",
+      "Bull Flag":    "bt-setup-bfl",
+      "RSI Dip":      "bt-setup-rsi",
+      "Gap+Vol":      "bt-setup-gap",
+      // Extended KB strategies
+      "RSI Dip+Red":  "bt-setup-rdr",   // §T6 best sub-condition PF 1.82
+      "NR7":          "bt-setup-nr7",   // §DT14 Cooper narrowest range
+      "BB Squeeze":   "bt-setup-bbsq", // §T13 Bollinger bandwidth squeeze
+      "Pocket Pivot": "bt-setup-pp",   // §T8 Morales/Kacher accumulation
+      "PBS":          "bt-setup-pbs",  // §T22 Velez Pristine Buy Setup
+      "Turtle Soup":  "bt-setup-ts",   // §DT8 Raschke 20d low reversal
+      // Intraday
+      "ORB":          "bt-setup-orb",
+      "VWAP":         "bt-setup-vwap",
+      "Intraday":     "bt-setup-intr",
     }[setup] || "bt-setup-intr";
     return `<span class="bt-setup-badge ${cls}">${setup}</span>`;
   };
