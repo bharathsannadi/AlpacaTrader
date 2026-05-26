@@ -413,17 +413,23 @@ def require_auth(fn):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _state_snapshot() -> dict:
-    """Single source of truth for the state payload sent to the UI."""
+    """Single source of truth for the state payload sent to the UI.
+
+    The lock guards only the in-memory `state` dict reads. Trader function
+    calls that may do I/O (open_positions_snapshot, equity_curve_snapshot, etc.)
+    run OUTSIDE the lock to avoid blocking other threads that need to update
+    state (e.g. price_ticker, position_monitor)."""
     with _state_lock:
-        return {
+        acct_val = state["account_value"]
+        snap = {
             "logged_in":       state["logged_in"],
-            "sessions":        dict(state["sessions"]),   # per-symbol {SPY: bool, ...}
+            "sessions":        dict(state["sessions"]),
             "streaming":       state["streaming"],
             "dry_run":         state["dry_run"],
             "paper_mode":      state["paper_mode"],
             "active_symbol":   state["active_symbol"],
             "session_end":     state["session_end"],
-            "account_value":   state["account_value"],
+            "account_value":   acct_val,
             "buying_power":    state["buying_power"],
             "spy_price":       state["spy_price"],
             "spy_change_pct":  state["spy_change_pct"],
@@ -440,15 +446,19 @@ def _state_snapshot() -> dict:
             "trade_memory_enabled": state["trade_memory_enabled"],
             "debate_enabled":       state["debate_enabled"],
             "auto_trade":           state["auto_trade"],
-            "open_positions":       trader.open_positions_snapshot(),
-            "deployed_risk_pct":    round(trader.deployed_risk_pct(state["account_value"]) * 100, 2),
-            "max_portfolio_risk_pct": round(trader.eff_max_portfolio_risk() * 100, 2),
-            "pdt_remaining":        trader.pdt_day_trades_remaining(),  # None if ≥$25K (exempt)
-            "equity_curve":         trader.equity_curve_snapshot(state["account_value"]),
-            "slippage":             trader.slippage_snapshot(),
-            "data_freshness":       trader.get_freshness_snapshot(),
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
+    # Trader calls outside the lock — these may do file I/O or iterate lists
+    # under their own internal locks. Holding _state_lock here would create
+    # unnecessary contention with price_ticker and position_monitor threads.
+    snap["open_positions"]         = trader.open_positions_snapshot()
+    snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
+    snap["max_portfolio_risk_pct"] = round(trader.eff_max_portfolio_risk() * 100, 2)
+    snap["pdt_remaining"]          = trader.pdt_day_trades_remaining()
+    snap["equity_curve"]           = trader.equity_curve_snapshot(acct_val)
+    snap["slippage"]               = trader.slippage_snapshot()
+    snap["data_freshness"]         = trader.get_freshness_snapshot()
+    return snap
 
 
 def emit_state() -> None:
@@ -633,13 +643,18 @@ def price_ticker() -> None:
 
 def position_monitor() -> None:
     """Background thread: evaluate open positions every 10s.
-    Closes at stop-loss, profit target 1 (partial), profit target 2, or hard-close time."""
+    Closes at stop-loss, profit target 1 (partial), profit target 2, or hard-close time.
+
+    NOTE: intentionally does NOT gate on authenticated_sids. Stop-loss/target
+    execution must continue even when all browser tabs are closed or a network
+    blip causes a temporary disconnect — halting it would leave open positions
+    unmanaged until the user reconnects, which is dangerous."""
     while True:
         socketio.sleep(POSITION_MONITOR_SEC)
         _beat("position_monitor")   # loop is alive (even if idle below)
         try:
             with _state_lock:
-                should_run = state["logged_in"] and bool(authenticated_sids)
+                should_run = state["logged_in"]   # runs as long as Alpaca is connected
             if not should_run:
                 continue
 
@@ -829,6 +844,7 @@ def on_login(data):
         state["logged_in"]   = True
         state["paper_mode"]  = paper
         authenticated_sids.add(request.sid)
+    session["authenticated"]  = True            # allows /api/status HTTP endpoint
     session["api_key_prefix"] = api_key[:6] + "…"
     session["login_time"]     = datetime.now(timezone.utc).isoformat()
     login_tracker.record_success(ip)

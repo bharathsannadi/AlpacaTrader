@@ -1,19 +1,48 @@
 /* SPY Auto Trader — Dashboard JS */
 
-const socket = io({ secure: true, rejectUnauthorized: false });
+// socket.io auto-detects ws:// vs wss:// from the page origin — no options needed.
+const socket = io();
 let logEl     = document.getElementById("log-output");
 let lineCount = 0;
+
+// ── Credential cache (sessionStorage — clears on tab close, never persisted to disk) ──
+// Used for silent re-auth after a network blip: the server reconnects the WS and
+// emits login_required; we re-submit the cached credentials automatically so the
+// user doesn't see the login modal for a transient disconnect.
+const _CRED_KEY = "at_creds";
+function _saveCreds(apiKey, apiSecret, paper) {
+  try { sessionStorage.setItem(_CRED_KEY, JSON.stringify({ apiKey, apiSecret, paper })); }
+  catch(e) { /* sessionStorage blocked (e.g. private mode) — ignore */ }
+}
+function _clearCreds() {
+  try { sessionStorage.removeItem(_CRED_KEY); } catch(e) {}
+}
+function _loadCreds() {
+  try { return JSON.parse(sessionStorage.getItem(_CRED_KEY) || "null"); }
+  catch(e) { return null; }
+}
 
 // ── Socket events ─────────────────────────────────────────────────────────────
 // Server emits state automatically on connect — no need to call refresh.
 // Refresh is auth-required, so calling it before login causes a disconnect.
 socket.on("state", updateUI);
 
-// Server tells us we need to re-authenticate (e.g. after a reconnect)
+// Server tells us we need to re-authenticate (e.g. after a reconnect).
+// Try silent re-auth first using sessionStorage credentials.
 socket.on("login_required", () => {
-  document.getElementById("login-overlay").classList.remove("hidden");
-  appendLog("Session expired — please log in again.", "WARNING");
+  const creds = _loadCreds();
+  if (creds && creds.apiKey) {
+    // Silent re-auth — submit cached credentials without showing the login modal.
+    appendLog("Reconnecting…", "INFO");
+    socket.emit("login", { api_key: creds.apiKey, api_secret: creds.apiSecret, paper: creds.paper });
+  } else {
+    // No cached credentials — show the login modal.
+    document.getElementById("login-overlay").classList.remove("hidden");
+    appendLog("Session expired — please log in again.", "WARNING");
+  }
 });
+
+let _gridInitialised = false;
 
 socket.on("login_result", (r) => {
   const btn = document.getElementById("login-btn");
@@ -23,9 +52,16 @@ socket.on("login_result", (r) => {
     document.getElementById("login-overlay").classList.add("hidden");
     appendLog("Connected successfully.", "INFO");
     socket.emit("refresh");
-    gridManager.init();           // Build multi-pane chart grid
+    // Only build the chart grid once — reconnects reuse the existing panes.
+    if (!_gridInitialised) {
+      gridManager.init();
+      _gridInitialised = true;
+    }
     requestExecBrief();           // Load exec narrative on login
   } else {
+    // Bad credentials (or server rejected silent re-auth) — clear cache & show modal.
+    _clearCreds();
+    document.getElementById("login-overlay").classList.remove("hidden");
     document.getElementById("login-error").textContent = r.error || "Login failed.";
   }
 });
@@ -489,12 +525,19 @@ function doLogin() {
     return;
   }
 
+  // Cache credentials for silent reconnect (sessionStorage — cleared on tab close).
+  _saveCreds(apiKey, apiSecret, paper);
+
   btn.disabled    = true;
   btn.textContent = "Connecting...";
   socket.emit("login", { api_key: apiKey, api_secret: apiSecret, paper });
 }
 
-function doLogout()          { socket.emit("logout");              }
+function doLogout() {
+  _clearCreds();          // wipe session cache on explicit logout
+  _gridInitialised = false;
+  socket.emit("logout");
+}
 function startStream()       { socket.emit("start_stream");         }
 function stopStream()        { socket.emit("stop_stream");          }
 function toggleAutoSchedule(){ socket.emit("toggle_auto_schedule"); }
