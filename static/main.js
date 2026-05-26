@@ -2437,6 +2437,9 @@ function runBacktest() {
   runBtn.disabled  = true;
   runBtn.textContent = "⏳ Running…";
 
+  // Scroll the run button into view so the log appears right below it.
+  runBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+
   socket.emit("run_backtest", {
     symbols,
     years:      _btYears,
@@ -2458,7 +2461,9 @@ socket.on("backtest_log", (d) => {
     (d.level === "ERROR" ? "err" : (d.message.startsWith("✓") || d.message.startsWith("✅")) ? "ok" : "inf");
   div.textContent = d.message;
   logEl.appendChild(div);
-  logEl.scrollTop = logEl.scrollHeight;
+  // Scroll the bt-body (not the log element itself) to keep the log in view.
+  const body = document.querySelector(".bt-body");
+  if (body) body.scrollTop = body.scrollHeight;
   if (d.message.includes("complete")) {
     const runBtn = document.getElementById("bt-run-btn");
     if (runBtn) { runBtn.disabled = false; runBtn.textContent = "▶ Run Backtest"; }
@@ -2547,6 +2552,10 @@ socket.on("backtest_results", (d) => {
   }
 
   resEl.style.display = "";
+  // Scroll results into view inside the bt-body container.
+  requestAnimationFrame(() => {
+    resEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 });
 
 // ── Route chart_data to the correct pane ─────────────────────────────────────

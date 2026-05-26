@@ -1858,35 +1858,39 @@
           <button class="bt-run-btn" id="bt-run-btn" onclick="runBacktest()">▶ Run Backtest</button>
         </div>
 
+        <!-- ── Log stream (inside body so it's reachable) ── -->
+        <div class="bt-log-hdr" id="bt-log-title" style="display:none">Run Log</div>
+        <div id="bt-log" class="bt-log"></div>
+
+        <!-- ── Results table (inside body so user can scroll back to config) ── -->
+        <div id="bt-results" style="display:none">
+          <div class="bt-results-hdr">
+            <span class="bt-results-title">Results</span>
+            <span class="bt-results-meta" id="bt-results-meta"></span>
+            <button class="bt-text-btn" style="color:var(--cyan);font-size:11px"
+                    onclick="document.querySelector('.bt-body').scrollTo({top:0,behavior:'smooth'})">
+              ↑ Back to config
+            </button>
+          </div>
+          <div class="bt-table-wrap">
+            <table class="bt-table" id="bt-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Setup</th><th>Trades</th><th>Win%</th><th>PF</th>
+                  <th>Expect%</th><th>Sharpe</th><th>MaxDD%</th>
+                  <th>Signal P&L%</th><th>vs B&H</th><th>Edge?</th>
+                </tr>
+              </thead>
+              <tbody id="bt-tbody"></tbody>
+            </table>
+          </div>
+          <div class="bt-footnote">
+            ⚠️ Intraday P&L uses delta-proxy model (2× leverage). Daily P&L uses direct price move.
+            PF &gt; 1.5 = edge present. Results are signal quality indicators, not exact dollar returns.
+          </div>
+        </div>
+
       </div><!-- /bt-body -->
-
-      <!-- ── Results table ── -->
-      <div id="bt-results" style="display:none">
-        <div class="bt-results-hdr">
-          <span class="bt-results-title">Results</span>
-          <span class="bt-results-meta" id="bt-results-meta"></span>
-        </div>
-        <div class="bt-table-wrap">
-          <table class="bt-table" id="bt-table">
-            <thead>
-              <tr>
-                <th>Symbol</th><th>Setup</th><th>Trades</th><th>Win%</th><th>PF</th>
-                <th>Expect%</th><th>Sharpe</th><th>MaxDD%</th>
-                <th>Signal P&L%</th><th>vs B&H</th><th>Edge?</th>
-              </tr>
-            </thead>
-            <tbody id="bt-tbody"></tbody>
-          </table>
-        </div>
-        <div class="bt-footnote">
-          ⚠️ Intraday P&L uses delta-proxy model (2× leverage). Daily P&L uses direct price move.
-          PF &gt; 1.5 = edge present. Results are signal quality indicators, not exact dollar returns.
-        </div>
-      </div>
-
-      <!-- ── Log stream ── -->
-      <div class="bt-log-hdr" id="bt-log-title" style="display:none">Run Log</div>
-      <div id="bt-log" class="bt-log"></div>
 
     </div>
 
