@@ -354,6 +354,81 @@
   .bt-log-line.err { color: var(--red);   }
   .bt-log-line.inf { color: var(--muted); }
 
+  /* ── Backtest enhanced controls ── */
+  .bt-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .bt-select {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 4px 8px;
+    font-size: 11px; font-family: var(--mono); cursor: pointer; width: 100%;
+  }
+  .bt-select:focus { outline: none; border-color: var(--cyan); }
+  .bt-seg { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .bt-seg-btn {
+    flex: 1; background: none; border: none; border-right: 1px solid var(--border);
+    color: var(--muted); font-size: 11px; font-family: var(--mono); padding: 4px 0;
+    cursor: pointer; transition: all .15s;
+  }
+  .bt-seg-btn:last-child { border-right: none; }
+  .bt-seg-btn.active { background: rgba(34,211,238,0.12); color: var(--cyan); }
+  .bt-seg-btn:hover:not(.active) { background: rgba(255,255,255,0.04); color: var(--text); }
+  .bt-sym-input-row { display: flex; gap: 5px; margin-bottom: 6px; }
+  .bt-sym-input {
+    flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 4px 8px;
+    font-size: 11px; font-family: var(--mono);
+  }
+  .bt-sym-input:focus { outline: none; border-color: var(--cyan); }
+  .bt-small-btn {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    color: var(--muted); border-radius: 4px; padding: 3px 8px;
+    font-size: 10px; cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .bt-small-btn:hover { color: var(--text); border-color: var(--text); }
+  .bt-add-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+  .bt-rand-btn:hover { color: #a78bfa; border-color: #a78bfa; }
+  .bt-chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; margin-top: 4px; }
+  .bt-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(34,211,238,0.1); border: 1px solid rgba(34,211,238,0.3);
+    color: var(--cyan); border-radius: 4px; padding: 2px 6px;
+    font-size: 11px; font-family: var(--mono); font-weight: 600;
+  }
+  .bt-chip-x { cursor: pointer; color: rgba(148,163,184,.6); font-size: 12px; line-height: 1; }
+  .bt-chip-x:hover { color: var(--red); }
+  .bt-strategy-group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .bt-strat-hdr {
+    font-size: 9px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .5px; width: 100%; padding-top: 2px;
+  }
+  .bt-strat-check {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; font-family: var(--mono); color: var(--muted);
+    cursor: pointer; padding: 2px 7px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: rgba(255,255,255,0.02); transition: all .15s;
+  }
+  .bt-strat-check:has(input:checked) {
+    border-color: rgba(34,211,238,0.4); color: var(--cyan);
+    background: rgba(34,211,238,0.07);
+  }
+  .bt-strat-check input { accent-color: var(--cyan); }
+  .bt-param-grid { display: flex; flex-direction: column; gap: 6px; }
+  .bt-param-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .bt-param-lbl { font-size: 10px; color: var(--muted); min-width: 82px; }
+  .bt-sym-toolbar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 5px; }
+  .bt-results-meta { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .bt-setup-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  }
+  .bt-setup-brk  { background: rgba(99,102,241,.2); color: #818cf8; }
+  .bt-setup-bfl  { background: rgba(34,197,94,.15);  color: #4ade80; }
+  .bt-setup-rsi  { background: rgba(245,158,11,.15); color: #fbbf24; }
+  .bt-setup-gap  { background: rgba(239,68,68,.15);  color: #f87171; }
+  .bt-setup-orb  { background: rgba(34,211,238,.15); color: #22d3ee; }
+  .bt-setup-vwap { background: rgba(168,85,247,.15); color: #c084fc; }
+  .bt-setup-intr { background: rgba(148,163,184,.12); color: #94a3b8; }
+
   /* ── Open Positions card ── */
   .pos-empty { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0; }
   .pos-row {
@@ -1506,60 +1581,141 @@
         <button class="bt-close-btn" onclick="hideBacktest()" title="Back to chart">✕ Chart</button>
       </div>
 
-      <!-- Controls -->
+      <!-- ── Controls ── -->
       <div class="bt-controls">
-        <div class="bt-ctrl-group">
-          <label class="bt-label">Symbols</label>
-          <div class="bt-symbol-grid" id="bt-symbol-grid">
-            <label class="bt-sym-check"><input type="checkbox" value="SPY"  checked> SPY</label>
-            <label class="bt-sym-check"><input type="checkbox" value="AMZN"> AMZN</label>
-            <label class="bt-sym-check"><input type="checkbox" value="GOOG"> GOOG</label>
-            <label class="bt-sym-check"><input type="checkbox" value="MSFT"> MSFT</label>
-            <label class="bt-sym-check"><input type="checkbox" value="NVDA"> NVDA</label>
-            <label class="bt-sym-check"><input type="checkbox" value="META"> META</label>
+
+        <!-- Row 1: Source + Bar Size -->
+        <div class="bt-row-2col">
+          <div class="bt-ctrl-group">
+            <label class="bt-label">Data Source</label>
+            <select class="bt-select" id="bt-source" onchange="_btSource=this.value">
+              <option value="yfinance">yfinance (free)</option>
+              <option value="polygon">Polygon (API key)</option>
+              <option value="alpaca">Alpaca (API key)</option>
+            </select>
+          </div>
+          <div class="bt-ctrl-group">
+            <label class="bt-label">Bar Size</label>
+            <div class="bt-seg">
+              <button class="bt-seg-btn" id="bt-bar-5min" onclick="setBtBarSize('5min')">5-min</button>
+              <button class="bt-seg-btn active" id="bt-bar-daily" onclick="setBtBarSize('daily')">Daily</button>
+            </div>
           </div>
         </div>
 
+        <!-- Row 2: Period -->
         <div class="bt-ctrl-group">
-          <label class="bt-label">Lookback</label>
-          <div class="bt-days-btns">
-            <button class="bt-day-btn active" data-days="7"  onclick="setBtDays(7)">7d</button>
-            <button class="bt-day-btn"        data-days="14" onclick="setBtDays(14)">14d</button>
-            <button class="bt-day-btn"        data-days="30" onclick="setBtDays(30)">30d</button>
-            <button class="bt-day-btn"        data-days="59" onclick="setBtDays(59)">59d</button>
-            <button class="bt-day-btn"        data-days="90" onclick="setBtDays(90)">90d</button>
-            <button class="bt-day-btn"        data-days="180" onclick="setBtDays(180)">180d</button>
+          <label class="bt-label">Period</label>
+          <div class="bt-days-btns" id="bt-period-btns">
+            <button class="bt-day-btn"        data-years="0.5" onclick="setBtPeriod(0.5)">6 mo</button>
+            <button class="bt-day-btn active" data-years="1"   onclick="setBtPeriod(1)">1 yr</button>
+            <button class="bt-day-btn"        data-years="2"   onclick="setBtPeriod(2)">2 yr</button>
+            <button class="bt-day-btn"        data-years="3"   onclick="setBtPeriod(3)">3 yr</button>
+            <button class="bt-day-btn"        data-years="5"   onclick="setBtPeriod(5)">5 yr</button>
           </div>
-          <div style="margin-top:4px;font-size:10px;color:var(--muted)">
-            ⚡ 5-min bars available for ≤59 days · daily bars for longer periods
+          <div id="bt-period-note" style="margin-top:3px;font-size:10px;color:var(--muted)">
+            Daily bars · yfinance up to 5 yr · 5-min bars capped at 59 days
+          </div>
+        </div>
+
+        <!-- Row 3: Symbols -->
+        <div class="bt-ctrl-group">
+          <div class="bt-sym-toolbar">
+            <label class="bt-label" style="margin:0">Symbols</label>
+            <button class="bt-small-btn bt-rand-btn" onclick="btRandom(5)">🎲 5</button>
+            <button class="bt-small-btn bt-rand-btn" onclick="btRandom(10)">🎲 10</button>
+            <button class="bt-small-btn bt-rand-btn" onclick="btRandom(25)">🎲 25</button>
+            <button class="bt-small-btn" onclick="btClear()" style="margin-left:2px">Clear</button>
+            <span style="font-size:10px;color:var(--muted);margin-left:auto" id="bt-sym-count">1 symbol</span>
+          </div>
+          <div class="bt-sym-input-row">
+            <input type="text" class="bt-sym-input" id="bt-sym-input"
+              placeholder="AAPL, TSLA, NVDA…"
+              onkeydown="if(event.key==='Enter')btAddSymbol()"/>
+            <button class="bt-small-btn bt-add-btn" onclick="btAddSymbol()">+ Add</button>
+          </div>
+          <div class="bt-chips" id="bt-chips"></div>
+        </div>
+
+        <!-- Row 4: Strategies -->
+        <div class="bt-ctrl-group">
+          <label class="bt-label">Strategies</label>
+          <div class="bt-strategy-group">
+            <span class="bt-strat-hdr">📈 Daily Setups (daily bars)</span>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="breakout" checked> Breakout 50d</label>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="bull_flag" checked> Bull Flag</label>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="rsi_dip" checked> RSI Dip</label>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="gap_vol" checked> Gap + Volume</label>
+          </div>
+          <div class="bt-strategy-group" style="margin-top:5px">
+            <span class="bt-strat-hdr">⚡ Intraday Signals (5-min bars, ≤59d)</span>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="orb"> ORB Breakout</label>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="vwap"> VWAP Cross</label>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="ema"> EMA Align</label>
+            <label class="bt-strat-check"><input type="checkbox" name="bt-strat" value="rsi_gate"> RSI Gate</label>
+          </div>
+        </div>
+
+        <!-- Row 5: Parameters -->
+        <div class="bt-ctrl-group">
+          <label class="bt-label">Parameters</label>
+          <div class="bt-param-grid">
+            <div class="bt-param-item">
+              <span class="bt-param-lbl">Stop Loss</span>
+              <div class="bt-days-btns">
+                <button class="bt-day-btn" data-stop="0.15" onclick="setBtStop(0.15)">15%</button>
+                <button class="bt-day-btn" data-stop="0.20" onclick="setBtStop(0.20)">20%</button>
+                <button class="bt-day-btn active" data-stop="0.30" onclick="setBtStop(0.30)">30%</button>
+                <button class="bt-day-btn" data-stop="0.50" onclick="setBtStop(0.50)">50%</button>
+              </div>
+            </div>
+            <div class="bt-param-item">
+              <span class="bt-param-lbl">Profit Target</span>
+              <div class="bt-days-btns">
+                <button class="bt-day-btn" data-tgt="0.50" onclick="setBtTarget(0.50)">50%</button>
+                <button class="bt-day-btn" data-tgt="0.75" onclick="setBtTarget(0.75)">75%</button>
+                <button class="bt-day-btn active" data-tgt="1.00" onclick="setBtTarget(1.00)">100%</button>
+                <button class="bt-day-btn" data-tgt="1.50" onclick="setBtTarget(1.50)">150%</button>
+              </div>
+            </div>
+            <div class="bt-param-item">
+              <span class="bt-param-lbl">Min Vol Ratio</span>
+              <div class="bt-days-btns">
+                <button class="bt-day-btn" data-vol="1.0" onclick="setBtVol(1.0)">1.0×</button>
+                <button class="bt-day-btn active" data-vol="1.2" onclick="setBtVol(1.2)">1.2×</button>
+                <button class="bt-day-btn" data-vol="1.5" onclick="setBtVol(1.5)">1.5×</button>
+                <button class="bt-day-btn" data-vol="2.0" onclick="setBtVol(2.0)">2.0×</button>
+              </div>
+            </div>
           </div>
         </div>
 
         <button class="btn-run bt-run-btn" id="bt-run-btn" onclick="runBacktest()">▶ Run Backtest</button>
       </div>
 
-      <!-- Results table -->
+      <!-- ── Results table ── -->
       <div id="bt-results" style="display:none">
         <div class="bt-section-title">Results</div>
+        <div id="bt-results-meta" class="bt-results-meta"></div>
         <div class="bt-table-wrap">
           <table class="bt-table" id="bt-table">
             <thead>
               <tr>
-                <th>Symbol</th><th>Trades</th><th>Win%</th><th>PF</th>
+                <th>Symbol</th><th>Setup</th><th>Trades</th><th>Win%</th><th>PF</th>
                 <th>Expect%</th><th>Sharpe</th><th>MaxDD%</th>
-                <th>Signal P&L%</th><th>vs Buy&Hold</th><th>Edge?</th>
+                <th>Signal P&L%</th><th>vs B&H</th><th>Edge?</th>
               </tr>
             </thead>
             <tbody id="bt-tbody"></tbody>
           </table>
         </div>
         <div class="bt-note">
-          ⚠️ Option P&L uses a delta-proxy model (2× underlying leverage). Treat as signal
-          direction quality, not exact dollar returns. PF &gt; 1.5 = edge present.
+          ⚠️ Intraday P&L uses delta-proxy model (2× leverage). Daily P&L uses direct price move.
+          PF &gt; 1.5 = edge present. Results are signal quality indicators, not exact dollar returns.
         </div>
       </div>
 
-      <!-- Log stream -->
+      <!-- ── Log stream ── -->
       <div class="bt-section-title" id="bt-log-title" style="display:none">Log</div>
       <div id="bt-log" class="bt-log"></div>
     </div>

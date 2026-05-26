@@ -2266,8 +2266,33 @@ function resetZoom() { gridManager.panes.forEach(p => p.chart && p.chart.timeSca
 function refreshChart() { gridManager.panes.forEach(p => p.fetch(true)); }
 
 // ── Backtest UI ───────────────────────────────────────────────────────────────
-let _btDays = 7;
 
+// S&P 500 top-100 by avg daily volume (random sample pool)
+const BT_SP500_TOP100 = [
+  "AAPL","MSFT","NVDA","AMZN","META","TSLA","GOOGL","GOOG","AVGO","JPM",
+  "V","UNH","XOM","LLY","JNJ","WMT","MA","PG","HD","COST","ORCL","ABBV",
+  "BAC","KO","MRK","CVX","NFLX","AMD","CRM","ACN","PEP","TMO","ADBE",
+  "CSCO","ABT","LIN","IBM","GS","MS","TXN","ISRG","AMGN","INTU","AXP",
+  "SPGI","CAT","RTX","GE","HON","NEE","ETN","LOW","BKNG","VRTX","DHR",
+  "MDT","BLK","PLD","SYK","GILD","REGN","C","CVS","ELV","BSX","CI",
+  "MDLZ","KLAC","LRCX","CME","MU","SNPS","CDNS","ZTS","PANW","CTAS",
+  "APH","PGR","AON","ICE","EQIX","CL","MCO","F","GM","T","VZ","WFC",
+  "USB","ADP","TGT","SO","D","DUK","EXC","AEP","SRE","SPY","QQQ","IWM"
+];
+
+// State
+let _btSymbols  = new Set(["SPY"]);
+let _btYears    = 1;
+let _btSource   = "yfinance";
+let _btBarSize  = "daily";
+let _btStopPct  = 0.30;
+let _btTargetPct= 1.00;
+let _btVolMin   = 1.2;
+
+// ── Init chip display on load ─────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => btRenderChips());
+
+// ── Show / hide ───────────────────────────────────────────────────────────────
 function showBacktest() {
   _setViewMode("chart");
   document.getElementById("backtest-panel").style.display = "";
@@ -2275,6 +2300,7 @@ function showBacktest() {
   if (gw) gw.style.display = "none";
   document.querySelectorAll("#tab-chart, #tab-settings, #tab-log").forEach(t => t.classList.remove("active"));
   document.getElementById("tab-backtest").classList.add("active");
+  btRenderChips();
 }
 
 function hideBacktest() {
@@ -2285,16 +2311,92 @@ function hideBacktest() {
   document.getElementById("tab-backtest").classList.remove("active");
 }
 
-function setBtDays(d) {
-  _btDays = d;
-  document.querySelectorAll(".bt-day-btn").forEach(b =>
-    b.classList.toggle("active", parseInt(b.dataset.days) === d));
+// ── Symbol helpers ────────────────────────────────────────────────────────────
+function btRandom(n) {
+  const pool = [...BT_SP500_TOP100];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  _btSymbols = new Set(pool.slice(0, n));
+  btRenderChips();
 }
 
+function btAddSymbol() {
+  const inp = document.getElementById("bt-sym-input");
+  const raw = inp.value.toUpperCase().trim();
+  if (!raw) return;
+  raw.split(/[\s,;]+/).forEach(s => { if (s.length >= 1 && s.length <= 5) _btSymbols.add(s); });
+  inp.value = "";
+  btRenderChips();
+}
+
+function btRemove(sym) {
+  _btSymbols.delete(sym);
+  btRenderChips();
+}
+
+function btClear() {
+  _btSymbols.clear();
+  btRenderChips();
+}
+
+function btRenderChips() {
+  const cont  = document.getElementById("bt-chips");
+  const count = document.getElementById("bt-sym-count");
+  if (!cont) return;
+  const syms  = [..._btSymbols];
+  cont.innerHTML = syms.length
+    ? syms.map(s => `<span class="bt-chip">${s}<span class="bt-chip-x" onclick="btRemove('${s}')">×</span></span>`).join("")
+    : `<span style="color:var(--muted);font-size:11px">No symbols — use 🎲 random or type to add</span>`;
+  if (count) count.textContent = syms.length === 1 ? "1 symbol" : `${syms.length} symbols`;
+}
+
+// ── Period / bar / param setters ──────────────────────────────────────────────
+function setBtPeriod(y) {
+  _btYears = y;
+  document.querySelectorAll("[data-years]").forEach(b =>
+    b.classList.toggle("active", parseFloat(b.dataset.years) === y));
+}
+
+function setBtBarSize(v) {
+  _btBarSize = v;
+  document.getElementById("bt-bar-5min").classList.toggle("active", v === "5min");
+  document.getElementById("bt-bar-daily").classList.toggle("active", v === "daily");
+  const note = document.getElementById("bt-period-note");
+  if (note) {
+    note.textContent = v === "5min"
+      ? "⚡ 5-min bars · capped at 59 days (yfinance limit) regardless of period selected"
+      : "📅 Daily bars · yfinance up to 5 yr · Polygon/Alpaca support longer history";
+  }
+}
+
+function setBtStop(v) {
+  _btStopPct = v;
+  document.querySelectorAll("[data-stop]").forEach(b =>
+    b.classList.toggle("active", parseFloat(b.dataset.stop) === v));
+}
+
+function setBtTarget(v) {
+  _btTargetPct = v;
+  document.querySelectorAll("[data-tgt]").forEach(b =>
+    b.classList.toggle("active", parseFloat(b.dataset.tgt) === v));
+}
+
+function setBtVol(v) {
+  _btVolMin = v;
+  document.querySelectorAll("[data-vol]").forEach(b =>
+    b.classList.toggle("active", parseFloat(b.dataset.vol) === v));
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
 function runBacktest() {
-  const symbols = [...document.querySelectorAll("#bt-symbol-grid input:checked")]
+  const symbols = [..._btSymbols];
+  if (!symbols.length) { alert("Add at least one symbol (or use 🎲 random)."); return; }
+
+  const strategies = [...document.querySelectorAll("[name='bt-strat']:checked")]
     .map(el => el.value);
-  if (!symbols.length) { alert("Select at least one symbol."); return; }
+  if (!strategies.length) { alert("Select at least one strategy."); return; }
 
   const logEl  = document.getElementById("bt-log");
   const resEl  = document.getElementById("bt-results");
@@ -2307,15 +2409,25 @@ function runBacktest() {
   runBtn.disabled  = true;
   runBtn.textContent = "⏳ Running…";
 
-  socket.emit("run_backtest", { symbols, days: _btDays });
+  socket.emit("run_backtest", {
+    symbols,
+    years:      _btYears,
+    source:     _btSource,
+    bar_size:   _btBarSize,
+    strategies,
+    stop_pct:   _btStopPct,
+    target_pct: _btTargetPct,
+    vol_min:    _btVolMin,
+  });
 }
 
+// ── Log stream ────────────────────────────────────────────────────────────────
 socket.on("backtest_log", (d) => {
   const logEl = document.getElementById("bt-log");
   if (!logEl) return;
   const div = document.createElement("div");
   div.className = "bt-log-line " +
-    (d.level === "ERROR" ? "err" : d.message.startsWith("✓") ? "ok" : "inf");
+    (d.level === "ERROR" ? "err" : (d.message.startsWith("✓") || d.message.startsWith("✅")) ? "ok" : "inf");
   div.textContent = d.message;
   logEl.appendChild(div);
   logEl.scrollTop = logEl.scrollHeight;
@@ -2325,15 +2437,34 @@ socket.on("backtest_log", (d) => {
   }
 });
 
+// ── Results renderer ──────────────────────────────────────────────────────────
 socket.on("backtest_results", (d) => {
   const tbody = document.getElementById("bt-tbody");
   const resEl = document.getElementById("bt-results");
+  const meta  = document.getElementById("bt-results-meta");
   if (!tbody || !d.results || !d.results.length) return;
 
-  tbody.innerHTML = d.results.map(r => {
+  // Setup badge class
+  const setupBadge = (setup) => {
+    const cls = {
+      "Breakout": "bt-setup-brk", "Bull Flag": "bt-setup-bfl",
+      "RSI Dip": "bt-setup-rsi", "Gap+Vol": "bt-setup-gap",
+      "ORB": "bt-setup-orb",     "VWAP": "bt-setup-vwap",
+    }[setup] || "bt-setup-intr";
+    return `<span class="bt-setup-badge ${cls}">${setup}</span>`;
+  };
+
+  // Sort: best PF first
+  const sorted = [...d.results].sort((a, b) => {
+    const pfa = parseFloat(a.metrics?.profit_factor) || 0;
+    const pfb = parseFloat(b.metrics?.profit_factor) || 0;
+    return pfb - pfa;
+  });
+
+  tbody.innerHTML = sorted.map(r => {
     const m   = r.metrics || {};
     const pf  = m.profit_factor ?? "n/a";
-    const pfl = parseFloat(pf);
+    const pfl = parseFloat(pf) || 0;
     const wr  = m.win_rate ?? 0;
     const sig = m.total_pnl ?? 0;
     const bh  = r.baseline ?? 0;
@@ -2341,32 +2472,38 @@ socket.on("backtest_results", (d) => {
     const dd  = m.max_dd ?? 0;
     const exp = m.expectancy ?? 0;
 
-    // Edge verdict
     let edge = "—", edgeCls = "bt-muted";
     if (r.trades > 0) {
-      if (pfl >= 1.5 && sh >= 0.5)     { edge = "✅ Yes";   edgeCls = "bt-edge-yes"; }
-      else if (pfl >= 1.0 && pfl < 1.5){ edge = "⚠️ Marginal"; edgeCls = "bt-edge-marg"; }
-      else                              { edge = "❌ No";    edgeCls = "bt-edge-no";  }
+      if (pfl >= 1.5 && sh >= 0.5)      { edge = "✅ Yes";        edgeCls = "bt-edge-yes";  }
+      else if (pfl >= 1.0 && pfl < 1.5) { edge = "⚠️ Marginal";  edgeCls = "bt-edge-marg"; }
+      else                               { edge = "❌ No";         edgeCls = "bt-edge-no";   }
     }
 
-    const pnlCls  = sig >= 0  ? "bt-green" : "bt-red";
-    const bhDiff  = sig - bh;
-    const bhCls   = bhDiff >= 0 ? "bt-green" : "bt-red";
-    const pfCls   = pfl >= 1.5 ? "bt-green" : pfl >= 1.0 ? "bt-cyan" : "bt-red";
+    const pfCls  = pfl >= 1.5 ? "bt-green" : pfl >= 1.0 ? "bt-cyan" : "bt-red";
+    const bhDiff = sig - bh;
 
     return `<tr>
-      <td class="bt-cyan">${r.symbol}</td>
+      <td class="bt-cyan" style="font-weight:700">${r.symbol}</td>
+      <td>${setupBadge(r.setup || "—")}</td>
       <td>${r.trades}</td>
       <td class="${wr >= 50 ? 'bt-green' : 'bt-red'}">${wr.toFixed(1)}%</td>
       <td class="${pfCls}">${typeof pf === 'number' ? pf.toFixed(2) : pf}</td>
       <td class="${exp >= 0 ? 'bt-green' : 'bt-red'}">${exp >= 0 ? '+' : ''}${exp.toFixed(2)}%</td>
       <td class="${sh >= 0.5 ? 'bt-green' : sh >= 0 ? '' : 'bt-red'}">${sh.toFixed(2)}</td>
       <td class="${dd <= -10 ? 'bt-red' : 'bt-muted'}">${dd.toFixed(2)}%</td>
-      <td class="${pnlCls}">${sig >= 0 ? '+' : ''}${sig.toFixed(2)}%</td>
-      <td class="${bhCls}">${bhDiff >= 0 ? '+' : ''}${bhDiff.toFixed(2)}% vs B&H</td>
+      <td class="${sig >= 0 ? 'bt-green' : 'bt-red'}">${sig >= 0 ? '+' : ''}${sig.toFixed(2)}%</td>
+      <td class="${bhDiff >= 0 ? 'bt-green' : 'bt-red'}">${bhDiff >= 0 ? '+' : ''}${bhDiff.toFixed(2)}%</td>
       <td class="${edgeCls}">${edge}</td>
     </tr>`;
   }).join("");
+
+  if (meta) {
+    const src   = d.source || "yfinance";
+    const yrs   = d.years  || "?";
+    const nsym  = new Set(d.results.map(r => r.symbol)).size;
+    const total = d.results.reduce((s, r) => s + (r.trades || 0), 0);
+    meta.textContent = `${nsym} symbol${nsym>1?'s':''} · ${yrs}yr · ${src} · ${total} total trades`;
+  }
 
   resEl.style.display = "";
 });

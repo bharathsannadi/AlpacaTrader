@@ -1869,50 +1869,95 @@ def _plain_narrative(closed, wins, losses, n_open, watching, mode, spy_px, vix) 
 @require_auth
 def on_run_backtest(data=None):
     """Run backtest in background and stream results to the UI."""
-    data    = data or {}
-    symbols = [s.strip().upper() for s in (data.get("symbols") or ["SPY"]) if s.strip()]
-    days    = max(5, min(int(data.get("days", 30)), 180))
-    socketio.start_background_task(_run_backtest_task, symbols, days, request.sid)
+    data       = data or {}
+    symbols    = [s.strip().upper() for s in (data.get("symbols") or ["SPY"]) if s.strip()][:30]
+    years      = max(0.5, min(float(data.get("years", 1.0)), 5.0))
+    source     = data.get("source", "yfinance")
+    bar_size   = data.get("bar_size", "daily")
+    strategies = data.get("strategies") or ["breakout", "bull_flag", "rsi_dip", "gap_vol"]
+    stop_pct   = max(0.05, min(float(data.get("stop_pct",  0.30)), 0.60))
+    target_pct = max(0.20, min(float(data.get("target_pct", 1.00)), 2.00))
+    vol_min    = max(0.8,  min(float(data.get("vol_min",    1.2)),  3.0))
+    socketio.start_background_task(
+        _run_backtest_task,
+        symbols, years, source, bar_size, strategies,
+        stop_pct, target_pct, vol_min, request.sid
+    )
 
 
-def _run_backtest_task(symbols: list, days: int, sid: str) -> None:
-    import sys
+def _run_backtest_task(symbols: list, years: float, source: str, bar_size: str,
+                       strategies: list, stop_pct: float, target_pct: float,
+                       vol_min: float, sid: str) -> None:
+    import sys, importlib
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def _emit(msg: str, level: str = "INFO"):
         socketio.emit("backtest_log", {"message": msg, "level": level}, to=sid)
 
-    _emit(f"── Backtest starting: {', '.join(symbols)} | {days} days ──")
+    intraday_strats = [s for s in strategies if s in ("orb", "vwap", "ema", "rsi_gate")]
+    daily_strats    = [s for s in strategies if s in ("breakout", "bull_flag", "rsi_dip", "gap_vol")]
+    days_intraday   = min(59, int(years * 365))   # yfinance 5-min cap
+
+    _emit(f"── Backtest ─ {len(symbols)} symbols · {years}yr · {source} · {bar_size} bars ──")
+    if intraday_strats:
+        _emit(f"  Intraday ({', '.join(intraday_strats)}) · {days_intraday}d window")
+    if daily_strats:
+        _emit(f"  Daily setups ({', '.join(daily_strats)}) · {years}yr window")
+
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    import backtest as bt_mod
+    importlib.reload(bt_mod)
 
     results = []
     for sym in symbols:
-        try:
-            _emit(f"→ Running {sym}…")
-            # Import backtest module from repo root
-            if repo_root not in sys.path:
-                sys.path.insert(0, repo_root)
-            import importlib
-            import backtest as bt_mod
-            importlib.reload(bt_mod)   # pick up any edits
-            r = bt_mod.run_backtest(sym, days)
-            if r:
-                results.append(r)
-                m = r["metrics"]
-                pf = m.get("profit_factor", "n/a")
-                _emit(
-                    f"✓ {sym}: {r['trades']} trades | "
-                    f"WR {m.get('win_rate',0):.1f}% | "
-                    f"PF {pf} | "
-                    f"Sharpe {m.get('sharpe',0):.2f} | "
-                    f"Signal P&L {m.get('total_pnl',0):+.2f}% vs "
-                    f"B&H {r.get('baseline',0):+.2f}%"
+        # ── Daily setups ──────────────────────────────────────────────────────
+        if daily_strats and (bar_size == "daily" or bar_size == "both"):
+            try:
+                _emit(f"→ {sym} — daily setups ({', '.join(daily_strats)})…")
+                rs = bt_mod.run_daily_backtest(
+                    sym, years, source, daily_strats,
+                    stop_pct=stop_pct, target_pct=target_pct, vol_min=vol_min
                 )
-        except Exception as e:
-            _emit(f"✗ {sym} failed: {e}", "ERROR")
+                for r in rs:
+                    if r and r.get("trades", 0) > 0:
+                        results.append(r)
+                        m = r["metrics"]
+                        pf = m.get("profit_factor", "n/a")
+                        _emit(f"  ✓ {sym}/{r['setup']}: {r['trades']} trades | "
+                              f"WR {m.get('win_rate',0):.1f}% | PF {pf} | "
+                              f"Sharpe {m.get('sharpe',0):.2f}")
+                    else:
+                        _emit(f"  — {sym}/{r.get('setup','?')}: 0 signals in period")
+            except Exception as e:
+                _emit(f"✗ {sym} daily failed: {e}", "ERROR")
 
-    # Emit structured results for the results table
-    socketio.emit("backtest_results", {"results": results, "days": days}, to=sid)
-    _emit("── Backtest complete ──")
+        # ── Intraday signals ──────────────────────────────────────────────────
+        if intraday_strats and (bar_size == "5min" or bar_size == "both"):
+            try:
+                _emit(f"→ {sym} — intraday signals ({', '.join(intraday_strats)}) · {days_intraday}d…")
+                r = bt_mod.run_backtest(
+                    sym, days_intraday, source, intraday_strats,
+                    stop_pct=stop_pct, target_pct=target_pct, vol_min=vol_min,
+                    bar_size="5min"
+                )
+                if r and r.get("trades", 0) > 0:
+                    results.append(r)
+                    m = r["metrics"]
+                    pf = m.get("profit_factor", "n/a")
+                    _emit(f"  ✓ {sym}/Intraday: {r['trades']} trades | "
+                          f"WR {m.get('win_rate',0):.1f}% | PF {pf} | "
+                          f"Sharpe {m.get('sharpe',0):.2f}")
+                else:
+                    _emit(f"  — {sym}/Intraday: 0 signals in {days_intraday}d window")
+            except Exception as e:
+                _emit(f"✗ {sym} intraday failed: {e}", "ERROR")
+
+    socketio.emit("backtest_results", {
+        "results": results, "years": years,
+        "source": source, "bar_size": bar_size
+    }, to=sid)
+    _emit(f"✅ Backtest complete — {len(results)} result rows")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -2,23 +2,19 @@
 """
 Backtest harness — SPY Auto Trader
 ====================================
-Standalone replay of the signal logic against historical 5-min bars.
-No webapp changes required. Uses yfinance for free OHLCV data.
+Supports: yfinance (free), Polygon, Alpaca data sources.
+Engines: 5-min intraday signals (ORB, VWAP, EMA, RSI) + daily setups
+         (Breakout 50d, Bull Flag, RSI Dip, Gap+Vol).
 
 Usage:
-    venv/bin/python3.11 backtest.py                   # SPY, last 90 days
-    venv/bin/python3.11 backtest.py --symbol NVDA     # single symbol
-    venv/bin/python3.11 backtest.py --days 180        # longer window
-    venv/bin/python3.11 backtest.py --symbols SPY NVDA AMZN
+    venv/bin/python3.11 backtest.py                         # SPY, 1yr daily
+    venv/bin/python3.11 backtest.py --symbol NVDA --years 2
+    venv/bin/python3.11 backtest.py --symbols SPY NVDA AMZN --source polygon
+    venv/bin/python3.11 backtest.py --bar-size 5min --days 59
 
 Output:
-    backtest_results/YYYY-MM-DD_<symbol>.md   — per-symbol report
-    backtest_results/summary.md               — aggregate across symbols
-
-NOTE: This is a *signal replay* backtest, not an options backtest.
-Option pricing on historical chains requires Polygon/ThetaData subscriptions.
-We approximate option P&L using a simplified delta model (see _option_pnl).
-Treat results as directional signal quality, not actual dollar returns.
+    backtest_results/YYYY-MM-DD_<symbol>_<setup>.md  — per-symbol report
+    backtest_results/summary.md                      — aggregate
 """
 
 from __future__ import annotations
@@ -194,6 +190,380 @@ def _generate_signals(day_bars: pd.DataFrame) -> list[dict]:
             in_position = direction
 
     return signals
+
+
+# ── Multi-source data fetching ────────────────────────────────────────────────
+
+def _fetch_yfinance(symbol: str, days: int, bar_size: str) -> pd.DataFrame:
+    """Fetch OHLCV via yfinance. bar_size: '5min' or 'daily'."""
+    import yfinance as yf
+    end   = datetime.now(ET)
+    start = end - timedelta(days=days)
+    ticker = yf.Ticker(symbol)
+    interval = "5m" if bar_size == "5min" else "1d"
+    df = ticker.history(start=start, end=end, interval=interval, auto_adjust=True)
+    if df.empty:
+        return df
+    try:
+        df.index = pd.DatetimeIndex(df.index).tz_convert(ET)
+    except Exception:
+        pass
+    return df.dropna(subset=["Close", "Volume"])
+
+
+def _fetch_polygon(symbol: str, days: int, bar_size: str) -> pd.DataFrame:
+    """Fetch OHLCV via Polygon REST API."""
+    import requests
+    api_key = os.environ.get("POLYGON_API_KEY", "")
+    if not api_key:
+        raise ValueError("POLYGON_API_KEY not set in .env")
+    end   = datetime.now(ET).date()
+    start = (datetime.now(ET) - timedelta(days=days)).date()
+    mult, span = (5, "minute") if bar_size == "5min" else (1, "day")
+    url = (f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range"
+           f"/{mult}/{span}/{start}/{end}"
+           f"?adjusted=true&sort=asc&limit=50000&apiKey={api_key}")
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = resp.json().get("results", [])
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    df.rename(columns={"o":"Open","h":"High","l":"Low","c":"Close","v":"Volume","t":"ts"}, inplace=True)
+    df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True).dt.tz_convert(ET)
+    df = df.set_index("ts").sort_index()
+    return df[["Open","High","Low","Close","Volume"]].dropna()
+
+
+def _fetch_alpaca(symbol: str, days: int, bar_size: str) -> pd.DataFrame:
+    """Fetch OHLCV via Alpaca market data API."""
+    import requests
+    key    = os.environ.get("APCA_API_KEY_ID", "")
+    secret = os.environ.get("APCA_API_SECRET_KEY", "")
+    if not key or not secret:
+        raise ValueError("APCA_API_KEY_ID / APCA_API_SECRET_KEY not set in .env")
+    end   = datetime.now(ET)
+    start = end - timedelta(days=days)
+    tf    = "5Min" if bar_size == "5min" else "1Day"
+    url   = f"https://data.alpaca.markets/v2/stocks/{symbol}/bars"
+    headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    params  = {
+        "timeframe": tf,
+        "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end":   end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "limit": 10000, "adjustment": "split",
+    }
+    rows = []
+    while True:
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        resp.raise_for_status()
+        body = resp.json()
+        rows.extend(body.get("bars", []))
+        nt = body.get("next_page_token")
+        if not nt:
+            break
+        params["page_token"] = nt
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df.rename(columns={"t":"ts","o":"Open","h":"High","l":"Low","c":"Close","v":"Volume"}, inplace=True)
+    df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_convert(ET)
+    df = df.set_index("ts").sort_index()
+    return df[["Open","High","Low","Close","Volume"]].dropna()
+
+
+def _fetch_data(symbol: str, days: int, source: str, bar_size: str) -> pd.DataFrame:
+    """Route to the correct data source."""
+    if source == "polygon":
+        return _fetch_polygon(symbol, days, bar_size)
+    if source == "alpaca":
+        return _fetch_alpaca(symbol, days, bar_size)
+    return _fetch_yfinance(symbol, min(days, 59) if bar_size == "5min" else days, bar_size)
+
+
+# ── Strategy-filtered intraday signal generator ───────────────────────────────
+
+def _generate_signals_filtered(day_bars: pd.DataFrame, strategies: list) -> list[dict]:
+    """
+    Same as _generate_signals but respects enabled-strategy list.
+    strategies: subset of ["orb","vwap","ema","rsi_gate"]
+    """
+    signals = []
+    if len(day_bars) < 25:
+        return signals
+
+    df = _add_indicators(day_bars)
+    orb_h, orb_l = _orb(day_bars)
+    orb_formed = not (math.isnan(orb_h) or math.isnan(orb_l))
+    in_position = None
+
+    for i in range(25, len(df)):
+        bar  = df.iloc[i]
+        prev = df.iloc[i - 1]
+        ts   = df.index[i]
+
+        if ts.hour < SESSION_START[0] or (ts.hour == SESSION_START[0] and ts.minute < SESSION_START[1]):
+            continue
+        if ts.hour > HARD_CLOSE_HOUR or (ts.hour == HARD_CLOSE_HOUR and ts.minute >= HARD_CLOSE_MIN):
+            break
+        if i < 35:
+            continue
+
+        close = float(bar["Close"])
+        vwap  = float(bar["vwap"])  if not math.isnan(bar["vwap"])  else close
+        ema9  = float(bar["ema9"])  if not math.isnan(bar["ema9"])  else close
+        ema21 = float(bar["ema21"]) if not math.isnan(bar["ema21"]) else close
+        rsi   = float(bar["rsi"])   if not math.isnan(bar["rsi"])   else 50.0
+        vol_r = float(bar.get("vol_ratio", 1.0)) if not math.isnan(bar.get("vol_ratio", float("nan"))) else 1.0
+
+        bull_score = bear_score = 0
+
+        if "orb" in strategies and orb_formed:
+            if close > orb_h * 1.001 and prev["Close"] <= orb_h:
+                bull_score += 2
+            if close < orb_l * 0.999 and prev["Close"] >= orb_l:
+                bear_score += 2
+
+        if "vwap" in strategies:
+            if close > vwap and prev["Close"] <= prev["vwap"]:
+                bull_score += 1
+            if close < vwap and prev["Close"] >= prev["vwap"]:
+                bear_score += 1
+
+        if "ema" in strategies:
+            if ema9 > ema21 and close > ema9:
+                bull_score += 1
+            if ema9 < ema21 and close < ema9:
+                bear_score += 1
+
+        if "rsi_gate" in strategies:
+            if rsi > 70:
+                bear_score += 1; bull_score = max(0, bull_score - 1)
+            if rsi < 30:
+                bull_score += 1; bear_score = max(0, bear_score - 1)
+
+        direction = reason = None
+        if bull_score >= 2 and bull_score > bear_score and in_position != "bull":
+            direction = "bull"
+            reason    = "+".join(filter(None, [
+                "ORB" if "orb" in strategies else "",
+                "VWAP" if "vwap" in strategies else "",
+                "EMA"  if "ema"  in strategies else "",
+            ])) + " bull"
+        elif bear_score >= 2 and bear_score > bull_score and in_position != "bear":
+            direction = "bear"
+            reason    = "+".join(filter(None, [
+                "ORB" if "orb" in strategies else "",
+                "VWAP" if "vwap" in strategies else "",
+                "EMA"  if "ema"  in strategies else "",
+            ])) + " bear"
+
+        if direction:
+            signals.append({
+                "time": ts, "direction": direction, "reason": reason,
+                "price": close, "bar_idx": i, "rsi": rsi, "vol_ratio": vol_r,
+            })
+            in_position = direction
+
+    return signals
+
+
+# ── Daily setup signal engine ─────────────────────────────────────────────────
+
+def _generate_daily_signals(daily_df: pd.DataFrame, strategies: list,
+                            vol_min: float = 1.2) -> list[dict]:
+    """
+    Replay our 4 screener daily setups on historical daily bars.
+    strategies: subset of ["breakout","bull_flag","rsi_dip","gap_vol"]
+    """
+    signals = []
+    if len(daily_df) < 55:
+        return signals
+
+    df = daily_df.copy()
+
+    # RSI 14
+    delta = df["Close"].diff()
+    gain  = delta.clip(lower=0); loss = (-delta).clip(lower=0)
+    ag    = gain.ewm(span=14, adjust=False).mean()
+    al    = loss.ewm(span=14, adjust=False).mean()
+    df["rsi14"] = 100 - (100 / (1 + ag / al.replace(0, np.nan)))
+
+    # RSI 2
+    g2 = delta.clip(lower=0); l2 = (-delta).clip(lower=0)
+    ag2 = g2.ewm(span=2, adjust=False).mean(); al2 = l2.ewm(span=2, adjust=False).mean()
+    df["rsi2"]  = 100 - (100 / (1 + ag2 / al2.replace(0, np.nan)))
+
+    # 50-day prior high (shift 1 so today's bar doesn't include itself)
+    df["high50"] = df["High"].rolling(51).max().shift(1)
+
+    # 20-day ADV
+    df["adv20"]    = df["Volume"].rolling(20).mean().shift(1)
+    df["vol_ratio"] = df["Volume"] / df["adv20"].replace(0, np.nan)
+
+    # Gap %
+    df["gap_pct"] = (df["Open"] / df["Close"].shift(1) - 1) * 100
+
+    for i in range(55, len(df)):
+        row  = df.iloc[i]
+        close   = float(row["Close"])
+        rsi14   = float(row["rsi14"])  if pd.notna(row["rsi14"])   else 50.0
+        rsi2    = float(row["rsi2"])   if pd.notna(row["rsi2"])    else 50.0
+        high50  = float(row["high50"]) if pd.notna(row["high50"])  else close
+        vol_r   = float(row["vol_ratio"]) if pd.notna(row["vol_ratio"]) else 1.0
+        gap_pct = float(row["gap_pct"])   if pd.notna(row["gap_pct"])   else 0.0
+
+        # ── BREAKOUT ──
+        if "breakout" in strategies:
+            if close > high50 and 55 <= rsi14 <= 78 and vol_r >= vol_min:
+                signals.append({"time": df.index[i], "setup": "Breakout",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── RSI DIP ──
+        if "rsi_dip" in strategies:
+            if rsi14 < 35 and rsi2 < 20:
+                signals.append({"time": df.index[i], "setup": "RSI Dip",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── GAP + VOL ──
+        if "gap_vol" in strategies:
+            if gap_pct > 1.0 and vol_r >= max(vol_min, 1.5):
+                signals.append({"time": df.index[i], "setup": "Gap+Vol",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+        # ── BULL FLAG ──
+        if "bull_flag" in strategies and i >= 4:
+            surge = (float(df.iloc[i-1]["Close"]) / float(df.iloc[i-4]["Close"]) - 1) * 100
+            today_range = (float(row["High"]) - float(row["Low"])) / max(close, 0.01)
+            prev_range  = (float(df.iloc[i-1]["High"]) - float(df.iloc[i-1]["Low"])) / max(float(df.iloc[i-1]["Close"]), 0.01)
+            if surge > 3.0 and today_range < prev_range * 0.65 and 50 <= rsi14 <= 78:
+                signals.append({"time": df.index[i], "setup": "Bull Flag",
+                    "price": close, "bar_idx": i, "rsi": rsi14, "vol_ratio": vol_r})
+
+    return signals
+
+
+def _daily_pnl(signals: list[dict], daily_df: pd.DataFrame,
+               stop_pct: float = 0.08, target_pct: float = 0.25,
+               max_hold: int = 20) -> list[dict]:
+    """
+    Simulate multi-day hold P&L for daily setup signals.
+    Entry: next day's open. Exit: stop / T1 (50% at +15%) / T2 (rest at target_pct) / max_hold.
+    """
+    trades = []
+    df = daily_df.reset_index()
+    t1_pct = min(0.15, target_pct * 0.5)  # partial target = 50% of full target or 15%, whichever smaller
+
+    for sig in signals:
+        i = sig["bar_idx"]
+        if i + 1 >= len(df):
+            continue
+        entry_row  = df.iloc[i + 1]
+        entry      = float(entry_row["Open"]) if pd.notna(entry_row["Open"]) else float(entry_row["Close"])
+        entry_time = entry_row.iloc[0]  # the index column
+
+        remaining  = 1.0
+        pnl_locked = 0.0
+        exit_reason = "max_hold"
+        exit_time   = df.iloc[min(i + max_hold, len(df) - 1)].iloc[0]
+
+        for j in range(i + 1, min(i + max_hold + 1, len(df))):
+            bar   = df.iloc[j]
+            low_  = float(bar["Low"])
+            high_ = float(bar["High"])
+            close_= float(bar["Close"])
+
+            stop_price = entry * (1 - stop_pct)
+            if low_ <= stop_price:
+                pnl_locked += -stop_pct * remaining
+                exit_reason = "stop"; exit_time = bar.iloc[0]; remaining = 0.0; break
+
+            t1_price = entry * (1 + t1_pct)
+            if high_ >= t1_price and remaining == 1.0:
+                pnl_locked += t1_pct * 0.5; remaining = 0.5
+
+            t2_price = entry * (1 + target_pct)
+            if high_ >= t2_price and remaining > 0:
+                pnl_locked += target_pct * remaining
+                if remaining < 1.0:           # already took partial
+                    pnl_locked += t1_pct * 0.0  # already counted
+                exit_reason = "target"; exit_time = bar.iloc[0]; remaining = 0.0; break
+
+        if remaining > 0:
+            last_close = float(df.iloc[min(i + max_hold, len(df) - 1)]["Close"])
+            pnl_locked += ((last_close - entry) / entry) * remaining
+
+        trades.append({
+            "entry_time": entry_time, "exit_time": exit_time,
+            "direction": "bull", "setup": sig["setup"],
+            "reason": sig["setup"], "entry_price": entry,
+            "pnl_pct": round(pnl_locked * 100, 2),
+            "exit_reason": exit_reason,
+            "rsi": sig.get("rsi", 50), "vol_ratio": sig.get("vol_ratio", 1.0),
+        })
+
+    return trades
+
+
+# ── Daily backtest entry point ────────────────────────────────────────────────
+
+def run_daily_backtest(symbol: str, years: float, source: str = "yfinance",
+                       strategies: list | None = None,
+                       stop_pct: float = 0.08, target_pct: float = 0.25,
+                       vol_min: float = 1.2) -> list[dict]:
+    """
+    Run daily-bar backtest for all requested daily setups.
+    Returns a list of result dicts (one per setup).
+    """
+    if strategies is None:
+        strategies = ["breakout", "bull_flag", "rsi_dip", "gap_vol"]
+
+    days = max(60, int(years * 365))
+    print(f"\n{'─'*50}")
+    print(f"  {symbol} — {years}yr daily backtest ({source})")
+    print(f"  Strategies: {', '.join(strategies)}")
+
+    try:
+        df = _fetch_data(symbol, days, source, "daily")
+    except Exception as e:
+        print(f"  [error] Failed to fetch {symbol}: {e}")
+        return []
+
+    if df.empty or len(df) < 55:
+        print(f"  [warn] Not enough daily data for {symbol} ({len(df)} bars)")
+        return []
+
+    baseline_pct = (df["Close"].iloc[-1] / df["Close"].iloc[0] - 1) * 100 if len(df) > 1 else 0.0
+    print(f"  {len(df)} daily bars | B&H: {baseline_pct:+.2f}%")
+
+    signals = _generate_daily_signals(df, strategies, vol_min=vol_min)
+    print(f"  Total signals: {len(signals)}")
+
+    results = []
+    for setup in strategies:
+        setup_map = {"breakout": "Breakout", "bull_flag": "Bull Flag",
+                     "rsi_dip": "RSI Dip", "gap_vol": "Gap+Vol"}
+        setup_name = setup_map.get(setup, setup)
+        sigs = [s for s in signals if s["setup"] == setup_name]
+
+        # Use tighter stops for daily holds
+        trades = _daily_pnl(sigs, df,
+                             stop_pct=min(stop_pct, 0.12),
+                             target_pct=min(target_pct * 0.25, 0.35))  # scale intraday targets to daily
+
+        m = _metrics(trades)
+        pf = m.get("profit_factor", "n/a")
+        print(f"  {setup_name}: {len(trades)} trades | WR {m.get('win_rate',0):.1f}% | PF {pf}")
+
+        results.append({
+            "symbol":   symbol,
+            "setup":    setup_name,
+            "trades":   len(trades),
+            "metrics":  m,
+            "baseline": round(baseline_pct, 2),
+        })
+
+    return results
 
 
 # ── Simplified option P&L approximation ───────────────────────────────────────
@@ -407,71 +777,71 @@ def _report(symbol: str, period_days: int, trades: list[dict], m: dict,
     return "\n".join(lines)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def run_backtest(symbol: str, days: int) -> dict:
-    try:
-        import yfinance as yf
-    except ImportError:
-        print("yfinance not installed. Run: venv/bin/pip install yfinance")
-        sys.exit(1)
+# ── Intraday (5-min) backtest entry point ─────────────────────────────────────
+def run_backtest(symbol: str, days: int, source: str = "yfinance",
+                 strategies: list | None = None,
+                 stop_pct: float = 0.30, target_pct: float = 1.00,
+                 vol_min: float = 1.2, bar_size: str = "5min") -> dict:
+    """
+    5-min intraday signal backtest. Days capped at 59 for yfinance.
+    Returns a single result dict with setup="Intraday".
+    """
+    if strategies is None:
+        strategies = ["orb", "vwap", "ema", "rsi_gate"]
+
+    # cap for yfinance; Polygon/Alpaca can do more but we cap at 90 for perf
+    days = min(days, 59 if source == "yfinance" else 90)
 
     print(f"\n{'─'*50}")
-    print(f"  {symbol} — {days} day backtest")
-    print(f"{'─'*50}")
+    print(f"  {symbol} — {days}d intraday backtest ({source}, strategies: {strategies})")
 
-    end   = datetime.now(ET)
-    start = end - timedelta(days=days)
-
-    print(f"→ Downloading 5-min bars ({start.date()} → {end.date()})…")
-    ticker = yf.Ticker(symbol)
-    # yfinance max for 5-min is 60 days; for longer periods use 1-day bars
-    if days <= 59:
-        df = ticker.history(start=start, end=end, interval="5m", auto_adjust=True)
-    else:
-        # Use 1-day bars for signal replay on longer periods
-        df = ticker.history(start=start, end=end, interval="1d", auto_adjust=True)
-        print("  [info] Using 1-day bars (5-min only available for 60 days via yfinance)")
+    try:
+        df = _fetch_data(symbol, days, source, "5min")
+    except Exception as e:
+        print(f"  [error] {symbol}: {e}")
+        return {}
 
     if df.empty:
         print(f"  [warn] No data for {symbol}")
         return {}
 
-    df.index = pd.DatetimeIndex(df.index).tz_convert(ET)
+    try:
+        df.index = pd.DatetimeIndex(df.index).tz_convert(ET)
+    except Exception:
+        pass
     df = df.dropna(subset=["Close", "Volume"])
-    print(f"  {len(df)} bars loaded")
+    print(f"  {len(df)} 5-min bars loaded")
 
-    # Baseline: underlying buy-and-hold
     baseline_pct = (df["Close"].iloc[-1] / df["Close"].iloc[0] - 1) * 100 if len(df) > 1 else 0.0
 
-    # Group by day and replay signals
+    # Override module-level constants with caller params
+    global STOP_LOSS_PCT, PROFIT_TARGET_PCT, PARTIAL_PCT
+    _orig_stop = STOP_LOSS_PCT; _orig_tgt = PROFIT_TARGET_PCT; _orig_par = PARTIAL_PCT
+    STOP_LOSS_PCT = stop_pct; PROFIT_TARGET_PCT = target_pct; PARTIAL_PCT = target_pct * 0.3
+
     all_trades: list[dict] = []
     trading_days = df.groupby(df.index.date)
-    for day, day_df in trading_days:
+    for _day, day_df in trading_days:
         if len(day_df) < 10:
             continue
-        sigs   = _generate_signals(day_df)
+        sigs   = _generate_signals_filtered(day_df, strategies)
         trades = _option_pnl(float(day_df["Close"].iloc[0]), sigs, day_df)
         all_trades.extend(trades)
 
+    STOP_LOSS_PCT = _orig_stop; PROFIT_TARGET_PCT = _orig_tgt; PARTIAL_PCT = _orig_par
+
     print(f"  Signals fired: {len(all_trades)}")
-
     m = _metrics(all_trades)
+    pf = m.get("profit_factor", "n/a")
+    print(f"  WR {m.get('win_rate',0):.1f}% | PF {pf} | Sharpe {m.get('sharpe',0):.2f}")
+    print(f"  Signal P&L: {m.get('total_pnl',0):+.2f}% vs B&H: {baseline_pct:+.2f}%")
+
     report = _report(symbol, days, all_trades, m, baseline_pct)
-
-    out_path = RESULTS_DIR / f"{date.today().isoformat()}_{symbol}.md"
+    out_path = RESULTS_DIR / f"{date.today().isoformat()}_{symbol}_intraday.md"
     out_path.write_text(report)
-    print(f"  Report → {out_path}")
 
-    # Print quick summary
-    print(f"  Win rate: {m.get('win_rate', 0):.1f}%  "
-          f"PF: {m.get('profit_factor', 'n/a')}  "
-          f"Expectancy: {m.get('expectancy', 0):+.2f}%  "
-          f"Sharpe: {m.get('sharpe', 0):.2f}")
-    print(f"  Signal P&L: {m.get('total_pnl', 0):+.2f}%  vs  "
-          f"Buy-and-hold: {baseline_pct:+.2f}%")
-
-    return {"symbol": symbol, "metrics": m, "trades": len(all_trades),
-            "baseline": baseline_pct}
+    return {"symbol": symbol, "setup": "Intraday", "metrics": m,
+            "trades": len(all_trades), "baseline": round(baseline_pct, 2)}
 
 
 def _summary_report(results: list[dict]) -> str:
@@ -506,25 +876,43 @@ def _summary_report(results: list[dict]) -> str:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SPY Auto Trader backtest harness")
-    parser.add_argument("--symbol",  default="SPY",
-                        help="Single symbol (default: SPY)")
-    parser.add_argument("--symbols", nargs="+",
-                        help="Multiple symbols (overrides --symbol)")
-    parser.add_argument("--days",    type=int, default=90,
-                        help="Lookback in calendar days (default: 90, max 5min: 59)")
+    parser.add_argument("--symbol",     default="SPY",  help="Single symbol")
+    parser.add_argument("--symbols",    nargs="+",       help="Multiple symbols")
+    parser.add_argument("--years",      type=float, default=1.0, help="Lookback in years (default: 1)")
+    parser.add_argument("--days",       type=int,   default=None, help="Lookback in days (overrides --years)")
+    parser.add_argument("--source",     default="yfinance",
+                        choices=["yfinance","polygon","alpaca"], help="Data source")
+    parser.add_argument("--bar-size",   default="daily", choices=["daily","5min"])
+    parser.add_argument("--strategies", nargs="+",
+                        default=["breakout","bull_flag","rsi_dip","gap_vol"],
+                        help="Strategies: breakout bull_flag rsi_dip gap_vol orb vwap ema rsi_gate")
+    parser.add_argument("--stop",       type=float, default=0.08, help="Stop loss fraction (default: 0.08)")
+    parser.add_argument("--target",     type=float, default=0.25, help="Profit target fraction (default: 0.25)")
+    parser.add_argument("--vol-min",    type=float, default=1.2,  help="Min volume ratio (default: 1.2)")
     args = parser.parse_args()
 
     symbols = args.symbols or [args.symbol]
+    years   = args.years if args.days is None else args.days / 365
     print(f"\n{'='*50}")
     print(f"  SPY Auto Trader — Backtest Harness")
-    print(f"  Symbols: {', '.join(symbols)} | Days: {args.days}")
+    print(f"  Symbols: {', '.join(symbols)} | {years}yr | {args.source} | {args.bar_size}")
+    print(f"  Strategies: {', '.join(args.strategies)}")
     print(f"{'='*50}")
 
     results = []
     for sym in symbols:
-        r = run_backtest(sym, args.days)
-        if r:
-            results.append(r)
+        if args.bar_size == "daily":
+            rs = run_daily_backtest(sym, years, args.source, args.strategies,
+                                    stop_pct=args.stop, target_pct=args.target,
+                                    vol_min=args.vol_min)
+            results.extend(rs)
+        else:
+            days = min(59, int(years * 365))
+            r = run_backtest(sym, days, args.source, args.strategies,
+                             stop_pct=args.stop * 3, target_pct=args.target * 4,
+                             vol_min=args.vol_min, bar_size="5min")
+            if r:
+                results.append(r)
 
     if len(results) > 1:
         summary = _summary_report(results)
@@ -534,6 +922,6 @@ if __name__ == "__main__":
         print(summary)
     elif results:
         m = results[0]["metrics"]
-        print(f"\n✅ Done. Profit factor: {m.get('profit_factor','n/a')} | "
+        print(f"\n✅ Done. PF: {m.get('profit_factor','n/a')} | "
               f"Win rate: {m.get('win_rate',0):.1f}% | "
               f"Sharpe: {m.get('sharpe',0):.2f}")
