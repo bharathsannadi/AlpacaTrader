@@ -350,7 +350,12 @@ state = {
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
     "debate_enabled":       True,   # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
     "auto_trade":           True,   # skip approval modal — auto-execute on paper account
+    "auto_execute_options": False,  # auto-place options orders after each screener refresh
 }
+
+# ── Auto-execute options dedup (prevents re-firing same symbol same day) ──────
+_auto_exec_today: set  = set()   # symbols executed today
+_auto_exec_date:  str  = ""      # YYYY-MM-DD — reset daily
 
 # Per-symbol session threads and stop events
 _session_threads:     dict[str, threading.Thread] = {}
@@ -446,6 +451,8 @@ def _state_snapshot() -> dict:
             "trade_memory_enabled": state["trade_memory_enabled"],
             "debate_enabled":       state["debate_enabled"],
             "auto_trade":           state["auto_trade"],
+            "auto_execute_options": state["auto_execute_options"],
+            "auto_exec_today":      list(_auto_exec_today),
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
     # Trader calls outside the lock — these may do file I/O or iterate lists
@@ -1298,6 +1305,68 @@ def on_daily_status():
 # ── Screener tab ──────────────────────────────────────────────────────────────
 _screener_refresh_lock = threading.Lock()
 
+MAX_AUTO_EXEC_PER_DAY = 3   # hard cap — never place more than this many auto orders per day
+
+def _auto_exec_options(data: dict) -> None:
+    """After each screener refresh, auto-place BUY-rated options rows if armed.
+
+    Safety rules:
+      · Only fires if auto_execute_options is True AND market is open
+      · At most MAX_AUTO_EXEC_PER_DAY orders per calendar day (hard cap)
+      · Dedup set (_auto_exec_today) prevents re-firing the same symbol
+      · Dedup set resets at midnight ET each day
+      · Each order respects the existing KB §4 $400 max-risk budget
+      · dry_run flag is honoured — if True, no real order is placed
+    """
+    global _auto_exec_today, _auto_exec_date
+
+    with _state_lock:
+        armed = state.get("auto_execute_options", False)
+        logged = state["logged_in"]
+        dry   = state["dry_run"]
+    if not armed or not logged:
+        return
+    if not screener._is_market_open():
+        return
+
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    if _auto_exec_date != today:
+        _auto_exec_today = set()
+        _auto_exec_date  = today
+
+    rows = data.get("options", [])
+    for o in rows:
+        if len(_auto_exec_today) >= MAX_AUTO_EXEC_PER_DAY:
+            log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY}) reached — skipping remaining signals")
+            break
+        if o.get("action") != "✅ BUY":
+            continue
+        sym = o.get("sym", "").upper()
+        if not sym or sym in _auto_exec_today:
+            continue
+
+        payload = {
+            "sym":       sym,
+            "structure": o.get("structure", "ATM Call"),
+            "expiry":    o.get("expiry", ""),
+            "opt_type":  o.get("opt_type", "Call"),
+            "max_risk":  o.get("max_risk", 400),
+        }
+        _auto_exec_today.add(sym)   # mark before the call so a slow API doesn't double-fire
+        log.info(f"[auto-exec] {sym}  {payload['structure']}  {payload['expiry']}  dry={dry}")
+        try:
+            result = screener_executor.execute_screener_option(payload, dry_run=dry)
+            socketio.emit("screener_order_result", result)
+            level = "INFO" if result.get("success") else "WARNING"
+            _emit_log(
+                f"AUTO-EXEC {'✅' if result.get('success') else '⚠️'}  "
+                f"{sym}  {payload['structure']}  {result.get('message', '')}",
+                level=level
+            )
+        except Exception as e:
+            log.warning(f"[auto-exec] {sym} failed: {e}")
+
+
 def _refresh_screener_bg():
     """Background task: refresh screener data and broadcast to all clients."""
     if not _screener_refresh_lock.acquire(blocking=False):
@@ -1312,6 +1381,7 @@ def _refresh_screener_bg():
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
+        _auto_exec_options(data)   # auto-place if armed
     except Exception as e:
         log.warning(f"Screener refresh failed: {e}")
     finally:
@@ -1379,6 +1449,18 @@ def on_execute_screener_option(data=None):
         _emit_log(f"SCREENER EXEC  {result.get('message', '')}", level=level)
 
     socketio.start_background_task(_run)
+
+
+@socketio.on("toggle_auto_execute_options")
+@require_auth
+def on_toggle_auto_execute_options():
+    """Arm or disarm headless options auto-execution."""
+    with _state_lock:
+        state["auto_execute_options"] = not state["auto_execute_options"]
+        val = state["auto_execute_options"]
+    log.info(f"Auto-execute options {'🟢 ARMED' if val else '⬛ disarmed'} "
+             f"(executed today: {sorted(_auto_exec_today)})")
+    emit_state()
 
 
 @socketio.on("daily_eod_now")

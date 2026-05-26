@@ -307,6 +307,7 @@ function updateUI(s) {
   syncToggleBtn("btn-debate",        s.debate_enabled === true);
   syncToggleBtn("btn-auto-trade",    s.auto_trade === true);
   _autoTrade = s.auto_trade === true;  // mirror for screener execute confirm gate
+  _updateAutoExecBtn(s.auto_execute_options === true, s.auto_exec_today);
 
   // Session end time input
   if (s.session_end) {
@@ -1989,6 +1990,24 @@ function scrRefresh() {
   const spin = document.getElementById("scr-spin");
   if (spin) spin.style.display = "";
   socket.emit("get_screener", { force: true });
+}
+
+// ── Auto-execute options toggle ───────────────────────────────────────────────
+function scrToggleAutoExec() {
+  socket.emit("toggle_auto_execute_options");
+}
+
+function _updateAutoExecBtn(armed, execToday) {
+  const btn = document.getElementById("scr-autoexec-btn");
+  if (!btn) return;
+  execToday = execToday || [];
+  if (armed) {
+    btn.classList.add("armed");
+    btn.textContent = `🔴 Armed (${execToday.length}/3 today)`;
+  } else {
+    btn.classList.remove("armed");
+    btn.textContent = "⬛ Auto-Execute";
+  }
 }
 
 // ── Inner screener tab switch ─────────────────────────────────────────────────

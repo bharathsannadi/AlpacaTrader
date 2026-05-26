@@ -669,6 +669,20 @@
   }
   .scr-refresh-btn:hover { color: var(--text); border-color: rgba(148,163,184,.5); }
 
+  /* Auto-execute arm button */
+  .scr-autoexec-btn {
+    background: none; border: 1px solid var(--border);
+    color: var(--muted); padding: 4px 12px; border-radius: 5px;
+    font-size: 11px; font-family: var(--mono); cursor: pointer;
+    transition: all .2s; white-space: nowrap;
+  }
+  .scr-autoexec-btn:hover { border-color: rgba(148,163,184,.5); color: var(--text); }
+  .scr-autoexec-btn.armed {
+    background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.5);
+    color: #f87171; font-weight: 700;
+    box-shadow: 0 0 8px rgba(239,68,68,.2);
+  }
+
   /* ── Strategy edge cards bar ── */
   .scr-edge-bar {
     display: grid; grid-template-columns: repeat(4, 1fr);
@@ -1991,6 +2005,11 @@
     <span class="scr-mkt-label" id="scr-mkt-status">—</span>
     <span class="scr-age" id="scr-updated"></span>
     <span class="scr-spin-label" id="scr-spin" style="display:none">⟳ refreshing…</span>
+    <button class="scr-autoexec-btn" id="scr-autoexec-btn"
+            onclick="scrToggleAutoExec()"
+            title="Arm: auto-place ✅ BUY options after each screener refresh (max 3/day · $400/trade)">
+      ⬛ Auto-Execute
+    </button>
     <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh</button>
   </div>
 
