@@ -3,6 +3,9 @@
 *.pem
 *.key
 
+# ── Runtime state (auto-exec dedup, equity snapshots, etc.) ──────────────
+data/
+
 # ── Logs (all runtime logs) ──────────────────────────────────────────────
 *.log
 *.log.*

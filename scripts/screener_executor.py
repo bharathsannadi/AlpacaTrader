@@ -291,7 +291,43 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                 actual_short_mid = live_short_mid
                 log.info(f"  STO {short_occ}  lmt=${short_limit:.2f}  id={short_order_id}")
             except Exception as e:
-                log.warning(f"  STO {short_occ} failed: {e} — position is now naked long")
+                # ── Naked-leg rollback ─────────────────────────────────────
+                # The STO failed AFTER the BTO was submitted. To avoid being
+                # left holding undefined-risk naked long premium, try to:
+                #   1. Cancel the BTO if it hasn't filled yet
+                #   2. If it has filled, place a market sell to flatten
+                log.error(f"  STO {short_occ} failed: {e} — initiating rollback of long leg")
+                rolled_back = False
+                try:
+                    # Check fill status of long leg
+                    long_order = tc.get_order_by_id(long_order_id)
+                    long_status = str(long_order.status).lower()
+                    log.info(f"  rollback: long leg status = {long_status}")
+                    if "filled" not in long_status and "canceled" not in long_status:
+                        tc.cancel_order_by_id(long_order_id)
+                        log.info(f"  rollback: cancelled unfilled BTO {long_order_id}")
+                        rolled_back = True
+                    elif "filled" in long_status:
+                        # Already filled — flatten with a market sell
+                        from alpaca.trading.requests import MarketOrderRequest
+                        req_flat = MarketOrderRequest(
+                            symbol=atm_occ, qty=1,
+                            side=OrderSide.SELL,
+                            time_in_force=TimeInForce.DAY,
+                        )
+                        flat_order = tc.submit_order(req_flat)
+                        log.warning(f"  rollback: BTO already filled — submitted "
+                                    f"market SELL {flat_order.id} to flatten naked long")
+                        rolled_back = True
+                except Exception as rb_err:
+                    log.error(f"  rollback FAILED: {rb_err} — POSITION MAY BE NAKED LONG, "
+                              f"manual intervention required for order {long_order_id}")
+                result["error"] = (
+                    f"STO failed: {e}. " +
+                    ("Long leg rolled back successfully." if rolled_back
+                     else "ROLLBACK FAILED — check Alpaca dashboard for naked long.")
+                )
+                raise   # re-raise so caller marks the trade as failed
 
         actual_debit = round(long_limit - actual_short_mid, 2)
         acct_type    = "📄 PAPER" if paper else "🔴 LIVE"

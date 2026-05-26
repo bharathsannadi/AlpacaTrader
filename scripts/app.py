@@ -353,9 +353,54 @@ state = {
     "auto_execute_options": False,  # auto-place options orders after each screener refresh
 }
 
-# ── Auto-execute options dedup (prevents re-firing same symbol same day) ──────
-_auto_exec_today: set  = set()   # symbols executed today
-_auto_exec_date:  str  = ""      # YYYY-MM-DD — reset daily
+# ── Auto-execute options dedup (prevents re-firing same symbol same day) ─────
+# Persisted to disk so a server restart mid-day cannot re-execute symbols
+# that already fired. File format: {"date":"YYYY-MM-DD","executed":["SYM",...]}
+import json as _json_dedup
+_AUTO_EXEC_STATE_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "auto_exec_state.json"
+)
+_auto_exec_lock = threading.Lock()   # guards file + in-memory set
+_auto_exec_today: set  = set()
+_auto_exec_date:  str  = ""
+
+# ── Daily P&L circuit breaker ────────────────────────────────────────────────
+# Snapshot equity at start-of-day; halt auto-execute if drawdown exceeds limit.
+DAILY_LOSS_LIMIT_PCT = 2.0   # halt auto-exec if today's equity drops > 2%
+_session_start_equity: float = 0.0
+_session_start_date:   str   = ""
+
+
+def _load_auto_exec_state() -> None:
+    """Restore today's dedup set from disk on startup. Discards yesterday's data."""
+    global _auto_exec_today, _auto_exec_date
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    try:
+        with open(_AUTO_EXEC_STATE_FILE) as fh:
+            data = _json_dedup.load(fh)
+        if data.get("date") == today:
+            _auto_exec_today = set(data.get("executed", []))
+            _auto_exec_date  = today
+            if _auto_exec_today:
+                log.info(f"[auto-exec] Restored dedup set for {today}: "
+                         f"{sorted(_auto_exec_today)}")
+    except (FileNotFoundError, _json_dedup.JSONDecodeError, OSError):
+        pass
+
+
+def _save_auto_exec_state() -> None:
+    """Write the current dedup set to disk. Atomic via temp-file rename."""
+    os.makedirs(os.path.dirname(_AUTO_EXEC_STATE_FILE), exist_ok=True)
+    tmp = _AUTO_EXEC_STATE_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            _json_dedup.dump(
+                {"date": _auto_exec_date, "executed": sorted(_auto_exec_today)},
+                fh,
+            )
+        os.replace(tmp, _AUTO_EXEC_STATE_FILE)
+    except OSError as e:
+        log.warning(f"[auto-exec] Could not persist dedup state: {e}")
 
 # Per-symbol session threads and stop events
 _session_threads:     dict[str, threading.Thread] = {}
@@ -622,9 +667,11 @@ def price_ticker() -> None:
         _beat("price_ticker")
         try:
             with _state_lock:
-                should_run = (state["logged_in"]
-                              and state["streaming"]
-                              and len(authenticated_sids) > 0)
+                # Run as long as we're logged in — headless auto-execute needs
+                # fresh prices even when no browser is connected. Streaming
+                # flag still gates UI broadcasts but data must stay current.
+                should_run    = state["logged_in"] and state["streaming"]
+                has_browsers  = len(authenticated_sids) > 0
             if should_run:
                 # Every tick: refresh active symbol fast.
                 # Every 3rd tick: also refresh other symbols (keeps Data Freshness green).
@@ -635,12 +682,9 @@ def price_ticker() -> None:
                 if tick % ACCOUNT_REFRESH_TICKS == 0:
                     refresh_account()
                 emit_state()
-                # Background chart pre-warm: one symbol per alternating tick so
-                # every watchlist symbol's bars stay hot (~every 60s, matching
-                # CHART_CACHE_TTL_SEC). Tab switches then hit warm cache instead
-                # of a cold 1-3s yfinance fetch. Max one fetch/tick — never a
-                # 6x burst that would stall the ticker thread.
-                if tick % 2 == 1:
+                # Chart pre-warm is a UI optimization — skip when nobody's
+                # watching to save the extra yfinance call per tick.
+                if has_browsers and tick % 2 == 1:
                     _prewarm_next_chart()
                 tick += 1
         except Exception as e:
@@ -798,16 +842,18 @@ def on_connect():
 
 @socketio.on("disconnect")
 def on_disconnect():
+    """Disconnect a browser session.
+
+    IMPORTANT: do NOT clear state["logged_in"] here. The server may be
+    running headless (auto-login from .env) and managing open positions
+    without any browser connected. Clearing the global flag would halt
+    position_monitor and auto-execute the moment the last tab closes.
+
+    Per-browser auth is enforced separately via authenticated_sids: when a
+    new tab opens, on_connect checks its sid against the set and surfaces
+    the login modal if it's not authenticated."""
     with _state_lock:
         authenticated_sids.discard(request.sid)
-        no_auth_left = not authenticated_sids
-    # If no authenticated sessions remain, clear the global logged_in flag
-    # so a fresh page reload sees the login modal.
-    if no_auth_left:
-        with _state_lock:
-            if state["logged_in"]:
-                state["logged_in"] = False
-                log.info("No authenticated sessions remain — logged_in cleared.")
     security_log.info(f"WebSocket disconnect from {request.remote_addr}")
 
 
@@ -1313,37 +1359,82 @@ def _auto_exec_options(data: dict) -> None:
     Safety rules:
       · Only fires if auto_execute_options is True AND market is open
       · At most MAX_AUTO_EXEC_PER_DAY orders per calendar day (hard cap)
-      · Dedup set (_auto_exec_today) prevents re-firing the same symbol
-      · Dedup set resets at midnight ET each day
+      · Dedup set (_auto_exec_today) — persisted to disk; survives restart
+      · DAILY_LOSS_LIMIT_PCT circuit breaker — halts auto-exec on drawdown
       · Each order respects the existing KB §4 $400 max-risk budget
       · dry_run flag is honoured — if True, no real order is placed
     """
     global _auto_exec_today, _auto_exec_date
+    global _session_start_equity, _session_start_date
 
     with _state_lock:
-        armed = state.get("auto_execute_options", False)
+        armed  = state.get("auto_execute_options", False)
         logged = state["logged_in"]
-        dry   = state["dry_run"]
+        dry    = state["dry_run"]
     if not armed or not logged:
         return
     if not screener._is_market_open():
         return
 
     today = datetime.now(ET).strftime("%Y-%m-%d")
-    if _auto_exec_date != today:
-        _auto_exec_today = set()
-        _auto_exec_date  = today
+
+    # ── Daily-rollover housekeeping (dedup + circuit-breaker baseline) ──
+    with _auto_exec_lock:
+        if _auto_exec_date != today:
+            _auto_exec_today = set()
+            _auto_exec_date  = today
+            _save_auto_exec_state()
+
+    if _session_start_date != today:
+        try:
+            _session_start_equity = float(trader.account_value() or 0.0)
+            _session_start_date   = today
+            log.info(f"[auto-exec] Day baseline equity: ${_session_start_equity:,.2f}")
+        except Exception as e:
+            log.warning(f"[auto-exec] Could not snapshot start equity: {e}")
+            _session_start_equity = 0.0
+
+    # ── Circuit breaker: halt if today's drawdown exceeds DAILY_LOSS_LIMIT_PCT ──
+    if _session_start_equity > 0:
+        try:
+            cur_eq = float(trader.account_value() or 0.0)
+            dd_pct = (cur_eq - _session_start_equity) / _session_start_equity * 100
+            if dd_pct <= -DAILY_LOSS_LIMIT_PCT:
+                _emit_log(
+                    f"⛔ AUTO-EXEC HALTED — daily P&L {dd_pct:+.2f}% breached "
+                    f"-{DAILY_LOSS_LIMIT_PCT:.1f}% loss limit (equity "
+                    f"${cur_eq:,.2f} vs start ${_session_start_equity:,.2f})",
+                    level="WARNING",
+                )
+                # Disarm so the user has to explicitly re-arm tomorrow
+                with _state_lock:
+                    state["auto_execute_options"] = False
+                emit_state()
+                return
+        except Exception as e:
+            log.warning(f"[auto-exec] equity check failed: {e}")
 
     rows = data.get("options", [])
     for o in rows:
-        if len(_auto_exec_today) >= MAX_AUTO_EXEC_PER_DAY:
-            log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY}) reached — skipping remaining signals")
+        with _auto_exec_lock:
+            count_today = len(_auto_exec_today)
+        if count_today >= MAX_AUTO_EXEC_PER_DAY:
+            log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY}) reached "
+                     f"— skipping remaining signals")
             break
         if o.get("action") != "✅ BUY":
             continue
         sym = o.get("sym", "").upper()
-        if not sym or sym in _auto_exec_today:
+        if not sym:
             continue
+
+        with _auto_exec_lock:
+            if sym in _auto_exec_today:
+                continue
+            # Mark + persist BEFORE the API call so a slow/crashing request
+            # cannot leave the dedup set inconsistent with what was sent.
+            _auto_exec_today.add(sym)
+            _save_auto_exec_state()
 
         payload = {
             "sym":       sym,
@@ -1352,8 +1443,8 @@ def _auto_exec_options(data: dict) -> None:
             "opt_type":  o.get("opt_type", "Call"),
             "max_risk":  o.get("max_risk", 400),
         }
-        _auto_exec_today.add(sym)   # mark before the call so a slow API doesn't double-fire
-        log.info(f"[auto-exec] {sym}  {payload['structure']}  {payload['expiry']}  dry={dry}")
+        log.info(f"[auto-exec] {sym}  {payload['structure']}  "
+                 f"{payload['expiry']}  dry={dry}")
         try:
             result = screener_executor.execute_screener_option(payload, dry_run=dry)
             socketio.emit("screener_order_result", result)
@@ -2121,6 +2212,7 @@ def _auto_login():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    _load_auto_exec_state()   # restore today's dedup set if mid-day restart
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
     socketio.start_background_task(position_monitor)
