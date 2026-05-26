@@ -2020,7 +2020,7 @@ function _renderDtTable(rows) {
   const all     = [...valid, ...neutral];
 
   if (!all.length) {
-    tbody.innerHTML = `<tr><td colspan="15" style="text-align:center;color:var(--muted);padding:24px">
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
       Loading live data… (takes ~60 s for 25 symbols)</td></tr>`;
     return;
   }
@@ -2074,19 +2074,18 @@ function _renderDtTable(rows) {
     const hasDetail = !!(r.reason || r.strategy);
     const detailHint = hasDetail ? ` <span class="scr-expand-hint">▸ click for strategy</span>` : "";
 
+    // Tooltip shows the columns we removed from the table (Range%, HV20, RSI2-D, raw values)
+    const rowTip = `Range ${r.day_range.toFixed(1)}%  HV20 ${r.hv20.toFixed(0)}%  RSI2-D ${r.rsi2_d.toFixed(1)}  EMA20 $${r.ema20_d}  EMA13 $${(r.ema13_d||0).toFixed(2)}  FI2d ${(r.fi2d||0).toFixed(0)}  ADV ${r.adv30m}M`;
     return `<tr class="${rowCls} scr-expandable" ${impStyle}
-        title="RSI2(daily)=${r.rsi2_d.toFixed(1)}  EMA20=$${r.ema20_d}  EMA13=$${(r.ema13_d||0).toFixed(2)}  FI2d=${(r.fi2d||0).toFixed(0)}  ADV=${r.adv30m}M  Impulse=${imp}"
+        title="${rowTip}"
         onclick="_toggleScrDetail(this)">
       <td class="scr-rank">${rankDisp}</td>
-      <td class="scr-sym"><b>${r.sym}</b><br><span class="scr-sector">${r.sector}${detailHint}</span></td>
+      <td><span class="scr-sym">${r.sym}</span><br><span class="scr-sector">${r.sector}${detailHint}</span></td>
       <td class="scr-price">$${r.price.toFixed(2)}</td>
       <td class="${_clsDir(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
       <td class="${rvCls}">${r.rel_vol.toFixed(2)}×</td>
       <td class="${rsiCls}">${r.rsi14.toFixed(0)}</td>
       <td class="${vwapCls}">${vwapArrow}${Math.abs(r.vwap_diff).toFixed(1)}%</td>
-      <td>${r.day_range.toFixed(1)}%</td>
-      <td>${r.hv20.toFixed(0)}%</td>
-      <td class="${rsi2Cls}">${r.rsi2_d.toFixed(1)}</td>
       <td title="${impTitle}">${impDisp}</td>
       <td>${setupBadge}</td>
       <td>${pfDisp}</td>
@@ -2094,7 +2093,7 @@ function _renderDtTable(rows) {
       <td>${pickDisp}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
-      <td colspan="15">
+      <td colspan="12">
         <div class="scr-detail-panel">
           ${reason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${reason}</div>` : ""}
           ${strategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${strategy}</div>` : ""}
@@ -2203,8 +2202,10 @@ socket.on("screener_data", function(data) {
 
   // Status bar
   const mktEl  = document.getElementById("scr-mkt-status");
+  const dotEl  = document.getElementById("scr-dot");
   const spinEl = document.getElementById("scr-spin");
-  if (mktEl)  mktEl.textContent = data.market_open ? "🟢 Market Open" : "🔴 Market Closed";
+  if (mktEl)  mktEl.textContent = data.market_open ? "Market Open" : "Market Closed";
+  if (dotEl)  { dotEl.className = "scr-dot " + (data.market_open ? "live" : "closed"); }
   if (spinEl) spinEl.style.display = "none";
 
   _renderDtTable(data.dt || []);

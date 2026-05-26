@@ -631,74 +631,136 @@
   body.view-log .dashboard  { display: none !important; }
   body.view-log .log-panel  { display: flex; }
 
+  /* ═══════════════════════════════════════════════════════
+     SCREENER — Professional Terminal Redesign
+  ═══════════════════════════════════════════════════════ */
+
   /* Screener view */
-  .screener-panel { display: none; flex-direction: column; height: calc(100vh - 56px - 36px - 38px); overflow-y: auto; padding: var(--s-3) var(--s-4); gap: 12px; }
+  .screener-panel { display: none; flex-direction: column; height: calc(100vh - 56px - 36px - 38px); overflow-y: auto; background: var(--bg); }
   body.view-screener .dashboard      { display: none !important; }
   body.view-screener .log-panel      { display: none !important; }
   body.view-screener .screener-panel { display: flex; }
 
-  /* Screener tab style */
+  /* Screener tab */
   .screener-tab { color: #f59e0b !important; }
   .screener-tab.active { background: rgba(245,158,11,0.08) !important; border-bottom-color: #f59e0b !important; text-shadow: 0 0 16px rgba(245,158,11,0.5) !important; }
 
-  /* Screener table styles */
-  .scr-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
-  .scr-title  { font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: .04em; text-transform: uppercase; }
-  .scr-meta   { font-size: 11px; color: var(--muted); }
-  .scr-table  { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-  .scr-table th { padding: 5px 8px; text-align: left; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  .scr-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; white-space: nowrap; }
-  .scr-row:hover td { background: rgba(255,255,255,0.025); cursor: default; }
-  .scr-rank   { color: var(--muted); font-size: 10px; width: 28px; }
-  .scr-sym    { font-size: 12px; line-height: 1.3; }
-  .scr-sym b  { color: var(--text); }
-  .scr-sector { font-size: 10px; color: var(--muted); }
+  /* ── Top header bar ── */
+  .scr-topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.012); flex-shrink: 0;
+  }
+  .scr-topbar-title {
+    font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text);
+  }
+  .scr-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border); }
+  .scr-dot.live  { background: #22c55e; box-shadow: 0 0 6px #22c55e80; }
+  .scr-dot.closed { background: #f43f5e; }
+  .scr-mkt-label { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+  .scr-age       { font-size: 10px; color: var(--muted); font-family: var(--mono); margin-left: 2px; }
+  .scr-spin-label { font-size: 10px; color: #f59e0b; font-family: var(--mono); }
+  .scr-refresh-btn {
+    margin-left: auto; background: none; border: 1px solid var(--border);
+    color: var(--muted); padding: 4px 12px; border-radius: 5px;
+    font-size: 11px; font-family: var(--mono); cursor: pointer;
+    transition: all .15s;
+  }
+  .scr-refresh-btn:hover { color: var(--text); border-color: rgba(148,163,184,.5); }
+
+  /* ── Strategy edge cards bar ── */
+  .scr-edge-bar {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 1px; background: var(--border);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .scr-edge-card {
+    background: var(--card); padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .scr-edge-name {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted);
+  }
+  .scr-edge-pf {
+    font-size: 18px; font-weight: 700; font-family: var(--mono);
+    line-height: 1;
+  }
+  .scr-edge-stats {
+    display: flex; gap: 10px; font-size: 10px;
+    font-family: var(--mono); color: var(--muted);
+  }
+  .scr-edge-stats span { white-space: nowrap; }
+  .scr-edge-stats b { color: var(--text); }
+
+  /* ── Section header ── */
+  .scr-section-hdr {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 16px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.012); flex-shrink: 0;
+  }
+  .scr-section-title {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted);
+  }
+  .scr-section-sub { font-size: 10px; color: rgba(100,116,139,.6); }
+  .scr-section-ref { font-size: 10px; color: rgba(100,116,139,.45); margin-left: auto; font-style: italic; }
+
+  /* ── Tables ── */
+  .scr-table-wrap { overflow-x: auto; }
+  .scr-table  { width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .scr-table th {
+    padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 700;
+    color: var(--muted-2); text-transform: uppercase; letter-spacing: .06em;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+    background: rgba(255,255,255,0.02); cursor: default;
+  }
+  .scr-table td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; white-space: nowrap; }
+  .scr-row:hover td { background: rgba(255,255,255,0.028); cursor: default; }
+
+  /* Cell types */
+  .scr-rank   { color: var(--muted); font-size: 10px; width: 26px; text-align: right; padding-right: 6px !important; }
+  .scr-sym    { font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+  .scr-sector { font-size: 9.5px; color: var(--muted); font-weight: 400; }
   .scr-price  { color: var(--text); font-weight: 600; }
   .scr-up     { color: #22c55e; }
   .scr-down   { color: #f43f5e; }
   .scr-flat   { color: var(--muted); }
-  .scr-badge  { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .03em; white-space: nowrap; }
-  .scr-citation { font-size: 10px; color: var(--muted); font-style: italic; padding: 0 8px 6px; }
-  .scr-refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 3px 9px; border-radius: 5px; font-size: 11px; cursor: pointer; transition: color .15s, border-color .15s; }
-  .scr-refresh-btn:hover { color: var(--text); border-color: var(--text); }
-  .scr-note { font-size: 10px; color: var(--muted); padding: 4px 0 0; font-style: italic; }
-  .scr-pill { display:inline-flex; align-items:center; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; letter-spacing:.02em; white-space:nowrap; }
-  .scr-pill-good { background:rgba(34,197,94,.12); color:#22c55e; border:1px solid rgba(34,197,94,.25); }
-  .scr-pill-bad  { background:rgba(244,63,94,.10); color:#f43f5e; border:1px solid rgba(244,63,94,.20); text-decoration:line-through; opacity:.7; }
-  .scr-top-star  { color:#f59e0b; font-size:13px; }
-  .scr-action-buy   { color:#22c55e; font-weight:700; font-size:11px; }
-  .scr-action-watch { color:#f59e0b; font-weight:600; font-size:11px; }
-  .scr-neutral td   { opacity:.55; }
-  .scr-exec-btn {
-    background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.35);
-    color: #22c55e; padding: 3px 9px; border-radius: 5px; font-size: 10px;
-    font-weight: 700; cursor: pointer; letter-spacing: .03em;
-    transition: background .15s, color .15s;
-  }
-  .scr-exec-btn:hover { background: rgba(34,197,94,.25); color: #fff; }
-  .scr-exec-btn:disabled { opacity: .45; cursor: not-allowed; }
-  @keyframes fadeInUp {
-    from { opacity:0; transform:translateY(12px); }
-    to   { opacity:1; transform:translateY(0); }
-  }
+  .scr-neutral td { opacity: .45; }
+  .scr-top-star { color: #f59e0b; }
 
-  /* ── Expandable reason + strategy detail rows ── */
+  /* Setup / action badges */
+  .scr-badge  { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .03em; white-space: nowrap; }
+  .scr-action-buy   { color: #22c55e; font-weight: 700; }
+  .scr-action-watch { color: #f59e0b; font-weight: 600; }
+
+  /* Execute button */
+  .scr-exec-btn {
+    background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.3);
+    color: #22c55e; padding: 3px 10px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; font-family: var(--mono);
+    cursor: pointer; letter-spacing: .03em; transition: all .15s;
+  }
+  .scr-exec-btn:hover { background: rgba(34,197,94,.2); border-color: #22c55e; }
+  .scr-exec-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* Expandable detail rows */
+  @keyframes fadeInUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
   .scr-expandable { cursor: pointer; }
-  .scr-expandable:hover td { background: rgba(255,255,255,0.02); }
-  .scr-expanded   { outline: 1px solid rgba(99,102,241,0.35); }
-  .scr-expanded td { background: rgba(99,102,241,0.05) !important; }
-  .scr-expand-hint { color: #6366f1; font-size: 9px; font-weight: 600; letter-spacing: .03em; opacity: .7; }
+  .scr-expandable:hover td { background: rgba(255,255,255,0.022); }
+  .scr-expanded td { background: rgba(99,102,241,0.05) !important; border-bottom-color: transparent !important; }
+  .scr-expand-hint { color: rgba(99,102,241,.6); font-size: 9px; font-weight: 600; letter-spacing: .03em; }
   .scr-detail-row td { padding: 0 !important; border-top: none !important; }
   .scr-detail-panel {
-    padding: 10px 16px 12px;
-    background: rgba(10,15,30,0.85);
-    border-top: 1px solid rgba(99,102,241,0.2);
-    border-bottom: 1px solid rgba(99,102,241,0.1);
+    padding: 10px 16px 12px; background: rgba(8,12,24,0.9);
+    border-left: 2px solid rgba(99,102,241,0.4);
+    border-bottom: 1px solid rgba(99,102,241,0.12);
     animation: fadeInUp .15s ease;
   }
-  .scr-detail-reason   { color: #94a3b8; font-size: 12px; margin-bottom: 7px; line-height: 1.5; }
-  .scr-detail-strategy { color: #cbd5e1; font-size: 12px; line-height: 1.6; }
-  .scr-detail-label    { color: #e2e8f0; font-weight: 700; margin-right: 4px; }
+  .scr-detail-reason   { color: #94a3b8; font-size: 11.5px; margin-bottom: 6px; line-height: 1.55; font-family: var(--mono); }
+  .scr-detail-strategy { color: #cbd5e1; font-size: 11.5px; line-height: 1.6; font-family: var(--mono); }
+  .scr-detail-label    { color: #e2e8f0; font-weight: 700; margin-right: 5px; }
 
   /* Settings / Log tab styles */
   .settings-tab { color: var(--purple) !important; }
@@ -1900,126 +1962,118 @@
 <!-- ── Screener panel ──────────────────────────────────────────────────────── -->
 <div class="screener-panel" id="screener-panel">
 
-  <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
-  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-bottom:2px">
-    <span style="font-size:13px;font-weight:700;color:var(--text);letter-spacing:.04em">🔍 LIVE SCREENER</span>
-    <span id="scr-mkt-status" style="font-size:11px;color:var(--muted)"></span>
-    <span id="scr-updated" style="font-size:11px;color:var(--muted)">—</span>
-    <span id="scr-spin" style="font-size:11px;color:#f59e0b;display:none">⟳ refreshing…</span>
-    <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh Now</button>
-    <span style="font-size:10px;color:var(--muted);margin-left:auto">
-      ✅ Only <b>backtested setups shown</b> (Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37) ·
-      auto-refresh 90s · 25 S&amp;P 500 names
-    </span>
+  <!-- ── Top header bar ── -->
+  <div class="scr-topbar">
+    <span class="scr-topbar-title">Live Screener</span>
+    <span class="scr-dot" id="scr-dot"></span>
+    <span class="scr-mkt-label" id="scr-mkt-status">—</span>
+    <span class="scr-age" id="scr-updated"></span>
+    <span class="scr-spin-label" id="scr-spin" style="display:none">⟳ refreshing…</span>
+    <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh</button>
   </div>
 
-  <!-- ── Backtest summary pills ──────────────────────────────────────────── -->
-  <div id="scr-bt-pills" style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0">
-    <span class="scr-pill scr-pill-good">Breakout  PF 1.88 · Win 51.5% · AvgRet +0.78% · Dir 51.5%</span>
-    <span class="scr-pill scr-pill-good" title="Bull Flag: surge bar &gt;2% → tight consolidation → entry above flag high · Volatile Markets p.57 + Aziz p.61 · Impulse-Green PF 2.29">Bull Flag PF 1.44 · Win 61.5% · AvgRet +0.45% · Dir 61.5%</span>
-    <span class="scr-pill scr-pill-good" title="RSI Dip Impulse insight: Red PF=1.82 &gt; Green PF=1.76 — Red Impulse is BETTER for mean-reversion dip buys">RSI Dip   PF 1.41 · Win 53.7% · AvgRet +0.42% · Dir 53.7%</span>
-    <span class="scr-pill scr-pill-good">Gap+Vol   PF 1.37 · Win 50.6% · AvgRet +0.41% · Dir 50.6%</span>
-    <span class="scr-pill scr-pill-bad" title="Backtested PF 1.00 — removed">Momentum removed (PF 1.00)</span>
-    <span class="scr-pill scr-pill-bad" title="Backtested PF 0.85 — removed">VWAP Bounce removed (PF 0.85)</span>
-    <span style="font-size:10px;color:var(--muted);align-self:center">2yr · 25 symbols · next-day open→close · run 2026-05-24</span>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!-- TABLE 1: DAY TRADING STOCKS                                            -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <div class="card" style="padding:10px 12px">
-    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
-      <span class="card-title" style="margin:0">📈 Table 1 — Day Trading Stocks</span>
-      <span style="font-size:10px;color:var(--muted)">Validated setups only · 25 S&amp;P 500 leaders · intraday 5-min + daily bars</span>
-      <span style="margin-left:auto;font-size:10px;color:var(--muted)">Books: Aziz · Elder · O'Neil · Livermore · Master Traders</span>
+  <!-- ── Strategy edge cards ── -->
+  <div class="scr-edge-bar">
+    <div class="scr-edge-card">
+      <div class="scr-edge-name">Breakout</div>
+      <div class="scr-edge-pf" style="color:#818cf8">1.88</div>
+      <div class="scr-edge-stats">
+        <span>Win <b>51.5%</b></span>
+        <span>Ret <b style="color:#22c55e">+0.78%</b></span>
+        <span>Dir <b>51.5%</b></span>
+      </div>
     </div>
-    <div style="overflow-x:auto">
-      <table class="scr-table" id="scr-dt-table">
-        <thead>
-          <tr>
-            <th style="width:24px">#</th>
-            <th>Symbol</th>
-            <th>Price</th>
-            <th title="Day change % vs prior close">Day%</th>
-            <th title="Today vol ÷ 30d avg × day-fraction elapsed (Aziz p.31 — ≥1.5× = Stocks in Play)">Rel.Vol</th>
-            <th title="5-min bar RSI(14) intraday">RSI14</th>
-            <th title="Price vs VWAP (Elder p.212 — institutional benchmark)">vs VWAP</th>
-            <th title="Today's high-low range as % of price">Range%</th>
-            <th title="20-day annualised historical volatility">HV20</th>
-            <th title="Daily RSI(2) — Connors signal trigger level (66.4% bull directional accuracy)">RSI2-D</th>
-            <th title="Elder Impulse System: Green=EMA13 rising + MACD-H rising (buy OK) · Blue=mixed · Red=EMA13+MACD-H falling (NO LONGS — Elder Step-by-Step p.47)">Impulse</th>
-            <th title="Backtested setup — 4 valid setups (PF&gt;1.2): Breakout · Bull Flag · RSI Dip · Gap+Vol">Setup</th>
-            <th title="Backtested profit factor (2yr, 25 syms, next-day open→close)">BT PF</th>
-            <th title="Backtested next-day average return">BT Ret%</th>
-            <th title="⭐ = top backtested performer for this setup · 📌 = O'Neill Pocket Pivot (vol > any down-day in prior 10 sessions)">Pick</th>
-          </tr>
-        </thead>
-        <tbody id="scr-dt-tbody">
-          <tr><td colspan="15" style="text-align:center;color:var(--muted);padding:24px">
-            Click <b>↻ Refresh Now</b> to load live data
-          </td></tr>
-        </tbody>
-      </table>
+    <div class="scr-edge-card">
+      <div class="scr-edge-name">Bull Flag</div>
+      <div class="scr-edge-pf" style="color:#4ade80">1.44</div>
+      <div class="scr-edge-stats">
+        <span>Win <b>61.5%</b></span>
+        <span>Ret <b style="color:#22c55e">+0.45%</b></span>
+        <span>Dir <b>61.5%</b></span>
+      </div>
     </div>
-    <div style="margin-top:6px;font-size:10px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap">
-      <span><span style="color:#3b82f6">■</span> Breakout — new 50d high + RSI14 55-75 + rel-vol&gt;1.3  <b>PF 1.88</b></span>
-      <span><span style="color:#22c55e">■</span> Bull Flag — surge&gt;2%→tight range→RSI 50-75 (Volatile Markets p.57)  <b>PF 1.44 · Dir 61.5%</b></span>
-      <span><span style="color:#f97316">■</span> RSI Dip — RSI14&lt;35 oversold mean-revert  <b>PF 1.41</b> (Red Impulse OK→PF 1.82)</span>
-      <span><span style="color:#eab308">■</span> Gap+Vol — gap&gt;1% + rel-vol&gt;1.5× (Aziz p.31)  <b>PF 1.37</b></span>
-      <span style="color:#475569">■ Neutral — below threshold, monitoring only</span>
-      <span>🟢=Impulse Green (buy zone) · 🔵=mixed · 🔴=Red (momentum: NO · RSI Dip: OK, PF 1.82)</span>
-      <span style="margin-left:auto">⭐ = top-5 backtested · 📌 = O'Neill Pocket Pivot</span>
+    <div class="scr-edge-card">
+      <div class="scr-edge-name" title="Red Impulse PF 1.82 &gt; Green PF 1.76 — sustained selling = better dip-buy entry">RSI Dip <span style="color:rgba(100,116,139,.5);font-size:8px">🔴 OK</span></div>
+      <div class="scr-edge-pf" style="color:#fbbf24">1.41</div>
+      <div class="scr-edge-stats">
+        <span>Win <b>53.7%</b></span>
+        <span>Ret <b style="color:#22c55e">+0.42%</b></span>
+        <span>Dir <b>53.7%</b></span>
+      </div>
+    </div>
+    <div class="scr-edge-card">
+      <div class="scr-edge-name">Gap + Vol</div>
+      <div class="scr-edge-pf" style="color:#f87171">1.37</div>
+      <div class="scr-edge-stats">
+        <span>Win <b>50.6%</b></span>
+        <span>Ret <b style="color:#22c55e">+0.41%</b></span>
+        <span>Dir <b>50.6%</b></span>
+      </div>
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!-- TABLE 2: OPTIONS OPPORTUNITIES                                         -->
-  <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <div class="card" style="padding:10px 12px">
-    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
-      <span class="card-title" style="margin:0">🎯 Table 2 — Options Opportunities</span>
-      <span style="font-size:10px;color:var(--muted)">Ranked by backtested directional accuracy · only validated setups</span>
-      <span style="margin-left:auto;font-size:10px;color:var(--muted)">KB §2 IVR · KB-9 DTE 21-28 · Get Rich w/Options p.48</span>
-    </div>
-    <div style="overflow-x:auto">
-      <table class="scr-table" id="scr-opt-table">
-        <thead>
-          <tr>
-            <th title="Signal source and quality">Source</th>
-            <th>Symbol</th>
-            <th title="Direction and trigger signal">Direction / Signal</th>
-            <th title="Backtested directional hit rate">Dir Hit%</th>
-            <th title="Backtested profit factor for this setup">BT PF</th>
-            <th title="Suggested option structure (KB §2: naked if IVR<30 or HV<45%, spread otherwise)">Structure</th>
-            <th title="Target expiry (KB-9 Saliba: prefer DTE 21-28)">Expiry</th>
-            <th title="Days to expiration">DTE</th>
-            <th title="IVR from daily strategy (— if intraday only)">IVR</th>
-            <th title="Maximum risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $Risk</th>
-            <th title="Action recommendation based on backtested edge">Action</th>
-            <th title="Execute: place limit option order via Alpaca (paper by default)">Execute</th>
-          </tr>
-        </thead>
-        <tbody id="scr-opt-tbody">
-          <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">
-            No active opportunities — refresh to check signals
-          </td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div style="margin-top:6px;font-size:10px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap">
-      <span><span style="color:#a78bfa">⭐ Proven</span> = Connors RSI(2)&lt;10 daily · 66.4% dir-hit · PF 1.32 · multi-day hold</span>
-      <span><span style="color:#f59e0b">⭐ Top Pick</span> = top-5 backtested performer · Bull Flag 61.5% · RSI Dip 53.7% · Breakout 51.5%</span>
-      <span><span style="color:#22c55e">📈 Valid</span> = backtested setup · 50-62% dir-hit depending on setup · ⚠ size to max $400 risk</span>
-      <span>Structure: ATM Call if HV≤45% · Debit Spread if HV&gt;45% (Volatile Markets p.104)</span>
-      <span>Rank order: Connors 66.4% → Bull Flag 61.5% → RSI Dip 53.7% → Breakout 51.5% → Gap+Vol 50.6%</span>
-    </div>
+  <!-- ── TABLE 1: Signal Watch ── -->
+  <div class="scr-section-hdr">
+    <span class="scr-section-title">Signal Watch</span>
+    <span class="scr-section-sub">25 S&amp;P 500 leaders · validated setups only · click row for strategy detail</span>
+    <span class="scr-section-ref">Aziz · Elder · O'Neil · Connors</span>
+  </div>
+  <div class="scr-table-wrap">
+    <table class="scr-table" id="scr-dt-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Symbol</th>
+          <th>Price</th>
+          <th title="Day change % vs prior close">Day%</th>
+          <th title="Today vol ÷ 30d avg vol (Aziz p.31 — ≥1.5× = Stock in Play)">Rel Vol</th>
+          <th title="5-min RSI(14) intraday">RSI14</th>
+          <th title="Price vs VWAP — institutional benchmark (Elder p.212)">vs VWAP</th>
+          <th title="Elder Impulse System: 🟢 EMA13↑+MACDH↑=Buy · 🔵 Mixed=Neutral · 🔴 Both↓=No longs (Elder p.47) — exception: RSI Dip Red PF 1.82">Impulse</th>
+          <th title="Backtested setup: Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37">Setup</th>
+          <th title="Backtested profit factor — 2yr, next-day open→close">PF</th>
+          <th title="Backtested avg next-day return per signal">Ret%</th>
+          <th title="⭐ top-5 backtested · 📌 O'Neill Pocket Pivot (up-day vol > any down-day in prior 10)">Pick</th>
+        </tr>
+      </thead>
+      <tbody id="scr-dt-tbody">
+        <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+          Click <b>↻ Refresh</b> to load live data
+        </td></tr>
+      </tbody>
+    </table>
   </div>
 
-  <!-- ── Backtest methodology note ──────────────────────────────────────────── -->
-  <div style="font-size:10px;color:var(--muted);padding:4px 2px;display:flex;gap:20px;flex-wrap:wrap">
-    <span>📚 <b>Day trading books deep-read:</b> Aziz HTDT (Stocks in Play, Gap+Vol p.31) · Aziz Advanced (ORB, VWAP, Bull Flag) · Elder Step-by-Step (Impulse System p.47, Force Index p.39, Value Zone) · Elder New TfaL (2%/6% rules) · Connors/Alvarez (RSI2 66.4%) · O'Neill Disciple (Pocket Pivot p.132) · Raschke/Williams (Momentum Pinball, 80-20s) · Ways of Trade (Wet Climate, Thunder Periods) · Volatile Markets (Bull Flag rules) · 18 Trading Champions (first-hour edge) · 80 Experts (7-criteria rule)</span>
-    <span>📚 <b>Options books deep-read:</b> Get Rich w/Options p.48 · Saliba Option Spreads (verticals) · Volatile Markets p.104 (IV vs HV structure) · Keene on Market (HIMCRIBBIT) · Think Like Option Trader (IV=uncertainty price, 1-SD=IV/16) · Put Option Strategies (bear put spread) · Options Course (dir/dur/magnitude) · Natenberg (Vol pricing)</span>
-    <span>📊 <b>Backtest:</b> 2yr · 25 symbols · next-day open→close · run 2026-05-24</span>
+  <!-- ── TABLE 2: Options Setups ── -->
+  <div class="scr-section-hdr" style="margin-top:1px">
+    <span class="scr-section-title">Options Setups</span>
+    <span class="scr-section-sub">Ranked by directional accuracy · Connors 66.4% → Bull Flag 61.5% → RSI Dip 53.7%</span>
+    <span class="scr-section-ref">IVR §2 · DTE 21-28 (Saliba) · Structure (Volatile Markets p.104)</span>
+  </div>
+  <div class="scr-table-wrap">
+    <table class="scr-table" id="scr-opt-table">
+      <thead>
+        <tr>
+          <th title="Signal quality tier">Source</th>
+          <th>Symbol</th>
+          <th title="Direction and trigger signal">Direction / Signal</th>
+          <th title="Backtested directional hit rate">Dir%</th>
+          <th title="Backtested profit factor for this setup">PF</th>
+          <th title="ATM Call if HV≤45% · Debit Spread if HV>45% (Volatile Markets p.104)">Structure</th>
+          <th title="Target expiry — prefer DTE 21-28 (Saliba)">Expiry</th>
+          <th title="Days to expiration">DTE</th>
+          <th title="IV Rank — naked if IVR<30, spread if IVR≥30 (KB §2)">IVR</th>
+          <th title="Max risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $</th>
+          <th title="Action based on backtested edge">Action</th>
+          <th title="Place limit order via Alpaca (paper by default)">Execute</th>
+        </tr>
+      </thead>
+      <tbody id="scr-opt-tbody">
+        <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+          No active signals — Connors RSI(2)&lt;10 triggers after market close · intraday setups populate once market opens
+        </td></tr>
+      </tbody>
+    </table>
   </div>
 
 </div><!-- /screener-panel -->
