@@ -761,8 +761,13 @@ def health():
     pt_age  = heartbeat_age("price_ticker")
     sc_age  = heartbeat_age("scheduler")
     pm_stale = pm_age > (POSITION_MONITOR_SEC * 6)
+    with _state_lock:
+        logged_in = state["logged_in"]
+        paper     = state["paper_mode"]
     body = {
         "status": "degraded" if pm_stale else "ok",
+        "logged_in":              logged_in,
+        "paper_mode":             paper,
         "position_monitor_age_s": None if pm_age == float("inf") else round(pm_age, 1),
         "price_ticker_age_s":     None if pt_age == float("inf") else round(pt_age, 1),
         "scheduler_age_s":        None if sc_age == float("inf") else round(sc_age, 1),
