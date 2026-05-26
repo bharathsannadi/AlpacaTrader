@@ -402,6 +402,47 @@ def _save_auto_exec_state() -> None:
     except OSError as e:
         log.warning(f"[auto-exec] Could not persist dedup state: {e}")
 
+
+# ── trades_today persistence (#17) ────────────────────────────────────────────
+# Survives server restart so the UI shows continuity and the 15:35 ET EOD
+# review sees the full day's closes even if the process was bounced.
+_TRADES_TODAY_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "trades_today.json"
+)
+
+
+def _load_trades_today() -> None:
+    """Restore today's closed trades from disk on startup. Discards stale
+    (yesterday's) files so the UI never shows trades from a previous session."""
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    try:
+        with open(_TRADES_TODAY_FILE) as fh:
+            data = _json_dedup.load(fh)
+        if data.get("date") == today:
+            trades = list(data.get("trades", []))
+            with _state_lock:
+                state["trades_today"] = trades
+            if trades:
+                log.info(f"[trades] Restored {len(trades)} closed trades for {today}")
+    except (FileNotFoundError, _json_dedup.JSONDecodeError, OSError):
+        pass
+
+
+def _save_trades_today() -> None:
+    """Persist trades_today atomically. Called after every position close."""
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    with _state_lock:
+        trades = list(state["trades_today"])
+    os.makedirs(os.path.dirname(_TRADES_TODAY_FILE), exist_ok=True)
+    tmp = _TRADES_TODAY_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            # default=str so any datetime/Decimal in the trade dict serialises
+            _json_dedup.dump({"date": today, "trades": trades}, fh, default=str)
+        os.replace(tmp, _TRADES_TODAY_FILE)
+    except OSError as e:
+        log.warning(f"[trades] Could not persist trades_today: {e}")
+
 # Per-symbol session threads and stop events
 _session_threads:     dict[str, threading.Thread] = {}
 _session_stop_events: dict[str, threading.Event]  = {
@@ -729,6 +770,7 @@ def position_monitor() -> None:
                 }
                 with _state_lock:
                     state["trades_today"].append(close_entry)
+                _save_trades_today()   # persist for restart safety (#17)
                 # Wire update_outcome into ChromaDB for full (non-partial) closes
                 if not ev.get("is_partial") and ev.get("order_id"):
                     hold_min = 0.0
@@ -2164,38 +2206,40 @@ def _run_backtest_task(symbols: list, years: float, source: str, bar_size: str,
 # ── Auto-login at startup ─────────────────────────────────────────────────────
 def _auto_login():
     """
-    If ALPACA_AUTO_KEY + ALPACA_AUTO_SECRET are present in .env (or environment),
-    connect to Alpaca automatically at startup — no browser login required.
-    The server begins monitoring positions and executing scheduled trades
-    immediately. Any browser that connects later will still see the login
-    overlay (for UI auth) but the backend is already live.
+    If Alpaca credentials are present in .env (or environment), connect to
+    Alpaca automatically at startup — no browser login required. The server
+    begins monitoring positions and executing scheduled trades immediately.
+    Any browser that connects later will still see the login overlay (for UI
+    auth) but the backend is already live.
+
+    Credentials are resolved via the shared `credentials.load_alpaca_creds()`
+    loader, which supports the canonical ALPACA_API_KEY/SECRET/PAPER names
+    plus the legacy ALPACA_AUTO_* fallback chain. See scripts/credentials.py.
     """
     socketio.sleep(3)   # let the server fully bind before hitting Alpaca
 
-    raw_key    = os.environ.get("ALPACA_AUTO_KEY", "").strip()
-    raw_secret = os.environ.get("ALPACA_AUTO_SECRET", "").strip()
-    raw_paper  = os.environ.get("ALPACA_AUTO_PAPER", "true").strip().lower()
+    from credentials import load_alpaca_creds
+    creds = load_alpaca_creds()
 
-    if not raw_key or not raw_secret:
+    if not creds.is_complete:
         log.info("[auto-login] No credentials in .env — waiting for browser login.")
         return
 
     try:
-        api_key    = validate_api_key(raw_key)
-        api_secret = validate_api_secret(raw_secret)
-        paper      = raw_paper not in ("false", "0", "no", "live")
+        api_key    = validate_api_key(creds.key)
+        api_secret = validate_api_secret(creds.secret)
     except ValueError as e:
         log.error(f"[auto-login] Invalid credentials in .env: {e}")
         return
 
-    account, ok, err = trader.init_clients(api_key, api_secret, paper=paper)
+    account, ok, err = trader.init_clients(api_key, api_secret, paper=creds.paper)
     if not ok:
         log.error(f"[auto-login] Alpaca connection failed: {err}")
         return
 
     with _state_lock:
         state["logged_in"]  = True
-        state["paper_mode"] = paper
+        state["paper_mode"] = creds.paper
 
     trader.init_memory(enabled=state.get("trade_memory_enabled", True))
     trader.init_debate(enabled=state.get("debate_enabled", True))
@@ -2203,16 +2247,17 @@ def _auto_login():
     trader.DRY_RUN            = state.get("dry_run", False)
     trade_approval.auto_trade = state.get("auto_trade", True)
 
-    mode_str = "PAPER" if paper else "LIVE"
+    mode_str = "PAPER" if creds.paper else "LIVE"
     log.info(
         f"[auto-login] ✅ Connected to Alpaca {mode_str} — "
-        f"key={api_key[:6]}… equity=${float(account.equity):,.2f}"
+        f"key={creds.key_prefix}… equity=${float(account.equity):,.2f}"
     )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     _load_auto_exec_state()   # restore today's dedup set if mid-day restart
+    _load_trades_today()      # restore today's closed trades (#17)
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
     socketio.start_background_task(position_monitor)

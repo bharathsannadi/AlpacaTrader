@@ -29,8 +29,20 @@ OPT_SPREAD_RATIO_HI  = 0.45   # KB §5: spread debit ≤ 45% of width
 RISK_BUDGET          = 400.0  # KB §4: $400 max loss per trade
 
 
-# ── Credential helpers (same pattern as daily_trader.py) ──────────────────────
+# ── Credential helpers ────────────────────────────────────────────────────────
 def _load_env() -> tuple[str, str, bool]:
+    """Backwards-compat shim — resolves credentials via the shared loader.
+
+    The previous implementation reimplemented .env parsing and only honoured
+    ALPACA_API_KEY/ALPACA_API_SECRET. The shared `credentials.load_alpaca_creds`
+    now handles the full fallback chain (canonical → legacy AUTO_* → oldest
+    ALPACA_SECRET_KEY) — see scripts/credentials.py.
+
+    Returns (key, secret, paper) for callers that still want the tuple shape.
+    """
+    # Make sure .env values are in os.environ even if python-dotenv wasn't
+    # already imported (callers may invoke screener_executor outside the
+    # Flask app context — e.g. CLI usage or tests).
     env_path = Path(__file__).parent.parent / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
@@ -38,10 +50,10 @@ def _load_env() -> tuple[str, str, bool]:
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-    key    = os.environ.get("ALPACA_API_KEY", "")
-    secret = os.environ.get("ALPACA_API_SECRET", "")
-    paper  = os.environ.get("ALPACA_PAPER", "true").lower() != "false"
-    return key, secret, paper
+
+    from credentials import load_alpaca_creds
+    creds = load_alpaca_creds()
+    return creds.key, creds.secret, creds.paper
 
 
 def _make_clients():
@@ -50,7 +62,11 @@ def _make_clients():
     from alpaca.data.historical.option import OptionHistoricalDataClient
     key, secret, paper = _load_env()
     if not key or not secret:
-        raise RuntimeError("ALPACA_API_KEY / ALPACA_API_SECRET not set in .env")
+        raise RuntimeError(
+            "Alpaca credentials not set in .env "
+            "(checked ALPACA_API_KEY, ALPACA_AUTO_KEY, ALPACA_API_SECRET, "
+            "ALPACA_AUTO_SECRET, ALPACA_SECRET_KEY)"
+        )
     tc = TradingClient(key, secret, paper=paper)
     oc = OptionHistoricalDataClient(key, secret)
     return tc, oc, paper
