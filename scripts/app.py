@@ -850,20 +850,54 @@ def health():
     cycle without false-positiving. price_ticker/scheduler are reported but
     not fatal (a stale ticker is cosmetic; a stale monitor = unmanaged
     positions = dangerous)."""
-    pm_age  = heartbeat_age("position_monitor")
-    pt_age  = heartbeat_age("price_ticker")
-    sc_age  = heartbeat_age("scheduler")
+    pm_age   = heartbeat_age("position_monitor")
+    pt_age   = heartbeat_age("price_ticker")
+    sc_age   = heartbeat_age("scheduler")
     pm_stale = pm_age > (POSITION_MONITOR_SEC * 6)
+    # Scheduler ticks every 15s; if > 6× (90s) it's drifting badly. Counts
+    # as degraded because the screener auto-refresh + auto-execute path live
+    # inside the scheduler — silent failure here used to mean no signals fired.
+    sc_stale = sc_age > (SCHEDULER_INTERVAL_SEC * 6)
+
     with _state_lock:
-        logged_in = state["logged_in"]
-        paper     = state["paper_mode"]
+        logged_in     = state["logged_in"]
+        paper         = state["paper_mode"]
+        auto_exec     = state["auto_execute_options"]
+        trades_count  = len(state["trades_today"])
+
+    # Screener cache age (None if never refreshed)
+    try:
+        import time as _t
+        _cached = screener.get_cached()
+        cache_ts = _cached.get("ts", 0) if _cached else 0
+        screener_age_s = round(_t.time() - cache_ts, 1) if cache_ts else None
+        screener_options_count = len(_cached.get("options", [])) if _cached else 0
+    except Exception:
+        screener_age_s = None
+        screener_options_count = 0
+
+    with _auto_exec_lock:
+        auto_exec_today_count = len(_auto_exec_today)
+
+    degraded = pm_stale or sc_stale
     body = {
-        "status": "degraded" if pm_stale else "ok",
+        "status": "degraded" if degraded else "ok",
         "logged_in":              logged_in,
         "paper_mode":             paper,
+        # Heartbeats
         "position_monitor_age_s": None if pm_age == float("inf") else round(pm_age, 1),
         "price_ticker_age_s":     None if pt_age == float("inf") else round(pt_age, 1),
         "scheduler_age_s":        None if sc_age == float("inf") else round(sc_age, 1),
+        # Auto-execute observability (#6 — see RUNBOOK.md "why isn't it trading?")
+        "auto_execute_options":   auto_exec,
+        "auto_exec_today_count":  auto_exec_today_count,
+        "auto_exec_cap":          MAX_AUTO_EXEC_PER_DAY,
+        # Screener cache freshness — if scheduler is healthy but this is high,
+        # _refresh_screener_bg is stuck (e.g. _screener_refresh_lock held)
+        "screener_cache_age_s":   screener_age_s,
+        "screener_options_count": screener_options_count,
+        # Position monitor activity
+        "trades_today_count":     trades_count,
     }
     # inf age right after boot is normal (loop hasn't ticked yet) — don't 503
     # on a cold start; only 503 once it has ticked then went stale.
@@ -1308,75 +1342,100 @@ def _run_daily_morning() -> None:
         _emit_log(f"Daily morning error: {e}", level="ERROR")
 
 
+SCHEDULER_INTERVAL_SEC = 15   # nominal cadence
+
+
 def scheduler():
     """Background task: auto-start all-day sessions at 9:30 ET on weekdays,
     fire end-of-day learning review at 15:35 ET, and run the Connors RSI(2)
     daily-bar strategy EOD/morning routines. Also refreshes the Screener tab
-    every 90s during market hours."""
+    every 90s during market hours.
+
+    Reliability hardening:
+      • Outer try/except so a body exception cannot kill the loop. A single
+        bad tick logs and moves on instead of leaving the scheduler wedged.
+      • Catch-up deadline sleep: we sleep until `next_tick`, NOT for a fixed
+        15s. If a tick body took 20s, the next sleep is 0s — cadence
+        catches up automatically. With plain `socketio.sleep(15)` a slow
+        body permanently drifted the schedule.
+    """
+    import time as _time
+
     session_fired_on       = None
     eod_fired_on           = None
     daily_eod_fired_on     = None
     daily_morning_fired_on = None
     _screener_last_refresh = 0.0
 
+    next_tick = _time.monotonic() + SCHEDULER_INTERVAL_SEC
+
     while True:
-        socketio.sleep(15)
+        # Catch-up sleep — never drift permanently behind real time
+        sleep_for = max(0.1, next_tick - _time.monotonic())
+        socketio.sleep(sleep_for)
+        next_tick = _time.monotonic() + SCHEDULER_INTERVAL_SEC
         _beat("scheduler")
-        now = datetime.now(ET)
 
-        if now.weekday() > 4:   # skip weekends
-            continue
+        try:
+            now = datetime.now(ET)
 
-        with _state_lock:
-            if not state["logged_in"] or not state["auto_schedule"]:
+            if now.weekday() > 4:   # skip weekends
                 continue
 
-        today = now.date()
-        sh, sm = SESSION_AUTO_START  # 9:30 ET
-        end_h, end_m = 15, 45        # sessions end at 15:45 ET
-        market_open = (now.hour, now.minute) >= (sh, sm)
-        market_open = market_open and (now.hour, now.minute) < (end_h, end_m)
-
-        # Fire if: market is open. Launch any symbol that isn't already running.
-        # This handles the case where a symbol was blocked at first attempt
-        # (e.g. portfolio risk cap) and frees the scheduler to keep retrying.
-        if market_open:
             with _state_lock:
-                missing = [s for s in _SYMBOLS_ORDERED if not state["sessions"].get(s, False)]
-            if missing:
-                if session_fired_on != today:
-                    session_fired_on = today
-                    log.info(f"Auto-scheduler: starting all-day sessions for {missing}")
-                else:
-                    log.info(f"Auto-scheduler: retrying missing sessions: {missing}")
-                for sym in missing:
-                    _launch_session(sym)
+                if not state["logged_in"] or not state["auto_schedule"]:
+                    continue
 
-        # EOD learning review — fires once at 15:35 ET after all sessions have ended
-        if (now.hour, now.minute) == (EOD_REVIEW_HOUR, EOD_REVIEW_MINUTE) and eod_fired_on != today:
-            eod_fired_on = today
-            with _state_lock:
-                trades_snapshot = list(state["trades_today"])
-            socketio.start_background_task(_run_eod_review, trades_snapshot)
+            today = now.date()
+            sh, sm = SESSION_AUTO_START  # 9:30 ET
+            end_h, end_m = 15, 45        # sessions end at 15:45 ET
+            market_open = (now.hour, now.minute) >= (sh, sm)
+            market_open = market_open and (now.hour, now.minute) < (end_h, end_m)
 
-        # Daily strategy: morning fill-confirm at 9:35 ET
-        if (now.hour * 60 + now.minute) >= (DAILY_MORNING_HOUR * 60 + DAILY_MORNING_MINUTE) \
-                and daily_morning_fired_on != today:
-            daily_morning_fired_on = today
-            socketio.start_background_task(_run_daily_morning)
+            # Fire if: market is open. Launch any symbol that isn't already running.
+            # This handles the case where a symbol was blocked at first attempt
+            # (e.g. portfolio risk cap) and frees the scheduler to keep retrying.
+            if market_open:
+                with _state_lock:
+                    missing = [s for s in _SYMBOLS_ORDERED if not state["sessions"].get(s, False)]
+                if missing:
+                    if session_fired_on != today:
+                        session_fired_on = today
+                        log.info(f"Auto-scheduler: starting all-day sessions for {missing}")
+                    else:
+                        log.info(f"Auto-scheduler: retrying missing sessions: {missing}")
+                    for sym in missing:
+                        _launch_session(sym)
 
-        # Daily strategy: EOD routine at 4:10 PM ET
-        if (now.hour * 60 + now.minute) >= (DAILY_EOD_HOUR * 60 + DAILY_EOD_MINUTE) \
-                and daily_eod_fired_on != today:
-            daily_eod_fired_on = today
-            socketio.start_background_task(_run_daily_eod)
+            # EOD learning review — fires once at 15:35 ET after all sessions have ended
+            if (now.hour, now.minute) == (EOD_REVIEW_HOUR, EOD_REVIEW_MINUTE) and eod_fired_on != today:
+                eod_fired_on = today
+                with _state_lock:
+                    trades_snapshot = list(state["trades_today"])
+                socketio.start_background_task(_run_eod_review, trades_snapshot)
 
-        # Screener auto-refresh — every 90s during market hours
-        import time as _time
-        _screener_age = _time.time() - _screener_last_refresh
-        if market_open and _screener_age >= screener.CACHE_TTL_MARKET:
-            _screener_last_refresh = _time.time()
-            socketio.start_background_task(_refresh_screener_bg)
+            # Daily strategy: morning fill-confirm at 9:35 ET
+            if (now.hour * 60 + now.minute) >= (DAILY_MORNING_HOUR * 60 + DAILY_MORNING_MINUTE) \
+                    and daily_morning_fired_on != today:
+                daily_morning_fired_on = today
+                socketio.start_background_task(_run_daily_morning)
+
+            # Daily strategy: EOD routine at 4:10 PM ET
+            if (now.hour * 60 + now.minute) >= (DAILY_EOD_HOUR * 60 + DAILY_EOD_MINUTE) \
+                    and daily_eod_fired_on != today:
+                daily_eod_fired_on = today
+                socketio.start_background_task(_run_daily_eod)
+
+            # Screener auto-refresh — every 90s during market hours
+            _screener_age = _time.time() - _screener_last_refresh
+            if market_open and _screener_age >= screener.CACHE_TTL_MARKET:
+                _screener_last_refresh = _time.time()
+                socketio.start_background_task(_refresh_screener_bg)
+
+        except Exception as e:
+            # Defensive: a single bad tick (e.g. transient ZoneInfo lookup,
+            # _launch_session raising) must NOT kill the loop. Log and move on.
+            log.error(f"Scheduler tick failed (continuing): {e}", exc_info=True)
 
 
 @socketio.on("daily_status")
