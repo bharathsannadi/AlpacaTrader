@@ -17,9 +17,31 @@ KB rules applied (same as daily_trader.py):
 from __future__ import annotations
 import os
 import logging
+import time as _time
 from pathlib import Path
 
 log = logging.getLogger("screener_executor")
+
+
+# ── Defensive direct-to-file trail ───────────────────────────────────────────
+# Python logging in this app is fragile — propagation through eventlet is
+# inconsistent, and several recent execute failures left no on-disk evidence.
+# This helper writes UNCONDITIONALLY to a flat file so we can always tail it
+# during incident triage.  `tail -f logs/screener_executor.trail`
+_TRAIL_PATH = Path(__file__).parent.parent / "logs" / "screener_executor.trail"
+
+
+def _trail(msg: str) -> None:
+    """Write a single timestamped line to the executor trail file.
+    Never raises — log handler failures must not break order placement."""
+    try:
+        _TRAIL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ts = _time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(_TRAIL_PATH, "a") as fh:
+            fh.write(f"{ts}  {msg}\n")
+            fh.flush()
+    except Exception:
+        pass
 
 # ── KB-sourced constants (mirror daily_trader.py) ─────────────────────────────
 OPT_MIN_OI           = 200     # KB §9: minimum open interest for liquidity
@@ -199,6 +221,9 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
     structure = opt_row.get("structure", "ATM Call")
     opt_type  = opt_row.get("opt_type", "Call")        # "Call" | "Put"
     max_risk  = float(opt_row.get("max_risk", RISK_BUDGET))
+
+    _trail(f"ENTRY  sym={sym}  structure={structure}  expiry={expiry}  "
+           f"opt_type={opt_type}  max_risk=${max_risk}  dry_run={dry_run}")
 
     result = {
         "success": False, "message": "", "sym": sym,
@@ -447,10 +472,16 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
             ),
         })
         log.info(result["message"])
+        _trail(f"OK    sym={sym}  long={atm_occ}  short={short_occ}  "
+               f"debit=${actual_debit}  paper={paper}")
         return result
 
     except Exception as exc:
         result["error"]   = str(exc)
         result["message"] = f"❌ {sym} execution failed: {exc}"
         log.error(result["message"])
+        # Defensive trail — never lose an error to a broken log handler
+        import traceback as _tb
+        _trail(f"FAIL  sym={sym}  exc={type(exc).__name__}: {exc}")
+        _trail(f"  traceback: {_tb.format_exc().replace(chr(10), ' | ')}")
         return result

@@ -311,6 +311,47 @@ sio_handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="
 logging.getLogger().addHandler(sio_handler)
 
 
+# ── File logging (defensive) ─────────────────────────────────────────────────
+# The comment above claims spy_auto_trader.py installs file handlers at import
+# time. Field check 2026-05-29: those files are 0 bytes / stale. Errors from
+# screener_executor (incl. failed order placements) were vanishing because the
+# only sink was the browser SocketIOHandler.
+#
+# Add a defensive RotatingFileHandler so every log record lands on disk
+# regardless of whether spy_auto_trader's setup ran.
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_main_log_path  = os.path.join(_repo_root, "spy_trader.log")
+_error_log_path = os.path.join(_repo_root, "errors.log")
+
+_file_fmt = logging.Formatter(
+    "%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+_main_handler = RotatingFileHandler(_main_log_path, maxBytes=10_000_000, backupCount=5)
+_main_handler.setFormatter(_file_fmt)
+_main_handler.setLevel(logging.INFO)
+
+_err_handler = RotatingFileHandler(_error_log_path, maxBytes=5_000_000, backupCount=3)
+_err_handler.setFormatter(_file_fmt)
+_err_handler.setLevel(logging.WARNING)   # warnings + errors only
+
+_root_log = logging.getLogger()
+_root_log.setLevel(logging.INFO)
+# Mark our handlers so we can detect double-imports without falsely matching
+# whatever stale/broken handler spy_auto_trader installed.
+_main_handler._is_app_main_file_handler = True   # type: ignore[attr-defined]
+_err_handler._is_app_error_file_handler = True   # type: ignore[attr-defined]
+_already_added_main = any(getattr(h, "_is_app_main_file_handler", False)
+                          for h in _root_log.handlers)
+_already_added_err  = any(getattr(h, "_is_app_error_file_handler", False)
+                          for h in _root_log.handlers)
+if not _already_added_main:
+    _root_log.addHandler(_main_handler)
+if not _already_added_err:
+    _root_log.addHandler(_err_handler)
+
+
 # ── Security headers ──────────────────────────────────────────────────────────
 @app.after_request
 def add_security_headers(response):
