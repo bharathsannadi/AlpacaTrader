@@ -641,6 +641,45 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
             "reason":    intra_reason,
             "strategy":  intra_strategy,
         })
+    # ── Affordability pre-filter (KB §4 max risk $400) ──────────────────────
+    # The executor rejects orders whose net debit exceeds max_risk. That
+    # rejection currently burns a daily auto-exec slot for no benefit (see
+    # _auto_exec_options dedup-on-reject in app.py). Pre-filter here so a
+    # row that *won't* fit the budget is tagged WATCH instead of BUY and
+    # auto-exec skips it cleanly.
+    #
+    # Estimated ATM premium per contract uses the Brenner-Subrahmanyam
+    # approximation: P ≈ 0.4 × S × σ × √(T/365)  (Brenner & Subrahmanyam 1988)
+    # then ×100 for the per-contract $ cost.
+    #   • ATM Call:           downgrade if naked premium > max_risk × 1.05
+    #   • Debit Call Spread:  downgrade if naked premium > max_risk × 2.10
+    #     (spread debit typically 40-50% of naked; 2.10x leaves headroom)
+    #
+    # Symbols without HV data (e.g. Connors-source rows) keep their action
+    # — the executor still gatekeeps and the dedup-on-reject release lets
+    # us retry tomorrow.
+    import math as _math
+    price_by_sym = {r["sym"]: (r.get("price", 0), r.get("hv20", 0)) for r in dt_rows}
+    for r in rows:
+        if r.get("action") != "✅ BUY":
+            continue
+        sym = r["sym"]
+        price, hv = price_by_sym.get(sym, (0, 0))
+        if not price or not hv:
+            continue   # no data — let the executor filter
+        sigma   = hv / 100.0
+        t_years = max(r.get("dte", 21), 1) / 365.0
+        est_premium_per_contract = 0.4 * price * sigma * _math.sqrt(t_years) * 100
+        max_risk = r.get("max_risk", 400)
+        struct   = r.get("structure", "")
+        cap = max_risk * 1.05 if struct == "ATM Call" else max_risk * 2.10
+        if est_premium_per_contract > cap:
+            r["action"] = "⚠ WATCH"
+            note = (f" [pre-filter: est ATM ${est_premium_per_contract:.0f} "
+                    f"> {struct} cap ${cap:.0f}]")
+            r["reason"] = (r.get("reason", "") + note)[:1200]
+            r["confidence"] = (r.get("confidence", "") + " · affordability=fail")[:200]
+
     rows.sort(key=lambda r: r["rank"])
     return rows
 

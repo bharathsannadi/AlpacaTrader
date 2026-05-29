@@ -1690,8 +1690,31 @@ def _auto_exec_options(data: dict) -> None:
                 f"{sym}  {payload['structure']}  {result.get('message', '')}",
                 level=level
             )
+            # ── Dedup-on-reject release ──────────────────────────────────────
+            # If the executor returned failure AND no order was actually
+            # submitted (no long_order_id), the trade took zero capital and
+            # zero risk. Releasing the symbol from the dedup set is safe and
+            # frees the daily-cap slot for other candidates. We only KEEP the
+            # dedup mark when at least one order id exists — that means real
+            # Alpaca exposure (possibly partial fill, rollback in progress,
+            # or full success).
+            no_order_placed = (
+                not result.get("success")
+                and not result.get("long_order_id")
+                and not result.get("short_order_id")
+            )
+            if no_order_placed:
+                with _auto_exec_lock:
+                    _auto_exec_today.discard(sym)
+                    _save_auto_exec_state()
+                log.info(f"[auto-exec] {sym} released from dedup "
+                         f"(safety-gate rejection — no order placed)")
         except Exception as e:
             log.warning(f"[auto-exec] {sym} failed: {e}")
+            # Defensive: same release on raised exception (no order took risk)
+            with _auto_exec_lock:
+                _auto_exec_today.discard(sym)
+                _save_auto_exec_state()
 
 
 def _refresh_screener_bg():
