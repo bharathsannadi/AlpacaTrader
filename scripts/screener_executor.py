@@ -245,10 +245,59 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                  f"structure={structure}  opt_type={opt_type}  dry_run={dry_run}")
 
         # ── 2. Option chain for chosen expiry ────────────────────────────────
+        # The screener computes expiry from a Friday-cadence heuristic. Many
+        # symbols (e.g. COHR) list Thursday weeklies instead — requesting the
+        # Friday throws "Expiration X cannot be found". Fall back to the
+        # nearest available expiry that's still ≥ DTE_MIN to preserve the
+        # KB §1 21-28 DTE window intent.
         try:
             chain = ticker.option_chain(expiry)
         except Exception as e:
-            raise ValueError(f"Cannot load option chain {sym}/{expiry}: {e}")
+            # Try to recover by picking the nearest valid expiry.
+            try:
+                from datetime import datetime as _dt
+                target_dt = _dt.strptime(expiry, "%Y-%m-%d").date()
+                available = list(ticker.options or ())
+                _trail(f"FALLBACK  sym={sym}  requested={expiry}  available={available}")
+                if not available:
+                    raise ValueError(f"No option chain available for {sym}")
+
+                # Prefer the closest expiry with DTE >= 21 (KB §1 window).
+                # If none qualify, take the closest one overall.
+                today = _dt.now().date()
+                MIN_DTE = 21
+                candidates = []
+                for d_str in available:
+                    try:
+                        d = _dt.strptime(d_str, "%Y-%m-%d").date()
+                    except ValueError:
+                        continue
+                    dte = (d - today).days
+                    delta = abs((d - target_dt).days)
+                    candidates.append((dte, delta, d_str, d))
+
+                if not candidates:
+                    raise ValueError(f"Cannot parse any expiry from {available}")
+
+                # Pick: among DTE >= 21, the one closest to the requested date.
+                # Otherwise the one with the largest DTE under 21.
+                qualifying = [c for c in candidates if c[0] >= MIN_DTE]
+                if qualifying:
+                    qualifying.sort(key=lambda c: c[1])    # closest-to-requested wins
+                    chosen_dte, _, chosen_str, chosen_d = qualifying[0]
+                else:
+                    candidates.sort(key=lambda c: -c[0])   # max DTE under 21
+                    chosen_dte, _, chosen_str, chosen_d = candidates[0]
+
+                log.warning(
+                    f"[screener_executor] {sym}: requested expiry {expiry} not "
+                    f"available — falling back to {chosen_str} (DTE={chosen_dte})"
+                )
+                _trail(f"FALLBACK_PICK  sym={sym}  was={expiry}  now={chosen_str}  dte={chosen_dte}")
+                expiry = chosen_str   # update for the rest of this execution
+                chain  = ticker.option_chain(expiry)
+            except Exception as inner:
+                raise ValueError(f"Cannot load option chain {sym}/{expiry}: {inner}")
 
         opts = chain.calls if opt_type == "Call" else chain.puts
         opts = opts[opts["bid"] > 0].copy()
