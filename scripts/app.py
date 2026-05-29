@@ -998,8 +998,39 @@ def on_login(data):
         socketio.emit("login_result", {"success": False, "error": str(e)})
         return
 
-    # Connect to Alpaca
-    account, ok, err = trader.init_clients(api_key, api_secret, paper=paper)
+    # Fast path: the server is often already authenticated via _auto_login
+    # at boot using the same credentials from .env. Re-running init_clients
+    # makes a fresh Alpaca handshake (1-3s) and an extra account-fetch network
+    # call for no real benefit — eventlet hub stalls during it block other
+    # greenlets including subsequent UI events. Skip when we can verify
+    # the requested key matches the active one.
+    fast_path_taken = False
+    try:
+        with _state_lock:
+            already_logged_in = state["logged_in"]
+            same_paper_mode   = state["paper_mode"] == paper
+        if (already_logged_in and same_paper_mode
+                and getattr(trader, "TRADING_CLIENT", None) is not None
+                and getattr(trader, "ACTIVE_KEY_PREFIX", "") == api_key[:6]):
+            # Cheap call — already-cached client, no fresh handshake
+            account = trader.TRADING_CLIENT.get_account()
+            ok, err = True, None
+            fast_path_taken = True
+    except Exception as e:
+        log.info(f"Login fast-path probe failed ({e}); falling back to full init")
+        fast_path_taken = False
+
+    # Slow path: full Alpaca handshake + client init (first browser login, or
+    # different credentials than auto-login's).
+    if not fast_path_taken:
+        account, ok, err = trader.init_clients(api_key, api_secret, paper=paper)
+        if ok:
+            # Stash the active key prefix so subsequent logins can fast-path
+            try:
+                trader.ACTIVE_KEY_PREFIX = api_key[:6]
+            except Exception:
+                pass
+
     if not ok:
         login_tracker.record_failure(ip)
         # Include the paper-mode flag + key prefix so we can diagnose
@@ -2399,6 +2430,13 @@ def _auto_login():
     if not ok:
         log.error(f"[auto-login] Alpaca connection failed: {err}")
         return
+
+    # Stash key prefix so a subsequent browser login can fast-path the
+    # redundant Alpaca handshake (see on_login fast_path_taken branch).
+    try:
+        trader.ACTIVE_KEY_PREFIX = api_key[:6]
+    except Exception:
+        pass
 
     with _state_lock:
         state["logged_in"]  = True
