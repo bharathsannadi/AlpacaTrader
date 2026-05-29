@@ -386,7 +386,7 @@ state = {
     "profit_target":   75,    # % of premium paid
     "dte_min":         7,
     "dte_max":         14,
-    "auto_schedule":        True,   # auto-start sessions at 9:30 ET on weekdays
+    "auto_schedule":        False,  # auto-start ORB/VWAP sessions for ALL 25 symbols at 9:30 ET — heavy; default off because the strategy has no validated edge per README
     "news_filter_enabled":  True,   # veto session if bad headlines detected
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
     "debate_enabled":       True,   # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
@@ -1474,8 +1474,9 @@ def scheduler():
                 continue
 
             with _state_lock:
-                if not state["logged_in"] or not state["auto_schedule"]:
+                if not state["logged_in"]:
                     continue
+                auto_sched_on = state["auto_schedule"]
 
             today = now.date()
             sh, sm = SESSION_AUTO_START  # 9:30 ET
@@ -1483,10 +1484,13 @@ def scheduler():
             market_open = (now.hour, now.minute) >= (sh, sm)
             market_open = market_open and (now.hour, now.minute) < (end_h, end_m)
 
-            # Fire if: market is open. Launch any symbol that isn't already running.
-            # This handles the case where a symbol was blocked at first attempt
-            # (e.g. portfolio risk cap) and frees the scheduler to keep retrying.
-            if market_open:
+            # Per-symbol intraday session launching is the heaviest work the
+            # scheduler does (25 symbols × yfinance + Alpaca + indicator calcs).
+            # It runs ONLY when auto_schedule is on. The screener auto-refresh
+            # + auto-execute path below runs regardless of auto_schedule so
+            # the headless options trading path still works when the (unproven)
+            # ORB/VWAP per-symbol sessions are disabled.
+            if auto_sched_on and market_open:
                 with _state_lock:
                     missing = [s for s in _SYMBOLS_ORDERED if not state["sessions"].get(s, False)]
                 if missing:
