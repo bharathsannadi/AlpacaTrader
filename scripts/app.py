@@ -1342,7 +1342,43 @@ def _run_daily_morning() -> None:
         _emit_log(f"Daily morning error: {e}", level="ERROR")
 
 
-SCHEDULER_INTERVAL_SEC = 15   # nominal cadence
+SCHEDULER_INTERVAL_SEC      = 15   # nominal cadence
+SCHEDULER_STALE_THRESHOLD_S = 120  # supervisor respawns if heartbeat older than this
+
+# Generation counter so a respawn supersedes any zombie scheduler greenlet
+# that wakes up later — the older greenlet sees a generation mismatch on
+# its next iteration and self-retires instead of running in parallel.
+_scheduler_generation      = 0
+_scheduler_generation_lock = threading.Lock()
+
+
+def _scheduler_supervisor():
+    """Detect a dead/wedged scheduler greenlet and respawn it.
+
+    eventlet has known greenlet-starvation edge cases — a tick body that
+    triggers GreenletExit / SystemExit (which inherit from BaseException, NOT
+    Exception) can kill the scheduler silently, even with a try/except
+    around every reasonable error. This watchdog detects a stale heartbeat
+    and starts a fresh scheduler greenlet.
+
+    The scheduler is idempotent on a same-day restart: session firing
+    checks `state["sessions"][sym]` first, EOD review uses
+    `eod_fired_on != today`, etc. A respawn doesn't double-fire.
+    """
+    import time as _time
+    last_respawn = 0.0
+    while True:
+        socketio.sleep(60)
+        age = heartbeat_age("scheduler")
+        if age == float("inf"):
+            continue   # never started yet; let the initial spawn run
+        if age > SCHEDULER_STALE_THRESHOLD_S and (_time.monotonic() - last_respawn) > 300:
+            log.error(
+                f"Scheduler heartbeat {age:.0f}s stale — respawning greenlet "
+                f"(threshold={SCHEDULER_STALE_THRESHOLD_S}s)"
+            )
+            socketio.start_background_task(scheduler)
+            last_respawn = _time.monotonic()
 
 
 def scheduler():
@@ -1352,14 +1388,21 @@ def scheduler():
     every 90s during market hours.
 
     Reliability hardening:
-      • Outer try/except so a body exception cannot kill the loop. A single
-        bad tick logs and moves on instead of leaving the scheduler wedged.
+      • Generation check: if a supervisor has respawned a newer instance,
+        any zombie that wakes up later sees the mismatch and self-retires.
+      • Outer try/except BaseException so even non-Exception exits (eventlet
+        GreenletExit, SystemExit) get logged before the loop can die.
       • Catch-up deadline sleep: we sleep until `next_tick`, NOT for a fixed
         15s. If a tick body took 20s, the next sleep is 0s — cadence
-        catches up automatically. With plain `socketio.sleep(15)` a slow
-        body permanently drifted the schedule.
+        catches up automatically.
     """
     import time as _time
+
+    global _scheduler_generation
+    with _scheduler_generation_lock:
+        _scheduler_generation += 1
+        my_gen = _scheduler_generation
+    log.info(f"Scheduler started (generation {my_gen})")
 
     session_fired_on       = None
     eod_fired_on           = None
@@ -1370,6 +1413,13 @@ def scheduler():
     next_tick = _time.monotonic() + SCHEDULER_INTERVAL_SEC
 
     while True:
+        # Generation check — a zombie that wakes after the supervisor has
+        # respawned us should self-retire so we don't double-fire EOD etc.
+        with _scheduler_generation_lock:
+            if my_gen != _scheduler_generation:
+                log.info(f"Scheduler gen {my_gen} retiring (current gen {_scheduler_generation})")
+                return
+
         # Catch-up sleep — never drift permanently behind real time
         sleep_for = max(0.1, next_tick - _time.monotonic())
         socketio.sleep(sleep_for)
@@ -1432,10 +1482,19 @@ def scheduler():
                 _screener_last_refresh = _time.time()
                 socketio.start_background_task(_refresh_screener_bg)
 
-        except Exception as e:
-            # Defensive: a single bad tick (e.g. transient ZoneInfo lookup,
-            # _launch_session raising) must NOT kill the loop. Log and move on.
-            log.error(f"Scheduler tick failed (continuing): {e}", exc_info=True)
+        except SystemExit:
+            # SystemExit is intentional shutdown — re-raise so eventlet hub
+            # can clean up properly. Don't swallow this.
+            raise
+        except BaseException as e:
+            # Catch BaseException (not just Exception) so eventlet's
+            # GreenletExit and other non-Exception escapes get logged
+            # instead of silently killing the loop. KeyboardInterrupt is
+            # mostly irrelevant under launchd but caught for safety.
+            log.error(
+                f"Scheduler tick {type(e).__name__}: {e} — continuing",
+                exc_info=True,
+            )
 
 
 @socketio.on("daily_status")
@@ -2319,6 +2378,7 @@ if __name__ == "__main__":
     _load_trades_today()      # restore today's closed trades (#17)
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
+    socketio.start_background_task(_scheduler_supervisor)   # respawn scheduler if it dies
     socketio.start_background_task(position_monitor)
     socketio.start_background_task(_auto_login)  # connect to Alpaca on boot if .env has creds
 
