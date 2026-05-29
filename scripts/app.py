@@ -1697,15 +1697,16 @@ def _auto_exec_options(data: dict) -> None:
 def _refresh_screener_bg():
     """Background task: refresh screener data and broadcast to all clients.
 
-    The pandas-heavy work in `screener.refresh_screener()` blocks the eventlet
-    hub for several seconds (25-symbol indicator calc + yfinance pull). While
-    blocked, every other greenlet stalls — UI logins, position monitoring,
-    /health curls all queue up.
+    Reverted from eventlet.tpool to inline compute — tpool.execute() inside
+    a socketio.start_background_task() greenlet trips eventlet's "Cannot
+    switch to a different thread" semaphore error, which silently kills the
+    refresh greenlet without ever populating the cache. Field-caught 2026-05-29.
 
-    Fix: run the heavy work in a real OS thread via `eventlet.tpool.execute`.
-    The greenlet yields the hub while waiting on the thread, so logins/health/
-    other socket events stay responsive. The Socket.IO emits and auto-exec
-    decision still happen back in the greenlet (where they belong).
+    Trade-off: pandas/yfinance work blocks the eventlet hub for 5-15s per
+    90s cycle. UI logins during that window queue up. The login fast-path
+    in on_login mitigates most of the user-visible impact; full fix
+    requires either gevent/asgi migration or moving the screener compute
+    to a subprocess.
     """
     if not _screener_refresh_lock.acquire(blocking=False):
         return  # already refreshing
@@ -1715,16 +1716,7 @@ def _refresh_screener_bg():
             positions = dtrad._load_positions()
         except Exception:
             pass
-
-        # Real-thread compute — keeps the eventlet hub responsive during
-        # the 5-15s of pandas/yfinance work.
-        try:
-            import eventlet.tpool as _tpool
-            data = _tpool.execute(screener.refresh_screener, positions)
-        except ImportError:
-            # Fallback for non-eventlet mode (e.g. unit tests with threading)
-            data = screener.refresh_screener(positions)
-
+        data = screener.refresh_screener(positions)
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
