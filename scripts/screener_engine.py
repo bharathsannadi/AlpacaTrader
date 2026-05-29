@@ -148,7 +148,12 @@ SETUP_STRATEGY = {
     "VWAP Bounce": "No backtested directional edge — watch only, do not trade.",
 }
 
-CACHE_TTL_MARKET = 90    # seconds during market hours
+CACHE_TTL_MARKET = 300   # seconds during market hours (was 90; bumped to
+                         # reduce eventlet-hub stalls — every refresh blocks
+                         # the hub for 5-15s while pandas computes 25 symbols.
+                         # 5-min cadence keeps login responsive without
+                         # meaningfully staling the swing/daily-bias setups
+                         # this screener targets.)
 CACHE_TTL_CLOSED = 600   # seconds after hours
 
 _cache: dict = {"dt": [], "options": [], "ts": 0.0, "market_open": False}
