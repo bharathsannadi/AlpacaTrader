@@ -1695,7 +1695,18 @@ def _auto_exec_options(data: dict) -> None:
 
 
 def _refresh_screener_bg():
-    """Background task: refresh screener data and broadcast to all clients."""
+    """Background task: refresh screener data and broadcast to all clients.
+
+    The pandas-heavy work in `screener.refresh_screener()` blocks the eventlet
+    hub for several seconds (25-symbol indicator calc + yfinance pull). While
+    blocked, every other greenlet stalls — UI logins, position monitoring,
+    /health curls all queue up.
+
+    Fix: run the heavy work in a real OS thread via `eventlet.tpool.execute`.
+    The greenlet yields the hub while waiting on the thread, so logins/health/
+    other socket events stay responsive. The Socket.IO emits and auto-exec
+    decision still happen back in the greenlet (where they belong).
+    """
     if not _screener_refresh_lock.acquire(blocking=False):
         return  # already refreshing
     try:
@@ -1704,7 +1715,16 @@ def _refresh_screener_bg():
             positions = dtrad._load_positions()
         except Exception:
             pass
-        data = screener.refresh_screener(positions)
+
+        # Real-thread compute — keeps the eventlet hub responsive during
+        # the 5-15s of pandas/yfinance work.
+        try:
+            import eventlet.tpool as _tpool
+            data = _tpool.execute(screener.refresh_screener, positions)
+        except ImportError:
+            # Fallback for non-eventlet mode (e.g. unit tests with threading)
+            data = screener.refresh_screener(positions)
+
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
