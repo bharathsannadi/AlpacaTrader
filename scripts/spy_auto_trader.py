@@ -140,7 +140,9 @@ NEWS_FILTER_ENABLED = False   # toggled by app.py to mirror the UI checkbox
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DRY_RUN         = False   # paper-trading is already simulated — no need for dry-run on top
+DRY_RUN         = True    # DEFAULT ON (operator directive 2026-05-31): never place a
+                          # real order without an explicit opt-out. Belt-and-suspenders
+                          # on top of paper mode — dry-run means no order is sent at all.
 MAX_RISK_PCT    = 0.005   # 0.5% per trade — allows ~6 concurrent vs MAX_PORTFOLIO_RISK
 STOP_LOSS_PCT          = 0.50    # 50% premium stop per knowledge base (Natenberg/Saliba)
 PROFIT_TARGET          = 1.00    # +100% final target — let runners run

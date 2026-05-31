@@ -258,7 +258,8 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
 
 - **Timezone:** the file-handler formatter (`_ETFormatter` in spy_auto_trader.py) now stamps log lines in **ET** explicitly. No more mental conversion from CDT.
 - **Don't run two `app.py` processes** — they both write to `auto_trader.log` causing duplicate lines. Always `lsof -ti :5000 | xargs kill -9` before relaunching.
-- **DRY_RUN off by default is intentional** — paper mode is already the safety layer; DRY_RUN simulating-on-top-of-paper is redundant and confusing. Don't suggest flipping DRY_RUN back on as a default.
+- **DRY_RUN now defaults ON (operator directive 2026-05-31)** — "always dry run, no real orders placed." Belt-and-suspenders on top of paper mode: no order is sent at all unless the operator explicitly turns dry-run off in Settings. (Supersedes the earlier "off by default is intentional" stance; the operator chose maximum safety while iterating.)
+- **Auto-Execute defaults ARMED** — moved to Settings → Automation. Safe because dry_run defaults ON and every trade must clear the KB-principles gate (≥60% match, see `kb_principles.py`) + bull/bear debate gate before placing.
 - **Position close path uses `TRADING_CLIENT.close_position(occ)` for full closes** (not `submit_order(SELL)` — Alpaca treats SELL as opening an uncovered short).
 - **All Day Session** is the only session type (the old morning/evening split was unified). Runs 9:30 → end time (default 15:45 ET).
 - **Worktrees:** be careful which directory you're in when running `git`. The main repo is at `/Users/bsannadi/Desktop/AlpacaTrader`. Edits via absolute paths go to the main repo regardless of worktree CWD.

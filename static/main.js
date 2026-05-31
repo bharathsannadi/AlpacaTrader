@@ -2058,15 +2058,23 @@ function scrToggleAutoExec() {
 }
 
 function _updateAutoExecBtn(armed, execToday) {
-  const btn = document.getElementById("scr-autoexec-btn");
-  if (!btn) return;
   execToday = execToday || [];
-  if (armed) {
-    btn.classList.add("armed");
-    btn.textContent = `🔴 Armed (${execToday.length}/3 today)`;
-  } else {
-    btn.classList.remove("armed");
-    btn.textContent = "⬛ Auto-Execute";
+  // Primary control now lives in Settings → Automation
+  const btn = document.getElementById("btn-auto-exec");
+  if (btn) {
+    btn.classList.toggle("armed", !!armed);
+    btn.classList.toggle("off",  !armed);
+    btn.textContent = armed
+      ? `🔴 Armed (${execToday.length}/3 today)`
+      : "⬛ Disarmed";
+  }
+  // Read-only mirror in the screener topbar
+  const status = document.getElementById("scr-autoexec-status");
+  if (status) {
+    status.textContent = armed
+      ? `🔴 Auto-Exec armed (${execToday.length}/3)`
+      : "⬛ Auto-Exec off";
+    status.style.color = armed ? "var(--red)" : "var(--muted)";
   }
 }
 
@@ -2099,6 +2107,20 @@ function _scrBadge(text, color, bg) {
 
 function _clsDir(v) { return v > 0 ? "scr-up" : v < 0 ? "scr-down" : "scr-flat"; }
 
+// ── KB-principles confidence cell (shared by both tables) ────────────────────
+// pct = % of codified KB rules the candidate matches. principles = {matched,failed}.
+function _scrConfCell(pct, principles) {
+  if (pct == null) return `<td><span style="color:#475569">—</span></td>`;
+  const color = pct >= 75 ? "#22c55e" : pct >= 60 ? "#f59e0b" : "#f43f5e";
+  const p = principles || {};
+  const matched = (p.matched || []).map(s => "✓ " + s).join("\n");
+  const failed  = (p.failed  || []).map(s => "✗ " + s).join("\n");
+  const tip = `KB-principles match ${pct}% (gate floor 60%)\n\n${matched}${failed ? "\n\n" + failed : ""}`
+    .replace(/"/g, "'");
+  const gate = pct < 60 ? " 🔒" : "";
+  return `<td title="${tip}"><b style="color:${color}">${pct}%</b>${gate}</td>`;
+}
+
 // ── Table 1 renderer — Day Trading Stocks ────────────────────────────────────
 function _renderDtTable(rows) {
   const tbody = document.getElementById("scr-dt-tbody");
@@ -2113,7 +2135,7 @@ function _renderDtTable(rows) {
   if (countEl) countEl.textContent = all.length || "—";
 
   if (!all.length) {
-    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+    tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
       Loading live data… (takes ~60 s for 25 symbols)</td></tr>`;
     return;
   }
@@ -2183,10 +2205,11 @@ function _renderDtTable(rows) {
       <td>${setupBadge}</td>
       <td>${pfDisp}</td>
       <td>${retDisp}</td>
+      ${_scrConfCell(r.kb_match, r.kb_principles)}
       <td>${pickDisp}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
-      <td colspan="12">
+      <td colspan="13">
         <div class="scr-detail-panel">
           ${reason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${reason}</div>` : ""}
           ${strategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${strategy}</div>` : ""}
@@ -2208,7 +2231,7 @@ function _renderOptTable(rows) {
   if (optCountEl) optCountEl.textContent = display.length || "—";
 
   if (!display.length) {
-    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">
+    tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;color:var(--muted);padding:24px">
       No active signals today — Connors RSI(2) &lt; 10 triggers after market close ·
       intraday setups populate once market opens</td></tr>`;
     return;
@@ -2252,7 +2275,10 @@ function _renderOptTable(rows) {
     const canExec  = o.action === "✅ BUY";
     const execPayload = JSON.stringify({
       sym: o.sym, structure: o.structure, expiry: o.expiry,
-      opt_type: o.opt_type || "Call", max_risk: o.max_risk || 400
+      opt_type: o.opt_type || "Call", max_risk: o.max_risk || 400,
+      // include scoring fields so the server-side KB/debate gate can evaluate the row
+      dir_pct: o.dir_pct, pf: o.pf, ivr: o.ivr,
+      direction: o.direction, signal: o.signal
     }).replace(/"/g, "&quot;");
     const execBtn = canExec
       ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerOption(${idx})'
@@ -2277,12 +2303,13 @@ function _renderOptTable(rows) {
       <td style="color:var(--muted)">${o.expiry}</td>
       <td><b>${o.dte}</b>d</td>
       <td>${ivrDisp}</td>
+      ${_scrConfCell(o.kb_match, o.kb_principles)}
       <td style="color:#f59e0b"><b>$${(o.max_risk||400).toLocaleString()}</b></td>
       <td>${action}</td>
       <td>${execBtn}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
-      <td colspan="12">
+      <td colspan="13">
         <div class="scr-detail-panel">
           ${oReason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${oReason}</div>` : ""}
           ${oStrategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${oStrategy}</div>` : ""}

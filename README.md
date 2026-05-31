@@ -129,7 +129,7 @@ All settings are adjustable from the dashboard UI without restarting the server.
 
 ### Dry run vs live trading
 
-- **Dry run** (default OFF): legacy second-layer safety on top of paper mode. Paper mode is already the safety; DRY_RUN simulating on top is redundant. Leave OFF unless you specifically want to log "would-have-been" signals without placing paper orders.
+- **Dry run** (default ON, operator directive 2026-05-31): second-layer safety on top of paper mode — no order is sent at all. Combined with the armed-by-default Auto-Execute + the KB-principles/debate gate, this means the system evaluates and logs "would-have-been" trades without placing anything until you explicitly turn dry-run off.
 - **Paper mode** (default ON): real Alpaca paper orders, no real money. **This is the intended operating mode.**
 - Switch to **live mode** in the login modal only when you are ready to trade real money — and only after the readiness gates in `TODO.md` 🎯-P3 pass.
 

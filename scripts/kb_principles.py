@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""
+kb_principles.py — deterministic "does this trade match our knowledge base?" scorer.
+
+Every codified KB rule a candidate satisfies adds to a 0-100% "KB match" score.
+This is the SINGLE source for:
+  1. the screener Confidence % column (what the user sees per row), and
+  2. the pre-trade gate — only take trades that maximize KB-principle alignment.
+
+Pure functions on the screener row dicts (+ a VIX value). No I/O, no LLM — that
+keeps it fast (runs on every row, every refresh) and unit-testable. The LLM
+bull/bear debate (debate.py) is a SEPARATE, heavier qualitative gate layered on top.
+
+Each principle is (weight, matched_bool, label). Score = sum(matched weights) /
+sum(all weights) * 100. The matched/failed labels are surfaced in the row tooltip
+so the user can see WHY a candidate scored what it did.
+
+KB references: §2 IV rules · §4 risk/Kelly · §5 strategy selection · §9 checklist ·
+§12 cost-robust gate · §19 Connors · §25 Saliba DTE.
+"""
+from __future__ import annotations
+from datetime import date, datetime
+
+# Gate threshold: a candidate must score >= this to be auto-executable.
+KB_MATCH_MIN = 60   # percent — "maximum principles" floor for taking a trade
+
+
+def _dte_from_expiry(expiry: str) -> int | None:
+    """Days-to-expiry from an ISO 'YYYY-MM-DD' string, or None if unparseable."""
+    if not expiry:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            d = datetime.strptime(expiry[:10], fmt).date()
+            return (d - date.today()).days
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _parse_ivr(ivr) -> float | None:
+    """Pull a numeric IVR from '42', 42, 'IVR 42', '—', etc."""
+    if ivr is None:
+        return None
+    if isinstance(ivr, (int, float)):
+        return float(ivr)
+    s = "".join(ch for ch in str(ivr) if (ch.isdigit() or ch == "."))
+    try:
+        return float(s) if s else None
+    except ValueError:
+        return None
+
+
+def score_option_candidate(row: dict, vix: float | None = None) -> dict:
+    """Score an options screener row against the KB. Returns
+    {pct, matched:[...], failed:[...], n_matched, n_total}."""
+    checks: list[tuple[float, bool, str]] = []
+
+    dir_pct = float(row.get("dir_pct") or 0)
+    pf      = float(row.get("pf") or 0)
+    ivr     = _parse_ivr(row.get("ivr"))
+    dte     = _dte_from_expiry(row.get("expiry", ""))
+    structure = str(row.get("structure", "")).lower()
+    is_spread = "spread" in structure
+    max_risk  = float(row.get("max_risk") or 0)
+
+    # §19/§12 — directional edge must clear the validated bar (core principle, weight 3)
+    checks.append((3.0, dir_pct >= 53.0,
+                   f"Directional edge {dir_pct:.0f}% ≥ 53% (§19 backtest)"))
+    # §12 — cost-robust profit factor (weight 3)
+    checks.append((3.0, pf >= 1.10,
+                   f"Profit factor {pf:.2f} ≥ 1.10 cost-robust (§12)"))
+    # §2/§5 — IVR-correct structure routing (weight 2)
+    if ivr is None:
+        checks.append((2.0, False, "IVR unknown — can't confirm structure routing (§2/§5)"))
+    elif ivr < 30:
+        checks.append((2.0, not is_spread,
+                       f"IVR {ivr:.0f} < 30 → naked OK, structure={'spread✗' if is_spread else 'naked✓'} (§2)"))
+    else:  # ivr >= 30
+        checks.append((2.0, is_spread,
+                       f"IVR {ivr:.0f} ≥ 30 → spread required, structure={'spread✓' if is_spread else 'naked✗'} (§5)"))
+    # §25 Saliba — DTE preference 21-28 (weight 2; partial credit handled as match for 14-30)
+    if dte is None:
+        checks.append((2.0, False, "DTE unknown (§25 prefers 21-28)"))
+    else:
+        checks.append((2.0, 14 <= dte <= 30,
+                       f"DTE {dte} in 14-30 window (§25 Saliba, optimal 21-28)"))
+    # §4/½-Kelly — risk within the $400 budget (weight 2)
+    checks.append((2.0, 0 < max_risk <= 400,
+                   f"Max risk ${max_risk:.0f} ≤ $400 ½-Kelly budget (§4)"))
+    # §appendix — VIX gate (weight 1)
+    if vix is not None:
+        checks.append((1.0, vix < 30,
+                       f"VIX {vix:.1f} < 30 entry gate (§ appendix)"))
+
+    return _tally(checks)
+
+
+def score_stock_candidate(row: dict, vix: float | None = None) -> dict:
+    """Score a day-trading stock screener row against the KB."""
+    checks: list[tuple[float, bool, str]] = []
+
+    valid   = bool(row.get("valid"))
+    pf      = float(row.get("bt_pf") or 0)
+    rel_vol = float(row.get("rel_vol") or 0)
+    rsi14   = float(row.get("rsi14") or 50)
+    impulse = str(row.get("impulse", "Blue"))
+    setup   = str(row.get("setup", ""))
+
+    # validated setup (weight 3)
+    checks.append((3.0, valid, f"Setup '{setup}' is a validated/backtested edge (§ screener)"))
+    # PF (weight 3)
+    checks.append((3.0, pf >= 1.10, f"Profit factor {pf:.2f} ≥ 1.10 (§12)"))
+    # Aziz §31 — Stock in Play: rel vol ≥ 1.5× (weight 2)
+    checks.append((2.0, rel_vol >= 1.5,
+                   f"Rel-vol {rel_vol:.1f}× ≥ 1.5 'Stock in Play' (Aziz §)"))
+    # Elder §47 — Impulse not red for momentum entries (weight 1; RSI Dip exempt)
+    if setup == "RSI Dip":
+        checks.append((1.0, True, "RSI Dip — Red impulse acceptable (PF 1.82, Elder §47)"))
+    else:
+        checks.append((1.0, impulse != "Red",
+                       f"Elder Impulse {impulse} not Red for momentum (§47)"))
+    # §3 — not overbought (weight 1)
+    checks.append((1.0, rsi14 <= 70, f"RSI14 {rsi14:.0f} ≤ 70 not overbought (§3)"))
+    if vix is not None:
+        checks.append((1.0, vix < 30, f"VIX {vix:.1f} < 30 (§ appendix)"))
+
+    return _tally(checks)
+
+
+def _tally(checks: list[tuple[float, bool, str]]) -> dict:
+    total_w = sum(w for w, _, _ in checks) or 1.0
+    got_w   = sum(w for w, ok, _ in checks if ok)
+    matched = [lbl for _, ok, lbl in checks if ok]
+    failed  = [lbl for _, ok, lbl in checks if not ok]
+    return {
+        "pct":       round(got_w / total_w * 100),
+        "matched":   matched,
+        "failed":    failed,
+        "n_matched": len(matched),
+        "n_total":   len(checks),
+    }
+
+
+if __name__ == "__main__":
+    # quick smoke
+    demo_opt = {"dir_pct": 66.4, "pf": 1.32, "ivr": "IVR 22",
+                "expiry": "2026-06-26", "structure": "ATM Call", "max_risk": 400}
+    print("Connors-like option:", score_option_candidate(demo_opt, vix=18))
+    demo_stock = {"valid": True, "bt_pf": 1.88, "rel_vol": 2.1,
+                  "rsi14": 58, "impulse": "Green", "setup": "Breakout"}
+    print("Breakout stock:", score_stock_candidate(demo_stock, vix=18))

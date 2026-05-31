@@ -41,6 +41,8 @@ import news_filter
 import daily_trader as dtrad
 import screener_engine as screener
 import screener_executor
+import kb_principles
+import debate as debate_mod
 from universe import ALL as _UNIVERSE_ALL
 from security import (
     get_or_create_secret_key,
@@ -369,7 +371,8 @@ state = {
     # Per-symbol running state (tabs are chart-only; any symbol can trade anytime)
     "sessions":        {s: False for s in _SYMBOLS_ORDERED},
     "streaming":       True,         # Live price + log streaming
-    "dry_run":         False,  # paper account = real orders
+    "dry_run":         True,   # DEFAULT ON (operator directive 2026-05-31): no real
+                               # orders placed unless the operator explicitly turns this off
     "paper_mode":      True,         # Alpaca paper vs live
     "active_symbol":   "SPY",        # currently selected chart tab
     "session_end":     "15:45",      # all-day session end time (HH:MM ET)
@@ -391,7 +394,9 @@ state = {
     "trade_memory_enabled": True,   # ChromaDB similarity recall before signals
     "debate_enabled":       True,   # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
     "auto_trade":           True,   # skip approval modal — auto-execute on paper account
-    "auto_execute_options": False,  # auto-place options orders after each screener refresh
+    "auto_execute_options": True,   # DEFAULT ARMED (operator directive 2026-05-31).
+                                    # Safe because dry_run defaults ON + KB/debate gate
+                                    # blocks anything that doesn't match the knowledge base.
 }
 
 # ── Auto-execute options dedup (prevents re-firing same symbol same day) ─────
@@ -1649,6 +1654,72 @@ _screener_refresh_lock = threading.Lock()
 
 MAX_AUTO_EXEC_PER_DAY = 3   # hard cap — never place more than this many auto orders per day
 
+
+def _annotate_kb(data: dict) -> None:
+    """Attach a KB-principles match score to every screener row (in place).
+
+    Adds row['kb_match'] (0-100%) + row['kb_principles'] {matched,failed} so the
+    UI can show a Confidence % column and the executor can gate on KB alignment.
+    """
+    try:
+        with _state_lock:
+            vix = state.get("vix")
+    except Exception:
+        vix = None
+    for o in data.get("options", []):
+        try:
+            sc = kb_principles.score_option_candidate(o, vix=vix)
+            o["kb_match"] = sc["pct"]
+            o["kb_principles"] = {"matched": sc["matched"], "failed": sc["failed"]}
+        except Exception:
+            o["kb_match"] = None
+    for r in data.get("dt", []):
+        try:
+            sc = kb_principles.score_stock_candidate(r, vix=vix)
+            r["kb_match"] = sc["pct"]
+            r["kb_principles"] = {"matched": sc["matched"], "failed": sc["failed"]}
+        except Exception:
+            r["kb_match"] = None
+
+
+def _kb_and_debate_gate(row: dict) -> tuple[bool, str]:
+    """Pre-trade gate: a trade is only taken if it (1) clears the KB-principles
+    floor AND (2) passes the bull/bear debate gate (when enabled).
+
+    Returns (allowed, reason). Implements the operator directive: "always take
+    trades using the knowledge base / maximum principles."
+    """
+    sym = str(row.get("sym", "")).upper()
+    # 1) KB-principles floor
+    try:
+        with _state_lock:
+            vix = state.get("vix")
+        sc = kb_principles.score_option_candidate(row, vix=vix)
+    except Exception as e:
+        return False, f"KB scoring error: {e}"
+    if sc["pct"] < kb_principles.KB_MATCH_MIN:
+        miss = "; ".join(sc["failed"][:3])
+        return False, (f"KB match {sc['pct']}% < {kb_principles.KB_MATCH_MIN}% floor "
+                       f"— failed: {miss}")
+    # 2) Bull/bear debate gate (only if enabled + API key present)
+    if trader.DEBATE_ENABLED:
+        direction = "bull" if "Call" in str(row.get("opt_type", "")) \
+            or "▲" in str(row.get("direction", "")) else "bear"
+        indicators = {
+            "dir_pct": row.get("dir_pct"), "pf": row.get("pf"),
+            "ivr": row.get("ivr"), "structure": row.get("structure"),
+            "signal": row.get("signal"), "kb_match": sc["pct"],
+        }
+        try:
+            proceed, conf, summary = debate_mod.run_debate(sym, direction, indicators)
+            if not proceed:
+                return False, f"Debate gate suppressed (conf {conf:.2f}): {summary}"
+        except Exception as e:
+            # Fail closed — a gate that vanishes on error is no gate
+            return False, f"Debate gate error (failing closed): {e}"
+    return True, f"KB match {sc['pct']}% ✓ + debate ✓"
+
+
 def _auto_exec_options(data: dict) -> None:
     """After each screener refresh, auto-place BUY-rated options rows if armed.
 
@@ -1722,6 +1793,12 @@ def _auto_exec_options(data: dict) -> None:
             continue
         sym = o.get("sym", "").upper()
         if not sym:
+            continue
+
+        # ── KB-principles + debate gate (operator directive) ──────────────────
+        allowed, reason = _kb_and_debate_gate(o)
+        if not allowed:
+            _emit_log(f"AUTO-EXEC ⛔ {sym} blocked by gate — {reason}", level="INFO")
             continue
 
         with _auto_exec_lock:
@@ -1800,6 +1877,7 @@ def _refresh_screener_bg():
         except Exception:
             pass
         data = screener.refresh_screener(positions)
+        _annotate_kb(data)
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
@@ -1819,6 +1897,7 @@ def on_get_screener(data=None):
     force = bool((data or {}).get("force", False))
     cached = screener.get_cached()
     if cached.get("dt"):
+        _annotate_kb(cached)
         socketio.emit("screener_data", cached, to=request.sid)
     if force or not cached.get("dt"):
         socketio.start_background_task(_refresh_screener_bg)
@@ -1862,9 +1941,20 @@ def on_execute_screener_option(data=None):
     with _state_lock:
         dry = state["dry_run"]
 
+    # KB-principles + debate gate (operator directive — even manual clicks must
+    # match the knowledge base). Score from the row payload the UI sent.
+    allowed, gate_reason = _kb_and_debate_gate(data)
+    if not allowed:
+        socketio.emit("screener_order_result", {
+            "success": False, "sym": sym,
+            "message": f"Blocked by KB/debate gate — {gate_reason}"
+        }, to=request.sid)
+        _emit_log(f"EXEC ⛔ {sym} blocked by gate — {gate_reason}", level="WARNING")
+        return
+
     sid = request.sid
     log.info(f"execute_screener_option: {sym}  structure={data.get('structure')}  "
-             f"expiry={data.get('expiry')}  dry_run={dry}")
+             f"expiry={data.get('expiry')}  dry_run={dry}  gate={gate_reason}")
 
     def _run():
         result = screener_executor.execute_screener_option(data, dry_run=dry)

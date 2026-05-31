@@ -890,6 +890,7 @@
     background: var(--green); color: #000; white-space: nowrap;
   }
   .auto-schedule-btn.off { background: var(--border-strong); color: var(--muted); }
+  .auto-schedule-btn.armed { background: var(--red); color: #fff; }
 
   /* Data Freshness card */
   .freshness-card  { padding: 10px 14px; }
@@ -1564,6 +1565,16 @@
       <div class="card auto-schedule-card" data-card-id="auto-schedule">
         <div class="card-title">Automation</div>
         <div class="auto-schedule-row">
+          <span class="auto-schedule-label" style="color:var(--yellow)">Auto-Execute</span>
+          <span class="auto-schedule-hint">Arm: place KB-matched ✅ BUY rows (max 3/day · $400)</span>
+          <button class="auto-schedule-btn armed" id="btn-auto-exec" onclick="scrToggleAutoExec()">🔴 Armed (0/3 today)</button>
+        </div>
+        <div class="auto-schedule-row" style="margin-top:6px">
+          <span class="auto-schedule-label">Debate gate</span>
+          <span class="auto-schedule-hint">Bull/Bear LLM before every trade</span>
+          <button class="auto-schedule-btn" id="btn-debate" onclick="toggleDebate()">ON</button>
+        </div>
+        <div class="auto-schedule-row" style="margin-top:6px">
           <span class="auto-schedule-label">News filter</span>
           <span class="auto-schedule-hint">Veto on bad headlines</span>
           <button class="auto-schedule-btn" id="btn-news-filter" onclick="toggleNewsFilter()">ON</button>
@@ -1929,11 +1940,8 @@
     <span class="scr-mkt-label" id="scr-mkt-status">—</span>
     <span class="scr-age" id="scr-updated"></span>
     <span class="scr-spin-label" id="scr-spin" style="display:none">⟳ refreshing…</span>
-    <button class="scr-autoexec-btn" id="scr-autoexec-btn"
-            onclick="scrToggleAutoExec()"
-            title="Arm: auto-place ✅ BUY options after each screener refresh (max 3/day · $400/trade)">
-      ⬛ Auto-Execute
-    </button>
+    <span class="scr-autoexec-status" id="scr-autoexec-status"
+          title="Auto-Execute is armed/disarmed from Settings → Automation">—</span>
     <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh</button>
   </div>
 
@@ -2013,11 +2021,12 @@
             <th title="Backtested setup: Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37">Setup</th>
             <th title="Backtested profit factor — 2yr, next-day open→close">PF</th>
             <th title="Backtested avg next-day return per signal">Ret%</th>
+            <th title="KB-principles match: % of codified knowledge-base rules this setup satisfies (validity, PF, rel-vol, Impulse, RSI, VIX)">Conf%</th>
             <th title="⭐ top-5 backtested · 📌 O'Neill Pocket Pivot (up-day vol > any down-day in prior 10)">Pick</th>
           </tr>
         </thead>
         <tbody id="scr-dt-tbody">
-          <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+          <tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
             Click <b>↻ Refresh</b> to load live data
           </td></tr>
         </tbody>
@@ -2045,13 +2054,14 @@
             <th title="Target expiry — prefer DTE 21-28 (Saliba)">Expiry</th>
             <th title="Days to expiration">DTE</th>
             <th title="IV Rank — naked if IVR<30, spread if IVR≥30 (KB §2)">IVR</th>
+            <th title="KB-principles match: % of codified knowledge-base rules this trade satisfies (dir-edge, PF, IVR routing, DTE, risk budget, VIX). Trades below 60% are gate-blocked.">Conf%</th>
             <th title="Max risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $</th>
             <th title="Action based on backtested edge">Action</th>
             <th title="Place limit order via Alpaca (paper by default)">Execute</th>
           </tr>
         </thead>
         <tbody id="scr-opt-tbody">
-          <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+          <tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
             No active signals — Connors RSI(2)&lt;10 triggers after market close · intraday setups populate once market opens
           </td></tr>
         </tbody>
