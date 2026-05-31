@@ -1498,16 +1498,6 @@
 <div class="tab-bar">
   <button class="symbol-tab settings-tab active" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
   <div class="tab-divider"></div>
-  <button class="symbol-tab" id="tab-chart" onclick="showCharts()">Charts</button>
-  <select class="grid-dropdown" id="grid-dropdown" onchange="setGridCount(parseInt(this.value))">
-    <option value="1">1 Pane</option>
-    <option value="2">2 Panes</option>
-    <option value="4">4 Panes</option>
-    <option value="6">6 Panes</option>
-    <option value="8">8 Panes</option>
-  </select>
-  <div class="tab-divider"></div>
-  <button class="symbol-tab bt-tab" id="tab-backtest" onclick="showBacktest()">📊 Backtest</button>
   <button class="symbol-tab screener-tab" id="tab-screener" onclick="showScreener()">🔍 Screener</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
 </div>
@@ -1568,77 +1558,12 @@
           </div>
         </div>
 
-        <!-- Filters -->
-        <div class="config-section">Filters</div>
-        <div class="config-row">
-          <div>
-            <div class="config-label">VIX Max</div>
-            <div class="config-sub">Skip session above this</div>
-          </div>
-          <div class="stepper" role="group" aria-label="VIX maximum">
-            <button class="stepper-btn" onclick="adjustParam('vix_max', -1, 10, 100)" aria-label="Decrease VIX max">−</button>
-            <span class="stepper-value" id="val-vix-max">30</span>
-            <button class="stepper-btn" onclick="adjustParam('vix_max', 1, 10, 100)" aria-label="Increase VIX max">+</button>
-          </div>
-        </div>
-
-        <!-- Trade rules -->
-        <div class="config-section">Trade Rules</div>
-        <div class="config-row">
-          <div>
-            <div class="config-label">Stop Loss</div>
-            <div class="config-sub">% of premium paid</div>
-          </div>
-          <div class="stepper" role="group" aria-label="Stop loss">
-            <button class="stepper-btn" onclick="adjustParam('stop_loss', -5, 10, 90)" aria-label="Decrease stop loss">−</button>
-            <span class="stepper-value red" id="val-stop-loss">-50%</span>
-            <button class="stepper-btn" onclick="adjustParam('stop_loss', 5, 10, 90)" aria-label="Increase stop loss">+</button>
-          </div>
-        </div>
-        <div class="config-row">
-          <div>
-            <div class="config-label">Profit Target</div>
-            <div class="config-sub">% of premium paid</div>
-          </div>
-          <div class="stepper" role="group" aria-label="Profit target">
-            <button class="stepper-btn" onclick="adjustParam('profit_target', -5, 10, 500)" aria-label="Decrease profit target">−</button>
-            <span class="stepper-value green" id="val-profit-target">+75%</span>
-            <button class="stepper-btn" onclick="adjustParam('profit_target', 5, 10, 500)" aria-label="Increase profit target">+</button>
-          </div>
-        </div>
-        <div class="config-row">
-          <div>
-            <div class="config-label">DTE Min</div>
-            <div class="config-sub">Min days to expiry</div>
-          </div>
-          <div class="stepper" role="group" aria-label="DTE minimum">
-            <button class="stepper-btn" onclick="adjustParam('dte_min', -1, 0, 60)" aria-label="Decrease DTE min">−</button>
-            <span class="stepper-value" id="val-dte-min">7</span>
-            <button class="stepper-btn" onclick="adjustParam('dte_min', 1, 0, 60)" aria-label="Increase DTE min">+</button>
-          </div>
-        </div>
-        <div class="config-row">
-          <div>
-            <div class="config-label">DTE Max</div>
-            <div class="config-sub">Max days to expiry</div>
-          </div>
-          <div class="stepper" role="group" aria-label="DTE maximum">
-            <button class="stepper-btn" onclick="adjustParam('dte_max', -1, 0, 60)" aria-label="Decrease DTE max">−</button>
-            <span class="stepper-value" id="val-dte-max">14</span>
-            <button class="stepper-btn" onclick="adjustParam('dte_max', 1, 0, 60)" aria-label="Increase DTE max">+</button>
-          </div>
-        </div>
       </div>
 
       <!-- Automation toggles -->
       <div class="card auto-schedule-card" data-card-id="auto-schedule">
         <div class="card-title">Automation</div>
         <div class="auto-schedule-row">
-          <span class="auto-schedule-label">Auto-schedule</span>
-          <span class="auto-schedule-hint">Start all symbols at 9:30 ET</span>
-          <button class="auto-schedule-btn" id="btn-auto-schedule" onclick="toggleAutoSchedule()">ON</button>
-        </div>
-        <div class="auto-schedule-row" style="margin-top:6px">
           <span class="auto-schedule-label">News filter</span>
           <span class="auto-schedule-hint">Veto on bad headlines</span>
           <button class="auto-schedule-btn" id="btn-news-filter" onclick="toggleNewsFilter()">ON</button>
@@ -1647,16 +1572,6 @@
           <span class="auto-schedule-label">Trade memory</span>
           <span class="auto-schedule-hint">ChromaDB recall</span>
           <button class="auto-schedule-btn" id="btn-trade-memory" onclick="toggleTradeMemory()">ON</button>
-        </div>
-        <div class="auto-schedule-row" style="margin-top:6px">
-          <span class="auto-schedule-label">Bull/Bear LLM</span>
-          <span class="auto-schedule-hint">Needs ANTHROPIC_API_KEY</span>
-          <button class="auto-schedule-btn off" id="btn-debate" onclick="toggleDebate()">OFF</button>
-        </div>
-        <div class="auto-schedule-row" style="margin-top:6px">
-          <span class="auto-schedule-label" style="color:var(--yellow)">Auto-trade</span>
-          <span class="auto-schedule-hint">Skip approval modal</span>
-          <button class="auto-schedule-btn off" id="btn-auto-trade" onclick="toggleAutoTrade()">OFF</button>
         </div>
       </div>
 
@@ -1682,27 +1597,34 @@
         </div>
       </div>
 
-      <!-- All Day Session -->
-      <div class="card session-card" data-card-id="session">
-        <div class="session-header">
-          <span class="session-name">All Day Session</span>
-          <span class="session-time">9:30 ET → end time</span>
+      <!-- Paper Incubation Tracker -->
+      <div class="card" data-card-id="incubation">
+        <div class="card-title">Paper Incubation — Connors RSI(2)</div>
+        <div id="incubation-body" style="font-size:var(--fs-xs);font-family:var(--mono)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-bottom:8px">
+            <div>Day <span id="incub-days" style="font-weight:700;color:var(--blue)">—</span><span style="color:var(--muted)"> / 28</span></div>
+            <div>Trades <span id="incub-trades" style="font-weight:700">—</span></div>
+            <div>Wins <span id="incub-wins" style="color:var(--green);font-weight:700">—</span></div>
+            <div>Losses <span id="incub-losses" style="color:var(--red);font-weight:700">—</span></div>
+          </div>
+          <div id="incub-progress-bar" style="height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin-bottom:6px">
+            <div id="incub-progress-fill" style="height:100%;background:var(--blue);width:0%;transition:width .4s"></div>
+          </div>
+          <div style="color:var(--muted);font-size:10px">
+            Started 2026-05-20 · Gate: ≥28 days + mechanics verified + cost-robust backtest PF ≥ 1.10
+          </div>
         </div>
-        <div class="session-desc">
-          ORB breakout · Gap fade · VWAP momentum<br/>
-          EMA9/21/200 · RSI · MACD · Bollinger · ATR<br/>
-          Tabs switch chart only — each symbol trades independently
-        </div>
-        <div class="time-row">
-          <span>End at</span>
-          <input class="time-input" type="time" id="session-end" value="15:45"
-                 min="09:30" max="16:00" onchange="setSessionEnd()"/>
-          <span>ET</span>
-        </div>
-        <div class="btn-row">
-          <button class="btn-run"  id="btn-start-all" onclick="startAllSessions()">▶▶ Start All</button>
-          <button class="btn-stop" id="btn-stop-all"  onclick="stopAllSessions()">■■ Stop All</button>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn-run" onclick="socket.emit('daily_eod_now',{})">▶ Run EOD Now</button>
           <button class="btn-neutral" id="btn-sync-positions" onclick="syncPositions()" title="Pull live positions from Alpaca — no restart needed">⟳ Sync Positions</button>
+        </div>
+      </div>
+
+      <!-- Daily Positions (Connors RSI(2)) -->
+      <div class="card" data-card-id="daily-positions">
+        <div class="card-title">Daily Positions</div>
+        <div id="daily-positions-list">
+          <div class="pos-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No active daily positions</div>
         </div>
       </div>
 
@@ -1724,8 +1646,10 @@
             <div>Trend <span id="slip-trend" style="font-weight:700"></span></div>
             <div>Last <span id="slip-last"></span></div>
             <div>Worst <span id="slip-worst"></span></div>
+            <div>Δ vs model <span id="slip-delta" style="font-weight:700"></span></div>
+            <div id="slip-alert" style="color:var(--red);display:none">⚠ >2× modeled</div>
           </div>
-          <div style="margin-top:4px;color:var(--muted);font-size:10px">+bps = paid up vs mid (the tax). Rising trend = fills degrading.</div>
+          <div style="margin-top:4px;color:var(--muted);font-size:10px">+bps = paid up vs mid. Δ vs model = deviation from 3bp backtest assumption.</div>
         </div>
       </div>
 

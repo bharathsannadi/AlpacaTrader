@@ -559,6 +559,7 @@ def _state_snapshot() -> dict:
             "streaming":       state["streaming"],
             "dry_run":         state["dry_run"],
             "paper_mode":      state["paper_mode"],
+            "risk_mode":       getattr(trader, "RISK_MODE", "paper_aggressive"),
             "active_symbol":   state["active_symbol"],
             "session_end":     state["session_end"],
             "account_value":   acct_val,
@@ -592,6 +593,30 @@ def _state_snapshot() -> dict:
     snap["equity_curve"]           = trader.equity_curve_snapshot(acct_val)
     snap["slippage"]               = trader.slippage_snapshot()
     snap["data_freshness"]         = trader.get_freshness_snapshot()
+    # Daily Connors positions + incubation stats (PA-UI)
+    try:
+        all_pos = dtrad._load_positions()
+        snap["daily_positions"] = [
+            p for p in all_pos
+            if p.get("status") in ("open", "pending", "signal")
+        ]
+        closed_pos = [p for p in all_pos if p.get("status") == "closed"]
+        from datetime import date as _date
+        incub_start = _date(2026, 5, 20)
+        incub_days  = (_date.today() - incub_start).days
+        wins  = sum(1 for p in closed_pos if (p.get("pnl_usd") or 0) > 0)
+        losses = sum(1 for p in closed_pos if (p.get("pnl_usd") or 0) < 0)
+        snap["incubation"] = {
+            "start_date":   str(incub_start),
+            "days_running": incub_days,
+            "trade_count":  len(closed_pos),
+            "wins":         wins,
+            "losses":       losses,
+            "target_days":  28,
+        }
+    except Exception:
+        snap["daily_positions"] = []
+        snap["incubation"] = {}
     return snap
 
 
@@ -993,6 +1018,33 @@ def on_login(data):
         login_tracker.record_failure(ip)
         socketio.emit("login_result", {"success": False, "error": str(e)})
         return
+
+    # 3R-A.3 — live login gate: refuse if paper risk overrides exceed the
+    # live-disciplined ceiling, unless the user explicitly confirms.
+    # This prevents paper-aggressive settings from silently carrying into live.
+    if not paper and not data.get("live_risk_confirmed", False):
+        violations = []
+        risk_ov = getattr(trader, "_ui_risk_override", None)
+        port_ov = getattr(trader, "_ui_portfolio_risk_override", None)
+        if risk_ov is not None and risk_ov > trader.SUB10K_MAX_RISK_PCT:
+            violations.append(
+                f"per-trade risk {risk_ov*100:.1f}% > live ceiling {trader.SUB10K_MAX_RISK_PCT*100:.0f}%"
+            )
+        if port_ov is not None and port_ov > trader.SUB10K_MAX_PORTFOLIO_RISK:
+            violations.append(
+                f"portfolio risk {port_ov*100:.1f}% > live ceiling {trader.SUB10K_MAX_PORTFOLIO_RISK*100:.0f}%"
+            )
+        if violations:
+            msg = (
+                "Live mode refused — paper risk overrides exceed live-disciplined limits: "
+                + "; ".join(violations)
+                + ". Reset Settings to default or re-submit with live_risk_confirmed=true "
+                  "(live mode will cap them to the disciplined profile)."
+            )
+            log.warning(f"🚫 {msg}")
+            socketio.emit("login_result", {"success": False, "error": msg,
+                                           "risk_override_conflict": True})
+            return
 
     # Fast path: the server is often already authenticated via _auto_login
     # at boot using the same credentials from .env. Re-running init_clients
@@ -1445,6 +1497,12 @@ def _scheduler_supervisor():
                 f"Scheduler heartbeat {age:.0f}s stale — respawning greenlet "
                 f"(threshold={SCHEDULER_STALE_THRESHOLD_S}s)"
             )
+            try:
+                trader.log_failure("watchdog_restart",
+                                   f"Scheduler stale {age:.0f}s — respawning",
+                                   {"threshold_s": SCHEDULER_STALE_THRESHOLD_S})
+            except Exception:
+                pass
             socketio.start_background_task(scheduler)
             last_respawn = _time.monotonic()
 
@@ -1567,6 +1625,12 @@ def scheduler():
                 f"Scheduler tick {type(e).__name__}: {e} — continuing",
                 exc_info=True,
             )
+            try:
+                trader.log_failure("scheduler_crash",
+                                   f"{type(e).__name__}: {e}",
+                                   {"generation": my_gen})
+            except Exception:
+                pass
 
 
 @socketio.on("daily_status")

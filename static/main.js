@@ -238,6 +238,8 @@ function updateUI(s) {
 
   if (s.equity_curve) renderEquityCurve(s.equity_curve);
   if (s.slippage) renderSlippage(s.slippage);
+  if (s.daily_positions != null) renderDailyPositions(s.daily_positions);
+  if (s.incubation) renderIncubation(s.incubation);
 
   // Sync max-portfolio-risk input to the active value (unless user is editing it)
   if (s.max_portfolio_risk_pct != null) {
@@ -285,15 +287,25 @@ function updateUI(s) {
     }
   }
 
-  // Mode pill
+  // Mode pill — shows paper/live + risk mode (3R-A.4)
   const pill = document.getElementById("mode-pill");
   if (pill) {
-    const accountLabel = s.paper_mode ? "PAPER" : "LIVE";
-    const tradeLabel   = s.dry_run    ? "DRY RUN" : "LIVE TRADING";
-    pill.textContent = `${accountLabel} · ${tradeLabel}`;
+    const riskMode = s.risk_mode || (s.paper_mode ? "paper_aggressive" : "live_disciplined");
+    let pillText;
+    if (s.paper_mode) {
+      pillText = "PAPER (max-risk)";
+    } else if (riskMode === "live_disciplined") {
+      pillText = "LIVE (disciplined)";
+    } else {
+      pillText = "LIVE";
+    }
+    if (s.dry_run) pillText += " · DRY RUN";
+    pill.textContent = pillText;
     pill.className = "mode-pill" +
-      (!s.dry_run   ? " live" :
-       s.paper_mode ? " paper-on" : "");
+      (!s.paper_mode ? " live" : " paper-on");
+    pill.title = s.paper_mode
+      ? "Paper mode: max-risk settings active for learning. Paper P&L ≠ edge validation."
+      : "Live mode: disciplined profile forced (4%/20%/20%). UI risk overrides ignored.";
   }
 
   document.getElementById("dry-run-toggle").checked = !!s.dry_run;
@@ -396,6 +408,54 @@ function renderSlippage(sl) {
   set("slip-worst",sign(sl.worst_bps),col(sl.worst_bps));
   const tcol = sl.trend === "worsening" ? "var(--red)" : sl.trend === "improving" ? "var(--green)" : "var(--muted)";
   set("slip-trend", sl.trend + (sl.trend==="worsening"?" ▲":sl.trend==="improving"?" ▼":" —"), tcol);
+  // vs-model delta (3R-C.2)
+  if (sl.avg_delta_vs_model != null) {
+    const d = sl.avg_delta_vs_model;
+    set("slip-delta", sign(d), d > 3 ? "var(--red)" : d > 0 ? "var(--yellow)" : "var(--green)");
+    const alertEl = document.getElementById("slip-alert");
+    if (alertEl) alertEl.style.display = sl.model_alert ? "" : "none";
+  }
+}
+
+// ── Daily positions panel (PA-UI) ─────────────────────────────────────────
+function renderDailyPositions(positions) {
+  const el = document.getElementById("daily-positions-list");
+  if (!el) return;
+  if (!positions || !positions.length) {
+    el.innerHTML = '<div class="pos-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No active daily positions</div>';
+    return;
+  }
+  el.innerHTML = positions.map(p => {
+    const pnl = p.pnl_usd != null ? (p.pnl_usd >= 0 ? `<span style="color:var(--green)">+$${p.pnl_usd.toFixed(0)}</span>` : `<span style="color:var(--red)">-$${Math.abs(p.pnl_usd).toFixed(0)}</span>`) : "—";
+    const instr = p.structure || p.instrument || "—";
+    const debit = p.entry_debit || p.est_debit || "—";
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px">
+      <div>
+        <span style="font-weight:700;color:var(--blue)">${p.sym}</span>
+        <span style="color:var(--muted);margin-left:4px">${instr}</span>
+      </div>
+      <div style="text-align:right">
+        <div style="color:var(--muted)">${p.entry_date || "—"}</div>
+        <div>debit=${debit} &nbsp; ${pnl}</div>
+        <div style="color:var(--muted)">[${p.status}]</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ── Paper incubation tracker (PA-UI) ──────────────────────────────────────
+function renderIncubation(inc) {
+  if (!inc || !inc.start_date) return;
+  const days = inc.days_running || 0;
+  const target = inc.target_days || 28;
+  const pct = Math.min(100, Math.round(days / target * 100));
+  const set = (id, v) => { const e=document.getElementById(id); if(e) e.textContent=v; };
+  set("incub-days",   days);
+  set("incub-trades", inc.trade_count || 0);
+  set("incub-wins",   inc.wins || 0);
+  set("incub-losses", inc.losses || 0);
+  const fill = document.getElementById("incub-progress-fill");
+  if (fill) fill.style.width = pct + "%";
 }
 
 // ── Data Freshness panel ───────────────────────────────────────────────────

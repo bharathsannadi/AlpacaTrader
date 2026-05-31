@@ -115,6 +115,16 @@ DATA_CLIENT    = None
 OPTION_CLIENT  = None
 PAPER_MODE     = True
 
+# ── Risk mode (3R-A) ──────────────────────────────────────────────────────────
+# "paper_aggressive" : paper trading, UI overrides honored, max-risk for learning
+# "live_disciplined" : live money, disciplined profile FORCED, UI overrides ignored
+# Set automatically by init_clients() based on the paper flag.
+RISK_MODE: str = "paper_aggressive"
+
+def _is_live() -> bool:
+    """True when connected to a real-money Alpaca account (not paper)."""
+    return not PAPER_MODE
+
 # ── Trade memory (ChromaDB) ────────────────────────────────────────────────────
 from trade_memory import TradeMemory
 TRADE_MEMORY: TradeMemory = TradeMemory(enabled=False)  # enabled on login
@@ -510,7 +520,7 @@ def init_clients(api_key: str, api_secret: str, paper: bool = True):
     Initialize Alpaca clients. Called by app.py after the user enters credentials.
     Returns (account, success_bool, error_msg_or_None).
     """
-    global TRADING_CLIENT, DATA_CLIENT, OPTION_CLIENT, PAPER_MODE
+    global TRADING_CLIENT, DATA_CLIENT, OPTION_CLIENT, PAPER_MODE, RISK_MODE
     # ── Go-live gate (§P1-F) ── real money requires a fully-signed
     # GO_LIVE_CHECKLIST.md. Paper mode is never gated.
     if not paper:
@@ -525,6 +535,7 @@ def init_clients(api_key: str, api_secret: str, paper: bool = True):
         log.warning("✅ Go-live checklist fully signed — LIVE mode permitted.")
     try:
         PAPER_MODE      = paper
+        RISK_MODE       = "paper_aggressive" if paper else "live_disciplined"
         TRADING_CLIENT  = TradingClient(api_key, api_secret, paper=paper)
         DATA_CLIENT     = StockHistoricalDataClient(api_key, api_secret)
         OPTION_CLIENT   = OptionHistoricalDataClient(api_key, api_secret)
@@ -562,6 +573,42 @@ def check_go_live_readiness() -> tuple[bool, list[str]]:
 
 def is_authenticated() -> bool:
     return TRADING_CLIENT is not None
+
+
+# ── Phase-progression log (3R-B.3) ───────────────────────────────────────────
+_PHASE_LOG_FILE = os.path.expanduser("~/.spy_trader/phase_log.json")
+_phase_log_lock = threading.Lock()
+
+
+def phase_log_append(event: str, metrics: dict) -> None:
+    """Append an audit entry to the phase-progression log (append-only).
+
+    event   : short label e.g. "paper_incubation_start", "phase1_to_phase2"
+    metrics : dict of numeric evidence e.g. {"pf_3bp": 1.31, "pf_5bp": 1.28}
+
+    Called explicitly by the operator (or from app.py at phase-advance) so
+    the audit trail proves which numbers justified going live.
+    """
+    entry = {
+        "ts":     datetime.now(ET).isoformat(),
+        "event":  event,
+        "metrics": metrics,
+    }
+    with _phase_log_lock:
+        try:
+            os.makedirs(os.path.dirname(_PHASE_LOG_FILE), exist_ok=True)
+            history: list = []
+            if os.path.exists(_PHASE_LOG_FILE):
+                with open(_PHASE_LOG_FILE) as f:
+                    history = json.load(f)
+            history.append(entry)
+            tmp = _PHASE_LOG_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(history, f, indent=2)
+            os.replace(tmp, _PHASE_LOG_FILE)
+            log.info(f"[phase-log] {event} — {metrics}")
+        except Exception as e:
+            log.warning(f"phase_log_append failed: {e}")
 
 
 def init_memory(enabled: bool = True) -> None:
@@ -2265,12 +2312,15 @@ def _is_sub10k_account() -> bool:
     return val
 
 
-# When the user explicitly sets risk in the Settings UI, that choice wins
-# over the sub-10K profile (precedence: UI override > sub-10K profile >
-# default). app.on_set_risk() sets this.
+# Precedence for paper mode: UI override > sub-10K profile > module defaults.
+# In live_disciplined mode, UI overrides are IGNORED — the disciplined profile
+# is always forced to protect real capital from paper-aggressive settings leaking in.
+# The disciplined profile values are the sub-10K constants (4%/20%/20% tuned for $5K).
 _ui_risk_override: Optional[float] = None
 
 def eff_max_risk_pct() -> float:
+    if RISK_MODE == "live_disciplined":
+        return SUB10K_MAX_RISK_PCT   # 4% — forced; no UI override in live mode
     if _ui_risk_override is not None:
         return _ui_risk_override
     return SUB10K_MAX_RISK_PCT if _is_sub10k_account() else MAX_RISK_PCT
@@ -2278,14 +2328,20 @@ def eff_max_risk_pct() -> float:
 _ui_portfolio_risk_override: Optional[float] = None
 
 def eff_max_portfolio_risk() -> float:
+    if RISK_MODE == "live_disciplined":
+        return SUB10K_MAX_PORTFOLIO_RISK   # 20% — forced
     if _ui_portfolio_risk_override is not None:
         return _ui_portfolio_risk_override
     return SUB10K_MAX_PORTFOLIO_RISK if _is_sub10k_account() else MAX_PORTFOLIO_RISK
 
 def eff_daily_loss_limit_pct() -> float:
+    if RISK_MODE == "live_disciplined":
+        return SUB10K_DAILY_LOSS_LIMIT_PCT   # 20% — forced
     return SUB10K_DAILY_LOSS_LIMIT_PCT if _is_sub10k_account() else DAILY_LOSS_LIMIT_PCT
 
 def eff_daily_profit_lock_pct() -> float:
+    if RISK_MODE == "live_disciplined":
+        return SUB10K_DAILY_PROFIT_LOCK_PCT   # 10% — forced
     return SUB10K_DAILY_PROFIT_LOCK_PCT if _is_sub10k_account() else DAILY_PROFIT_LOCK_PCT
 
 
@@ -4389,17 +4445,34 @@ _SLIPPAGE_FILE = os.path.expanduser("~/.spy_trader/slippage_history.json")
 _slippage_lock = threading.Lock()
 
 
-def _record_slippage(order_id: str, bps: float) -> None:
-    """Append a realized-slippage observation. Persistent (per-position
-    entry_slippage_bps is lost when the position closes) so the UI can show
-    a rolling trend — a silently worsening fill quality is an invisible tax."""
+def _record_slippage(order_id: str, bps: float, modeled_bps: float = 3.0) -> None:
+    """Append a realized-slippage observation (3R-C.2).
+
+    bps         : realized slippage in basis points (positive = paid up vs mid)
+    modeled_bps : the assumed slippage used in the backtest (default 3 bp).
+                  If realized > 2× modeled, a warning is logged.
+
+    Persistent so the UI can show a rolling trend and delta vs model.
+    """
+    delta = round(bps - modeled_bps, 1)
+    if abs(delta) > modeled_bps * 2:
+        log.warning(
+            f"  ⚠ Slippage alert: order={order_id} realized={bps:+.1f}bp "
+            f"vs modeled={modeled_bps:.1f}bp (delta={delta:+.1f}bp — >2× modeled)"
+        )
     with _slippage_lock:
         try:
             hist = []
             if os.path.exists(_SLIPPAGE_FILE):
                 with open(_SLIPPAGE_FILE) as f:
                     hist = json.load(f)
-            hist.append({"ts": datetime.now(ET).isoformat(), "order": order_id, "bps": bps})
+            hist.append({
+                "ts":          datetime.now(ET).isoformat(),
+                "order":       order_id,
+                "bps":         bps,
+                "modeled_bps": modeled_bps,
+                "delta_bps":   delta,
+            })
             hist = hist[-200:]   # keep last 200 fills
             os.makedirs(os.path.dirname(_SLIPPAGE_FILE), exist_ok=True)
             tmp = _SLIPPAGE_FILE + ".tmp"
@@ -4411,8 +4484,11 @@ def _record_slippage(order_id: str, bps: float) -> None:
 
 
 def slippage_snapshot() -> dict:
-    """Rolling slippage stats for the UI. Trend = recent-half avg vs
-    prior-half avg over the last 30 fills (rising = fills getting worse)."""
+    """Rolling slippage stats for the UI (3R-C.2).
+
+    Includes vs-modeled delta: if realized slippage consistently exceeds the
+    backtest assumption the edge degrades silently — this surfaces it.
+    """
     try:
         with _slippage_lock:
             if not os.path.exists(_SLIPPAGE_FILE):
@@ -4423,7 +4499,8 @@ def slippage_snapshot() -> dict:
         return {"n": 0}
     if not hist:
         return {"n": 0}
-    last = [h["bps"] for h in hist[-30:]]
+    recent_hist = hist[-30:]
+    last = [h["bps"] for h in recent_hist]
     n = len(last)
     avg = round(sum(last) / n, 1)
     trend = "flat"
@@ -4433,6 +4510,9 @@ def slippage_snapshot() -> dict:
         recent = sum(last[half:]) / (n - half)
         if recent > prior + 2:   trend = "worsening"
         elif recent < prior - 2: trend = "improving"
+    # vs-modeled delta (3R-C.2): avg delta over last 30 fills
+    deltas = [h.get("delta_bps", h["bps"] - 3.0) for h in recent_hist]
+    avg_delta = round(sum(deltas) / len(deltas), 1) if deltas else 0.0
     return {
         "n": n,
         "avg_bps": avg,
@@ -4440,7 +4520,102 @@ def slippage_snapshot() -> dict:
         "worst_bps": round(max(last), 1),
         "trend": trend,
         "spark": [round(x, 1) for x in last],
+        "avg_delta_vs_model": avg_delta,
+        "model_alert": avg_delta > 3.0,   # realizing >2× the 3bp assumption
     }
+
+
+# ── Gate-fire telemetry (3R-C.3) ─────────────────────────────────────────────
+_GATE_STATS_FILE = os.path.expanduser("~/.spy_trader/gate_stats.json")
+_gate_stats_lock = threading.Lock()
+
+
+def _record_gate_stats(counts: dict, n_closed: int, win_rate: float,
+                       profit_factor: float, expectancy: float) -> None:
+    """Append a per-session gate-fire record. Called from eod_review().
+
+    Captures: signals fired, suppressed per gate, taken — so Phase 1 produces
+    *learning* (gate behavior data) not just a vanity P&L curve.
+    """
+    entry = {
+        "date":              datetime.now(ET).strftime("%Y-%m-%d"),
+        "signals_fired":     counts.get("signal", 0),
+        "orders_placed":     counts.get("order", 0),
+        "dry_run_skipped":   counts.get("dry_run", 0),
+        "gates": {
+            "iv_rank":    counts.get("iv_gate", 0),
+            "volume":     counts.get("vol_gate", 0),
+            "news_veto":  counts.get("news_veto", 0),
+            "debate_no":  counts.get("debate_no", 0),
+            "debate_ok":  counts.get("debate_ok", 0),
+        },
+        "exits": {
+            "stops":      counts.get("stop", 0),
+            "t1_partial": counts.get("target1", 0),
+            "t2_full":    counts.get("target2", 0),
+            "hard_close": counts.get("hard_close", 0),
+        },
+        "closed_trades":  n_closed,
+        "win_rate":       round(win_rate, 1),
+        "profit_factor":  round(profit_factor, 3) if profit_factor != float("inf") else None,
+        "expectancy_pct": round(expectancy, 3),
+        "paper_mode":     PAPER_MODE,
+    }
+    with _gate_stats_lock:
+        try:
+            os.makedirs(os.path.dirname(_GATE_STATS_FILE), exist_ok=True)
+            history: list = []
+            if os.path.exists(_GATE_STATS_FILE):
+                with open(_GATE_STATS_FILE) as f:
+                    history = json.load(f)
+            history.append(entry)
+            tmp = _GATE_STATS_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(history, f, indent=2)
+            os.replace(tmp, _GATE_STATS_FILE)
+        except Exception as e:
+            log.warning(f"_record_gate_stats failed: {e}")
+
+
+# ── Failure-mode log (3R-C.4) ────────────────────────────────────────────────
+_FAILURE_LOG_FILE = os.path.expanduser("~/.spy_trader/failure_log.json")
+_failure_log_lock = threading.Lock()
+
+
+def log_failure(event_type: str, detail: str, context: Optional[dict] = None) -> None:
+    """Append a failure-mode event to the append-only failure log.
+
+    event_type : short category e.g. "crash", "reconcile_drift", "fill_timeout",
+                 "watchdog_restart", "desync"
+    detail     : human-readable description
+    context    : optional dict of relevant state at the time of failure
+
+    This is what paper trading is legitimately for — learning failure modes
+    cheaply before they happen with real money. Every crash/desync/retry
+    should be logged here so Phase-1→2 gate can verify "no unsolved crashes."
+    """
+    entry = {
+        "ts":         datetime.now(ET).isoformat(),
+        "event_type": event_type,
+        "detail":     detail,
+        "context":    context or {},
+        "paper_mode": PAPER_MODE,
+    }
+    with _failure_log_lock:
+        try:
+            os.makedirs(os.path.dirname(_FAILURE_LOG_FILE), exist_ok=True)
+            history: list = []
+            if os.path.exists(_FAILURE_LOG_FILE):
+                with open(_FAILURE_LOG_FILE) as f:
+                    history = json.load(f)
+            history.append(entry)
+            tmp = _FAILURE_LOG_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(history, f, indent=2)
+            os.replace(tmp, _FAILURE_LOG_FILE)
+            log.warning(f"[failure-log] {event_type}: {detail}")
+        except Exception as e:
+            log.warning(f"log_failure write failed: {e}")
 
 
 def update_slippage_for_order(order_id: str, target_mid: float) -> None:
@@ -5398,51 +5573,78 @@ def eod_review(log_path: str, trades_today: list) -> str:
             )
 
     pf_str = "∞" if profit_factor == float("inf") else f"{profit_factor:.2f}"
-    summary_lines = [
-        f"Signals fired: {counts['signal']}",
-        f"Orders placed: {counts['order']}  (dry-run allowed: {counts['dry_run']})",
-        f"IV rank gates: {counts['iv_gate']}  |  Vol gates: {counts['vol_gate']}",
-        f"News vetoes: {counts['news_veto']}  |  Debate suppressed: {counts['debate_no']}  |  Debate proceed: {counts['debate_ok']}",
-        f"Exits — stops: {counts['stop']}  T1-partial: {counts['target1']}  T2: {counts['target2']}  hard-close: {counts['hard_close']}",
-        f"Closed trades: {len(wins)} wins ({avg_win:+.1f}% avg)  {len(loses)} losses ({avg_loss:+.1f}% avg)  {len(flat)} flat",
-        f"Win rate: {win_rate:.1f}%  |  Profit factor: {pf_str}  |  Expectancy: {expectancy:+.2f}% / trade  |  Avg R: {avg_r:+.2f}R",
-        f"Max consecutive losses: {max_streak}  |  Gross wins: {gross_wins:+.1f}%  |  Gross losses: -{gross_loss:.1f}%",
+
+    # 3R-C.1 — split into MECHANICS scorecard (what the system DID) and
+    # EDGE scorecard (did it make money). In paper mode, MECHANICS is the
+    # valuable output; P&L just amplifies noise on an unvalidated edge.
+    mechanics_lines = [
+        "── MECHANICS SCORECARD (what the system did today) ──",
+        f"  Signals fired:       {counts['signal']}",
+        f"  Orders placed:       {counts['order']}  (dry-run skipped: {counts['dry_run']})",
+        f"  IV rank gates:       {counts['iv_gate']}",
+        f"  Vol gates:           {counts['vol_gate']}",
+        f"  News vetoes:         {counts['news_veto']}",
+        f"  Debate suppressed:   {counts['debate_no']}  |  Debate proceed: {counts['debate_ok']}",
+        f"  Exits — stops: {counts['stop']}  T1-partial: {counts['target1']}  T2: {counts['target2']}  hard-close: {counts['hard_close']}",
+        f"  Paper mode:          {'YES (P&L below is learning noise, not edge validation)' if PAPER_MODE else 'NO — real money'}",
+    ]
+
+    edge_lines = [
+        "── EDGE SCORECARD (P&L — read carefully in paper mode) ──",
+    ]
+    if PAPER_MODE:
+        edge_lines.append(
+            "  ⚠ PAPER MODE: P&L below is informational only. "
+            "Max-risk paper settings amplify noise. "
+            "Do NOT read green paper days as edge validation."
+        )
+    edge_lines += [
+        f"  Closed: {len(wins)}W / {len(loses)}L / {len(flat)} flat",
+        f"  Win rate: {win_rate:.1f}%  |  PF: {pf_str}  |  Expectancy: {expectancy:+.2f}%/trade  |  Avg R: {avg_r:+.2f}R",
+        f"  Max consecutive losses: {max_streak}",
     ]
     if class_lines:
-        summary_lines.append("Per-signal-class P&L (best → worst):")
-        summary_lines.extend(class_lines)
+        edge_lines.append("  Per-signal-class P&L (best → worst):")
+        edge_lines.extend("  " + ln for ln in class_lines)
     if sym_lines:
-        summary_lines.append("Per-symbol P&L (best → worst):")
-        summary_lines.extend(sym_lines)
+        edge_lines.append("  Per-symbol P&L (best → worst):")
+        edge_lines.extend("  " + ln for ln in sym_lines)
     if xtab_lines:
-        summary_lines.append("Losing symbol×strategy cells (≥2 trades):")
-        summary_lines.extend(xtab_lines)
+        edge_lines.append("  Losing symbol×strategy cells (≥2 trades):")
+        edge_lines.extend("  " + ln for ln in xtab_lines)
     if trades_today:
+        edge_lines.append("  Trade list:")
         for t in trades_today:
             if not t.get("is_partial"):
-                summary_lines.append(
-                    f"  {t.get('symbol','?')} {t.get('direction','?').upper()} "
+                edge_lines.append(
+                    f"    {t.get('symbol','?')} {t.get('direction','?').upper()} "
                     f"{t.get('pnl_pct',0):+.1f}% — {t.get('reason','')}"
                 )
 
-    plain_summary = "\n".join(summary_lines)
+    plain_summary = "\n".join(mechanics_lines + [""] + edge_lines)
     log.info(f"EOD summary:\n{plain_summary}")
+
+    # Persist gate-fire stats for telemetry (3R-C.3)
+    _record_gate_stats(counts, n_closed, win_rate, profit_factor, expectancy)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return "── EOD Review (no API key — plain stats) ──\n" + plain_summary
 
     try:
-        import anthropic
         import debate as _d; client = _d.get_anthropic_client()
         if client is None:
             raise RuntimeError('no anthropic client')
+        mode_note = ("NOTE: this is PAPER TRADING — P&L does NOT validate the edge. "
+                     "Focus coaching on MECHANICS (gate behavior, execution, stops) "
+                     "not on whether the day was 'profitable'.") if PAPER_MODE else ""
         prompt = (
             "You are a quantitative trading coach reviewing a day of automated options trading.\n"
+            f"{mode_note}\n"
             "Given the stats below, provide:\n"
-            "1. What worked today (2 bullets max)\n"
-            "2. What didn't work (2 bullets max)\n"
-            "3. One concrete parameter tweak to try tomorrow (be specific: name the constant and new value)\n"
+            "1. MECHANICS: did gates fire correctly? (2 bullets max)\n"
+            "2. EDGE signal (paper only — treat as weak signal): what does P&L suggest? (1 bullet)\n"
+            "3. One concrete improvement for tomorrow (name the constant and value)\n"
             "Be concise. No preamble.\n\n"
             f"Stats:\n{plain_summary}"
         )

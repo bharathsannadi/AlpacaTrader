@@ -157,12 +157,19 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
 - [ ] **Max-DD sign-off**: owner must initial the GO_LIVE_CHECKLIST threshold-change note (user action only)
 - [x] **Universe filter**: `MIN_ATR_PCT=1.5%` wired in `generate_signals()` — DONE 2026-05-23. OOS backtest to confirm improvement still TODO.
 - [x] **Kelly sizing**: validated 2026-05-23 — win%=66.4, PF=1.32 → full-Kelly=16.1% → ½-Kelly=8%=$400/trade. `RISK_BUDGET` $500→$400 committed.
-- [ ] **Paper incubation** ≥4 weeks — CLOCK RUNNING (start date 2026-05-20, day 3 of 28)
+- [ ] **Paper incubation** ≥4 weeks — CLOCK RUNNING (start date 2026-05-20, day 11 of 28)
   Track: mechanics correct, fills confirmed, stops activating, no crashes
 - [x] **GO_LIVE_CHECKLIST §2 — process supervision**: watchdog plist installed & verified 2026-05-23 (paths fixed for new machine path).
 - [ ] **GO_LIVE_CHECKLIST §2 remaining**: equity-curve ≥5 EOD points, ERROR webhook test, 24hr stability run
 - [ ] **GO_LIVE_CHECKLIST §3-5**: risk-controls verification + operator readiness boxes (user actions)
 - [x] **KB-COMPLY**: 10/11 gaps shipped 2026-05-23 — KB-2 7-DTE exit, KB-3 D-2 earnings exit, KB-1 80% profit close, KB-4 VIX gate, KB-5 correlated cap, KB-6 T1 partial, KB-8 bid-ask width, KB-9 prefer DTE≥21, KB-10 VIX spike→spread, KB-11 documented. KB-7 deferred.
+- [x] **3R-A**: RISK_MODE + _is_live() + mode-aware eff_* getters + live login gate + UI badge — DONE 2026-05-31
+- [x] **3R-B**: kelly.py + GO_LIVE_CHECKLIST §0 numeric gates + phase_log_append() — DONE 2026-05-31
+- [x] **3R-C**: EOD mechanics/edge split + slippage vs-model tracker + gate_stats.json + failure_log.json + failure wiring — DONE 2026-05-31
+- [x] **PA-UI**: Removed dead intraday controls (DTE/stop/profit-target/VIX, auto-schedule, auto-trade, debate, Charts tab, Backtest tab, All Day Session card); added daily positions panel, incubation tracker, Run EOD button — DONE 2026-05-31
+- [ ] **OOS backtest**: confirm MIN_ATR_PCT=1.5% universe filter improves walk-forward PF
+- [ ] **1S-B**: Run backtest_shares_robust.py across all 39 tickers (needs Polygon data)
+- [ ] **2S-B**: Fix options spread-data harness (large; needs clean spread pricer + data)
 
 ---
 

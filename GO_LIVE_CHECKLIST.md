@@ -21,6 +21,16 @@ Last reviewed: _never_ · Signed: _________
 
 ---
 
+## 0. Numeric gates (3R-B.2 — hard checks, must pass before any live trade)
+
+These are evaluated by `check_go_live_readiness()` against documented backtest results.
+Record the actual numbers in brackets when checking each box.
+
+- [ ] **At least 1 strategy with walk-forward OOS PF ≥ 1.10 at BOTH 3 bp AND 5 bp** — record: [strategy=____, PF@3bp=____, PF@5bp=____] — date/initials: ____
+- [ ] **Live size ≤ ½-Kelly** of that strategy's win-rate × payoff (see kelly.py) — record: [win%=____, ½-Kelly frac=____, chosen $=____] — date/initials: ____
+- [ ] **Paper incubation ≥ 4 weeks** with correct mechanics (fills confirmed, stops fired, no crashes) — record: [start=2026-05-20, end=____, trade count=____] — date/initials: ____
+- [ ] **Phase log entry** written (append to ~/.spy_trader/phase_log.json documenting the advance) — date/initials: ____
+
 ## 1. Edge proven (backtest item 1 must have produced these)
 
 - [ ] Backtest profit factor > 1.5 over ≥18 months — date/initials: ____
