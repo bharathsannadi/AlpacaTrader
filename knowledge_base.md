@@ -242,6 +242,12 @@ Example: Account $25,000, 1.5% risk = $375 max risk. Option at $1.80 ($180/contr
 - **Total round-trip cost, lowest → highest: shares < futures ≪ single options ≪ multi-leg option spreads.** Option costs (wide bid/ask relative to price + per-contract fees + clearing) are *materially* higher than equity costs.
 - **Decision rule for a thin directional edge:** express it in the **cheapest instrument that carries it**. A small directional edge (no volatility edge) is structurally destroyed by option-level costs but can survive in shares. Only move it into options when a *separate volatility edge* is present to pay for the higher cost (Natenberg §8 / Smith §8 — "no edge without a volatility edge").
 
+### "A Good Spread" — Margin for Error Over Max Profit (Natenberg, p.248–260) — added 2026-05-31
+- **Theoretical edge is meaningless without risk context.** Any spread's edge can be scaled to any size by trading more contracts — so "this spread has more edge" is never a reason to take it (Natenberg p.248). Always normalize edge against the loss if the view is wrong.
+- > **"A good spread is not necessarily the one that shows the greatest profit when things go well; it [is the one that] allows... a reasonable margin for error [so that] even his losses will not lead to financial ruin."** — Natenberg, p.260
+- **Corollary (the over-optimization trap):** "a spread that passed every risk test would probably have so little theoretical edge that it would not be worth doing." The goal is not zero risk — it is *survivable* risk. Size for the bad case, not the good case.
+- **For our $5K account (cost-fragility context):** this is the antidote to the curve-fit/over-size trap. Do NOT size a debit spread to maximize best-case edge; size it so a full loss is within the per-trade budget ($200) AND a correlated bad day stays within the daily limit. A spread that only "works" at max size is a ruin risk, not an edge.
+
 ---
 
 ## 6. Intraday Patterns & Setups
@@ -874,6 +880,14 @@ What to verify — mechanics only, P&L verdict comes later:
 - **2022 bear year PF 0.85**: strategy is regime-dependent. SMA200 filter reduces exposure in bear markets but does not eliminate it entirely. This is expected and acceptable.
 - **Long-only**: no short/bear side. Acceptable given long-only passed and bear-side failed the cost-robust gate.
 
+### Candidate Mitigation for the Bear-Year / Regime Weakness (book-dig 2026-05-31) — NOT YET VALIDATED
+
+> Source: Connors, *Short Selling Stocks with ConnorsRSI* (2013), p.26. Backtest finding (long ConnorsRSI variations): tightening the entry threshold (e.g. CRSI 95 vs 75) produced **roughly half the signals but nearly 2× the average P/L per trade.** Selectivity raises per-trade expectancy.
+
+- **Hypothesis (H-SEL-REGIME):** the 2022 PF<1 weakness is a *selectivity* problem, not a signal-failure problem. In weak/bear regimes the RSI(2)<10 entry fires too often on continuation, not reversal. A **stricter entry in adverse regimes** (e.g. RSI(2) < 5 when SPY itself is below its 200-SMA, or when the broad-market regime is risk-off) should fire fewer, higher-expectancy trades — exactly what the $5K / 3-trades-week profile needs (CONTEXT.md "be picky").
+- **Discipline guardrail (§12 Davey):** this is a **candidate to backtest, NOT a hand-tune.** The frozen params (RSI<10 entry, SMA200, ATR×2) stay frozen during the current paper incubation. Any regime-conditioned tightening must be pre-specified and pass its OWN cost-robust ≥3bp walk-forward (and beat the frozen baseline OOS) before it ships. Do not adjust live thresholds because a book says "be pickier."
+- **Where it would be tested:** add a `regime_strictness` axis to `backtest_connors_daily.py` (broad-market SMA200 gate + tiered RSI entry), compare OOS PF/maxDD vs the frozen baseline. Zero data cost (yfinance daily).
+
 ---
 
 ## 20. Vertical Spread Greeks — Position Anatomy
@@ -943,6 +957,22 @@ Net vega of a debit spread = vega(long leg) − vega(short leg). Both legs have 
 | Underlying between strikes | Moderate | Near-zero | Moderate | Moderate | Hold — on track |
 | Underlying at short strike | Near zero | Negative | Near-zero | Near-zero | **EXIT — near max profit** |
 | Underlying below long strike | Minimal | Near-zero | Near-zero | Near-zero | **EXIT — approaching stop** |
+
+### Leg Selection by IV — Which Strike Should Be ATM (Natenberg, p.236–240) — added 2026-05-31
+
+The single most actionable rule for **building** a vertical spread (the 2S-B harness): which of the two strikes you make at-the-money depends on whether implied vol is cheap or rich. The ATM option is always the most vega-sensitive, therefore the most mispriced when IV is wrong.
+
+> **"If implied volatility is low, the choice of spreads should focus on *purchasing* the at-the-money option. If implied volatility is high, the choice should focus on *selling* the at-the-money option."** — Natenberg, p.238
+
+| IV regime (IVR) | Make ATM the… | Resulting structure | Why |
+|---|---|---|---|
+| Low (IVR < 30%) | **long** leg | Buy ATM call, sell further-OTM call | ATM is most underpriced when IV is too low — you want to own the most mispriced option |
+| High (IVR > 50%) | **short** leg | Sell ATM call, buy further-OTM call (credit structure) | ATM is most overpriced when IV is too high — you want to sell the most mispriced option |
+| Mid (30–50%) | balanced | ATM long / ~0.25-delta short debit spread (KB §5) | the standard debit vertical; neither leg has a strong vol edge |
+
+**For the harness (2S-B):** strike placement must be IVR-conditioned, not fixed. A spread that always buys ATM regardless of IVR pays the variance premium (§22) in exactly the high-IV regime where it should be a net seller. This is the concrete mechanism behind the dual-instrument rule "the options route must carry its OWN vol edge" — leg selection *is* the vol edge.
+
+**Theoretical edge is necessary but NOT sufficient (Natenberg, p.248):** any spread can be made to show arbitrarily large theoretical edge simply by trading it in larger size, so edge alone never justifies a trade. Edge must always be weighed against the position's risk if the volatility/direction view is wrong. See §5 "A Good Spread."
 
 ---
 

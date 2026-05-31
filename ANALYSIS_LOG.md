@@ -1409,3 +1409,22 @@ The 12% threshold ⛔ is a hard gate item. Before live:
 - ⬜ PDT: daily-bar swing holds are NOT day-trades (hold > 1 day = not round-trip
   on same day). PDT rule does not apply to this strategy. Existing PDT counter is
   irrelevant for daily-bar swings — remove from gate for this strategy.
+
+---
+
+## 2026-05-31 — Book-dig: problem-targeted mine for live blockers (2S-B spread harness + Connors regime weakness)
+
+**Trigger:** user pointed at the consolidated 297-PDF library (`/Users/bsannadi/Desktop/bharath/books`, already the canonical root in `scripts/book_dig.py`). Ran problem-targeted `book_dig.py` queries on the two live blockers: **2S-B** (build a correct debit-spread pricer + its own vol edge) and the **Connors RSI(2) 2022 bear-year weakness** (PF ~0.79–0.85).
+
+**Books mined (5):** Natenberg *Option Volatility and Pricing*, Saliba *Option Spread Strategies*, Sinclair *Volatility Trading*, Connors *Short Selling Stocks with ConnorsRSI*, Connors & Raschke *Street Smarts / High-Probability Short-Term Trading*.
+
+| Observed / extracted | KB rule it maps to (§ ref) | Verdict |
+|---|---|---|
+| Sinclair p.62/79: implied vol is a structurally **upward-biased** estimate of realized vol (variance premium); IV > realized ~70% of months. Net-long-vega structures (naked long, net-long debit spread) fight this premium. | §22 Variance Risk Premium | ✅ ENFORCED — already codified, and **explains** the disproven naked options route (PF 0.92). The options route's own vol edge (H-VOL) must be premium-**selling** in high-IVR, not a directional wrapper. |
+| Natenberg p.238: vertical leg-selection by IV — **"If IV is low, focus on buying the ATM option; if IV is high, focus on selling the ATM option"** (ATM is most vega-sensitive, so most mispriced). | §20 Spread Greeks (covers anatomy, NOT this IV→which-leg-is-ATM rule) | ❓ GAP → KB updated (§20 addendum). This is the concrete strike-placement rule the 2S-B harness needs. |
+| Natenberg p.248–260: theoretical edge alone is meaningless (any spread scales to arbitrary edge by size); **"a good spread is one that allows a reasonable margin for error"** so losses don't lead to ruin — not the one with the highest best-case profit. | §4 Risk / §5 Strategy Selection (had cost hierarchy, not this margin-for-error framing) | ❓ GAP → KB updated (§5 addendum). Directly relevant to the $5K cost-fragility trap: don't size a spread for max edge, size for survivable error. |
+| Saliba p.61/156: bull call = buy lower strike + sell higher strike = net **debit**; strike selection from support/resistance + mean-reversion area. | §5 Debit Vertical Spreads + §20 | ✅ ENFORCED — confirms existing rules; the mean-reversion-area strike anchoring is a useful tie-in to the Connors strategy. |
+| Connors *Short Selling w/ConnorsRSI* p.26: stricter entry threshold (CRSI 95 vs 75) → ~half the signals but **nearly 2× avg P/L per trade**. Selectivity raises per-trade expectancy. | §19 Connors (long-only, frozen params) + CONTEXT.md "be picky at $5K / 3-trades-week" | ❓ GAP → KB updated (§19 addendum) as a **candidate** regime-weakness mitigation, NOT a live change. Must be OOS-tested (tighten RSI(2) entry in weak/bear regime), not hand-tuned — curve-fit trap (§12 Davey). |
+| Connors & Raschke *Street Smarts* Ch.20: range contraction (NR4 + inside day + 6/100-day HV ratio < 50%) precedes expansion/breakouts. | §11 / §18 (candidate indicators) | ❓ GAP (low priority) — a volatility-regime entry filter; logged for future H-VOL work, not wired. |
+
+**Verdict summary:** the dig mostly **confirms** the existing KB (VRP, spread Greeks, debit mechanics all already codified and correctly applied). Three genuine gaps were closed in the KB (Natenberg IV-leg-selection, Natenberg margin-for-error, Connors selectivity→expectancy). **No live code changed** — the Connors selectivity finding is explicitly a backtest candidate, not a hand-tune, consistent with the cost-robust-gate discipline. The single most strategically important confirmation: the variance premium (Sinclair) is *why* the naked options route loses, and dictates that the options route must earn its slot through a vol-selling edge — reinforcing the 2S-B/2S-C gate that the options route stays disabled until a fixed spread harness + vol-edge component passes its own ≥3bp walk-forward.
