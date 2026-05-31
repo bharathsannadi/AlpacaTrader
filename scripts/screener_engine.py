@@ -72,13 +72,23 @@ import numpy as np
 
 ET = ZoneInfo("America/New_York")
 
-# ── Universe (top-25 S&P500 day-trading names from screen, 2026-05-24) ────────
+# ── Universe (lightweight 5-symbol selection, trimmed 2026-05-30) ─────────────
+# Down from 25 — every screener refresh used to take 10-15s of pandas
+# + yfinance, blocking the eventlet hub. With 5 names the cycle is 2-3s,
+# small enough to never starve logins or other socket events.
+#
+# Selection criteria (all five appear in at least one TOP_PERFORMERS list,
+# guaranteeing they can earn Top-Pick badges + qualify as ✅ BUY rows):
+#   INTC — cheapest options that almost always fit the $400 cap (~$20 stock)
+#   AMD  — top liquidity, tight spreads, semis leader
+#   NVDA — top liquidity, RSI Dip Top-5
+#   PLTR — Breakout Top-5, moderate premium
+#   HOOD — RSI Dip + Bull Flag Top-5 (double-listed)
+#
+# Adding back additional names is safe — _SECTOR + TOP_PERFORMERS dicts
+# still carry the full original metadata so a row's labelling stays correct.
 DAY_TRADING_UNIVERSE = [
-    "NVDA", "INTC", "AMD",  "MU",   "TSLA",
-    "QCOM", "PLTR", "ORCL", "HOOD", "ON",
-    "AVGO", "LRCX", "ANET", "NOW",  "COHR",
-    "VRT",  "SMCI", "WDC",  "GLW",  "MCHP",
-    "CRM",  "AMAT", "TXN",  "APP",  "CVNA",
+    "INTC", "AMD", "NVDA", "PLTR", "HOOD",
 ]
 
 _SECTOR = {
@@ -148,12 +158,10 @@ SETUP_STRATEGY = {
     "VWAP Bounce": "No backtested directional edge — watch only, do not trade.",
 }
 
-CACHE_TTL_MARKET = 300   # seconds during market hours (was 90; bumped to
-                         # reduce eventlet-hub stalls — every refresh blocks
-                         # the hub for 5-15s while pandas computes 25 symbols.
-                         # 5-min cadence keeps login responsive without
-                         # meaningfully staling the swing/daily-bias setups
-                         # this screener targets.)
+CACHE_TTL_MARKET = 120   # seconds during market hours. With the trimmed
+                         # 5-symbol universe each refresh is ~2-3s so 2-min
+                         # cadence stays responsive (vs 300s/5-min before
+                         # which was a workaround for the 25-symbol stalls).
 CACHE_TTL_CLOSED = 600   # seconds after hours
 
 _cache: dict = {"dt": [], "options": [], "ts": 0.0, "market_open": False}
