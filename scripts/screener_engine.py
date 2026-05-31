@@ -72,24 +72,22 @@ import numpy as np
 
 ET = ZoneInfo("America/New_York")
 
-# ── Universe (lightweight 5-symbol selection, trimmed 2026-05-30) ─────────────
-# Down from 25 — every screener refresh used to take 10-15s of pandas
-# + yfinance, blocking the eventlet hub. With 5 names the cycle is 2-3s,
-# small enough to never starve logins or other socket events.
+# ── Universe (15-symbol selection, expanded 2026-05-31 per operator request) ──
+# Was trimmed 25 → 5 (2026-05-30) for hub responsiveness; operator wants the
+# tables fuller (up to 15 rows each), so we run 15 liquid names. Tradeoff: each
+# refresh now does ~6-9s of pandas/yfinance work (vs 2-3s at 5 names). The
+# refresh runs in a background greenlet on a 120s cache TTL, so the occasional
+# hub lag during a refresh is acceptable for a single-user paper dashboard.
+# To go back to the fast 5-symbol cycle, restore the prior list.
 #
-# Selection criteria (all five appear in at least one TOP_PERFORMERS list,
-# guaranteeing they can earn Top-Pick badges + qualify as ✅ BUY rows):
-#   INTC — cheapest options that almost always fit the $400 cap (~$20 stock)
-#   AMD  — top liquidity, tight spreads, semis leader
-#   NVDA — top liquidity, RSI Dip Top-5
-#   PLTR — Breakout Top-5, moderate premium
-#   HOOD — RSI Dip + Bull Flag Top-5 (double-listed)
-#
-# Adding back additional names is safe — _SECTOR + TOP_PERFORMERS dicts
-# still carry the full original metadata so a row's labelling stays correct.
+# All 15 carry _SECTOR + TOP_PERFORMERS metadata so labelling/badges stay correct.
 DAY_TRADING_UNIVERSE = [
-    "INTC", "AMD", "NVDA", "PLTR", "HOOD",
-]
+    "INTC", "AMD", "NVDA", "PLTR", "HOOD",          # original fast-5
+    "TSLA", "AVGO", "MU", "QCOM", "ORCL",           # +liquidity / semis / tech
+    "CRM", "SMCI", "ANET", "APP", "CVNA",           # +SaaS / servers / net / momentum
+    "NOW", "LRCX", "AMAT", "TXN", "COHR",           # +SaaS / semi-equip / photonics
+]   # ~20 names so the table reliably fills toward the 15-row cap (not every
+    # symbol produces a setup row on a given day)
 
 _SECTOR = {
     "NVDA":"Semis","INTC":"Semis","AMD":"Semis","MU":"Semis",
@@ -733,8 +731,8 @@ def refresh_screener(daily_positions: list[dict] | None = None) -> dict:
                 pass
 
         result = {
-            "dt":          dt_rows[:10],
-            "options":     opts[:10],
+            "dt":          dt_rows[:15],   # cap matches the UI table (max 15 rows)
+            "options":     opts[:15],
             "ts":          time.time(),
             "updated_at":  datetime.now(ET).strftime("%H:%M:%S ET"),
             "market_open": _is_market_open(),
