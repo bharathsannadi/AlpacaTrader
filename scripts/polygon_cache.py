@@ -171,10 +171,20 @@ def load_minute(sym: str) -> pd.DataFrame:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def main(force: bool = False, symbols: list[str] | None = None) -> None:
+def _load_sp500() -> list[str]:
+    """Full S&P 500 symbol list from scripts/sp500.json (503 names)."""
+    p = Path(__file__).parent / "sp500.json"
+    return json.loads(p.read_text())
+
+
+def main(force: bool = False, symbols: list[str] | None = None,
+         phase: str = "both") -> None:
     """
-    Download daily + minute bars for `symbols` (default: all 50).
-    Pass symbols=UNIVERSE_2 to download only the second batch.
+    Download daily and/or minute bars for `symbols`.
+
+    phase: "daily" | "minute" | "both" — lets us grab all daily bars first
+           (cheap, fast, foundational) before the long minute pull.
+    Resumable: existing parquet files are skipped unless force=True.
     """
     target = symbols if symbols is not None else UNIVERSE
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -188,56 +198,67 @@ def main(force: bool = False, symbols: list[str] | None = None) -> None:
 
     print("=" * 65)
     print(f"  Polygon Cache Builder — {START_DATE} → {END_DATE}")
-    print(f"  Symbols: {len(target)}  |  Cache: {CACHE_DIR}")
-    print("=" * 65)
+    print(f"  Symbols: {len(target)}  |  Phase: {phase}  |  Cache: {CACHE_DIR}")
+    print("=" * 65, flush=True)
 
     # ── Daily bars ────────────────────────────────────────────────────────────
-    print("\n── Daily bars ──")
-    for sym in target:
-        df = download_daily(sym, force=force)
-        if df is None and (CACHE_DIR / f"{sym}_daily.parquet").exists():
-            sz = (CACHE_DIR / f"{sym}_daily.parquet").stat().st_size
-            print(f"  {sym}: cached  ({sz//1024}KB)")
-        if df is not None:
-            manifest[f"{sym}_daily"] = datetime.now().isoformat()
-        time.sleep(SLEEP_BETWEEN)
+    if phase in ("daily", "both"):
+        print("\n── Daily bars ──", flush=True)
+        done = 0
+        for i, sym in enumerate(target, 1):
+            df = download_daily(sym, force=force)
+            if df is None and (CACHE_DIR / f"{sym}_daily.parquet").exists():
+                if i % 25 == 0 or i == len(target):
+                    print(f"  [{i}/{len(target)}] {sym}: cached", flush=True)
+            if df is not None:
+                manifest[f"{sym}_daily"] = datetime.now().isoformat()
+                done += 1
+            time.sleep(SLEEP_BETWEEN)
+        manifest["updated"] = datetime.now().isoformat()
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+        print(f"  daily phase: {done} newly downloaded", flush=True)
 
     # ── Minute bars ───────────────────────────────────────────────────────────
-    print("\n── 1-minute bars (RTH only: 9:30–16:00 ET) ──")
-    total_mb = 0.0
-    for sym in target:
-        out = CACHE_DIR / f"{sym}_minute.parquet"
-        df = download_minute(sym, force=force)
-        if df is None and out.exists():
-            mb = out.stat().st_size / 1024 / 1024
-            total_mb += mb
-            print(f"  {sym}: cached  ({mb:.1f} MB)")
-        elif df is not None:
-            mb = out.stat().st_size / 1024 / 1024
-            total_mb += mb
-            manifest[f"{sym}_minute"] = datetime.now().isoformat()
+    if phase in ("minute", "both"):
+        print("\n── 1-minute bars (RTH only: 9:30–16:00 ET) ──", flush=True)
+        total_mb = 0.0
+        for i, sym in enumerate(target, 1):
+            out = CACHE_DIR / f"{sym}_minute.parquet"
+            print(f"  [{i}/{len(target)}]", end=" ", flush=True)
+            df = download_minute(sym, force=force)
+            if df is None and out.exists():
+                mb = out.stat().st_size / 1024 / 1024
+                total_mb += mb
+                print(f"  {sym}: cached  ({mb:.1f} MB)", flush=True)
+            elif df is not None:
+                mb = out.stat().st_size / 1024 / 1024
+                total_mb += mb
+                manifest[f"{sym}_minute"] = datetime.now().isoformat()
+                manifest["updated"] = datetime.now().isoformat()
+                manifest_path.write_text(json.dumps(manifest, indent=2))
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    # Count across full combined universe for accurate totals
-    all_syms  = UNIVERSE
-    daily_ok  = sum(1 for s in all_syms if (CACHE_DIR / f"{s}_daily.parquet").exists())
-    minute_ok = sum(1 for s in all_syms if (CACHE_DIR / f"{s}_minute.parquet").exists())
-    print(f"\n  ✅ Daily:  {daily_ok}/{len(all_syms)} symbols cached")
-    print(f"  ✅ Minute: {minute_ok}/{len(all_syms)} symbols cached  |  batch total {total_mb:.1f} MB")
+    daily_ok  = sum(1 for s in target if (CACHE_DIR / f"{s}_daily.parquet").exists())
+    minute_ok = sum(1 for s in target if (CACHE_DIR / f"{s}_minute.parquet").exists())
+    print(f"\n  ✅ Daily:  {daily_ok}/{len(target)} symbols cached")
+    print(f"  ✅ Minute: {minute_ok}/{len(target)} symbols cached")
 
     manifest["updated"] = datetime.now().isoformat()
     manifest_path.write_text(json.dumps(manifest, indent=2))
     print(f"\n  Manifest → {manifest_path}")
-    print("=" * 65)
+    print("=" * 65, flush=True)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true",
                     help="Force re-download even if cached")
-    ap.add_argument("--batch", choices=["1", "2", "all"], default="all",
-                    help="Which symbol batch to download: 1=first 25, 2=second 25, all=50 (default)")
+    ap.add_argument("--batch", choices=["1", "2", "all", "sp500"], default="all",
+                    help="1=first 25, 2=second 25, all=50, sp500=full 503 (default all)")
+    ap.add_argument("--phase", choices=["daily", "minute", "both"], default="both",
+                    help="Which bars to pull: daily (fast), minute (large), or both")
     args = ap.parse_args()
 
-    batch_map = {"1": UNIVERSE_1, "2": UNIVERSE_2, "all": UNIVERSE}
-    main(force=args.refresh, symbols=batch_map[args.batch])
+    batch_map = {"1": UNIVERSE_1, "2": UNIVERSE_2, "all": UNIVERSE,
+                 "sp500": _load_sp500()}
+    main(force=args.refresh, symbols=batch_map[args.batch], phase=args.phase)
