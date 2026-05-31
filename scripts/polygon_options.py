@@ -192,31 +192,64 @@ def pull_underlying(underlying: str, force: bool = False) -> int:
     return got
 
 
-def liquid_top(n: int) -> list[str]:
-    """Rank cached daily symbols by mean dollar-volume (last ~250 bars), top n."""
-    sp = set(json.loads((Path(__file__).parent / "sp500.json").read_text()))
-    scores: list[tuple[float, str]] = []
-    for f in CACHE_DIR.glob("*_daily.parquet"):
-        sym = f.name.replace("_daily.parquet", "")
-        if sym not in sp:
-            continue
+def _liquidity_rank(symbols: list[str]) -> list[str]:
+    """Order `symbols` by mean dollar-volume (last ~250 daily bars), desc.
+    Symbols without a cached daily file go last (in original order)."""
+    scored, unscored = [], []
+    for sym in symbols:
+        f = CACHE_DIR / f"{sym}_daily.parquet"
+        if not f.exists():
+            unscored.append(sym); continue
         try:
             df = pd.read_parquet(f, columns=["close", "volume"]).tail(250)
-            scores.append((float((df["close"] * df["volume"]).mean()), sym))
+            scored.append((float((df["close"] * df["volume"]).mean()), sym))
         except Exception:
-            continue
-    scores.sort(reverse=True)
-    return [s for _, s in scores[:n]]
+            unscored.append(sym)
+    scored.sort(reverse=True)
+    return [s for _, s in scored] + unscored
+
+
+def liquid_top(n: int) -> list[str]:
+    """Top-n most-liquid S&P 500 names by dollar-volume."""
+    sp = list(json.loads((Path(__file__).parent / "sp500.json").read_text()))
+    return _liquidity_rank(sp)[:n]
+
+
+def prioritized_universe() -> list[str]:
+    """Full options-pull order (operator: 'priority etfs then stocks').
+
+    1. ALL ETFs (trade + hedge), liquidity-ranked  — pulled FIRST
+    2. ALL S&P 500 stocks, liquidity-ranked        — pulled after
+    De-duped, preserving the ETF-first priority.
+    """
+    from universe import ETFS_TRADE, ETFS_HEDGE
+    etfs = _liquidity_rank(list(dict.fromkeys(ETFS_TRADE + ETFS_HEDGE)))
+    sp   = _liquidity_rank(list(json.loads((Path(__file__).parent / "sp500.json").read_text())))
+    seen, out = set(), []
+    for s in etfs + sp:
+        if s not in seen:
+            seen.add(s); out.append(s)
+    return out
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=100, help="top-N most-liquid S&P names")
-    ap.add_argument("--symbols", nargs="*", help="explicit symbol list (overrides --top)")
+    ap.add_argument("--symbols", nargs="*", help="explicit symbol list (overrides others)")
+    ap.add_argument("--scope", choices=["top", "etfs", "full"], default="top",
+                    help="top=liquid --top · etfs=all ETFs · full=ETFs first then all S&P500")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
-    syms = [s.upper() for s in args.symbols] if args.symbols else liquid_top(args.top)
+    if args.symbols:
+        syms = [s.upper() for s in args.symbols]
+    elif args.scope == "etfs":
+        from universe import ETFS_TRADE, ETFS_HEDGE
+        syms = _liquidity_rank(list(dict.fromkeys(ETFS_TRADE + ETFS_HEDGE)))
+    elif args.scope == "full":
+        syms = prioritized_universe()
+    else:
+        syms = liquid_top(args.top)
     OPT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=" * 65)

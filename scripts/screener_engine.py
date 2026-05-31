@@ -86,8 +86,12 @@ DAY_TRADING_UNIVERSE = [
     "TSLA", "AVGO", "MU", "QCOM", "ORCL",           # +liquidity / semis / tech
     "CRM", "SMCI", "ANET", "APP", "CVNA",           # +SaaS / servers / net / momentum
     "NOW", "LRCX", "AMAT", "TXN", "COHR",           # +SaaS / semi-equip / photonics
-]   # ~20 names so the table reliably fills toward the 15-row cap (not every
-    # symbol produces a setup row on a given day)
+    # ── ETFs (operator request 2026-05-31): broad index + key sectors + commod/bond
+    "SPY", "QQQ", "IWM", "DIA",                     # broad index
+    "XLF", "XLE", "XLK", "XLV", "SMH",              # key sectors / semis
+    "GLD", "TLT",                                   # commodity / bond diversifiers
+]   # stocks + ETFs; table fills toward the 15-row cap (not every symbol
+    # produces a setup row on a given day)
 
 _SECTOR = {
     "NVDA":"Semis","INTC":"Semis","AMD":"Semis","MU":"Semis",
@@ -97,6 +101,10 @@ _SECTOR = {
     "ANET":"Net","COHR":"Photonics","SMCI":"Servers","WDC":"Storage",
     "CRM":"SaaS","TXN":"Semis","APP":"AdTech","VRT":"Industrials",
     "HOOD":"Fintech","CVNA":"Retail",
+    # ETFs
+    "SPY":"ETF-Index","QQQ":"ETF-Index","IWM":"ETF-Index","DIA":"ETF-Index",
+    "XLF":"ETF-Fin","XLE":"ETF-Energy","XLK":"ETF-Tech","XLV":"ETF-Health",
+    "SMH":"ETF-Semis","GLD":"ETF-Gold","TLT":"ETF-Bonds",
 }
 
 # Backtested metrics per setup (from backtest_screener_criteria.py, 2026-05-24)
