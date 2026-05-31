@@ -235,6 +235,13 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
 
 ## 🟢 What's running right now (verify before assuming)
 
+- **⏳ POLYGON DEADLINE 2026-06-16** — subscription lapses; archiving 5yr data.
+  - ✅ Daily stock bars: ALL 503 S&P 500 cached (`polygon_cache.py --batch sp500 --phase daily`)
+  - 🔄 Options: top-100 liquid names, monthly, ±15%, calls+puts running in bg
+    (`polygon_options.py --top 100` → `/tmp/poly_options.log`, ~25-40h, resumable).
+    Cache: `~/Desktop/bharath/AlpacaTrader_Data/polygon_cache/options/{SYM}_options_daily.parquet`
+  - ⬜ Minute stock bars for top-100 NOT yet pulled (intraday has no validated
+    edge; grab with `polygon_cache.py --batch sp500 --phase minute` if wanted).
 - **Strategy state:** NO validated edge yet. Options route disproven;
   shares route refuted @realistic cost; spreads unresolved. Hypotheses
   H-REGIME/H-RUN/H-VSA/H-SPR/H-VOL/H-KELLY queued, all ≥3bp-gated.
@@ -244,7 +251,8 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
   via `desktop.py` (or `scripts/app.py` directly)
 - **Log file:** `auto_trader.log` (RotatingFileHandler 10 MB × 5) +
   `errors.log` + `security.log`
-- **Defaults:** `DRY_RUN=False`, `auto_trade=True`, `debate_enabled=True`,
+- **Defaults (updated 2026-05-31):** `DRY_RUN=True` (no real orders), `auto_execute_options=True`
+  (armed; gated by KB-principles ≥60% + debate), `debate_enabled=True`,
   `PDT_RULE_ENABLED=False` (operator-disabled 2026-05-19)
 - **Verify with:** `lsof -ti :5000`, `curl -s http://localhost:5000/health`,
   `cat ~/.spy_trader/open_positions.json | jq .`
