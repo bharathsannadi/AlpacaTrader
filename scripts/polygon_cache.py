@@ -27,7 +27,23 @@ import pandas as pd
 import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
-POLY_KEY    = os.environ.get("POLYGON_API_KEY", "fCJpwXDqn7wa7sBdQIfDCxfLHmpnmA0S")
+# Key comes from the environment / .env ONLY — never hardcode a secret in source
+# (it ends up in git history). .env is gitignored. Load it if present.
+def _load_poly_key() -> str:
+    key = os.environ.get("POLYGON_API_KEY", "")
+    if not key:
+        env_path = Path(__file__).parent.parent / ".env"
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("POLYGON_API_KEY") and "=" in line:
+                    key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    return key
+
+POLY_KEY    = _load_poly_key()
+if not POLY_KEY:
+    print("⚠️  POLYGON_API_KEY not set (env or .env) — Polygon calls will fail.")
 CACHE_DIR   = Path.home() / "Desktop" / "bharath" / "AlpacaTrader_Data" / "polygon_cache"
 START_DATE  = "2021-01-01"
 END_DATE    = date.today().strftime("%Y-%m-%d")

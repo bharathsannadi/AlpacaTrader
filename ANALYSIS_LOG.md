@@ -1428,3 +1428,28 @@ The 12% threshold ⛔ is a hard gate item. Before live:
 | Connors & Raschke *Street Smarts* Ch.20: range contraction (NR4 + inside day + 6/100-day HV ratio < 50%) precedes expansion/breakouts. | §11 / §18 (candidate indicators) | ❓ GAP (low priority) — a volatility-regime entry filter; logged for future H-VOL work, not wired. |
 
 **Verdict summary:** the dig mostly **confirms** the existing KB (VRP, spread Greeks, debit mechanics all already codified and correctly applied). Three genuine gaps were closed in the KB (Natenberg IV-leg-selection, Natenberg margin-for-error, Connors selectivity→expectancy). **No live code changed** — the Connors selectivity finding is explicitly a backtest candidate, not a hand-tune, consistent with the cost-robust-gate discipline. The single most strategically important confirmation: the variance premium (Sinclair) is *why* the naked options route loses, and dictates that the options route must earn its slot through a vol-selling edge — reinforcing the 2S-B/2S-C gate that the options route stays disabled until a fixed spread harness + vol-edge component passes its own ≥3bp walk-forward.
+
+---
+
+## 2026-05-31 — KB multi-strategy backtest (fixing "single regime-dependent strategy = fragile foundation")
+
+**Trigger:** operator directive to multi-strategy the system using the knowledge base, after a system rating flagged the single-strategy fragility. Built `backtest_multi_strategy.py` — 4 PRE-SPECIFIED, KB-sourced daily strategies through the SAME cost-robust gate (Test PF ≥ 1.10 @ BOTH 3bp & 5bp OOS, 50/50 walk-forward, $200/2×ATR sizing, MAX_CONCURRENT=5). Exit model made consistent with the frozen Connors baseline (ATR stop fills at the stop, not next open).
+
+| Strategy (KB ref) | n | Test PF 3bp/5bp | Win% | 2022 PF | Verdict |
+|---|---|---|---|---|---|
+| S1 Connors RSI2 — mean-rev (§19) | 790 | 1.35 / 1.32 | 66.1% | 0.85 | ✅ PASS |
+| S2 Bollinger reversion (§1) | 348 | 1.40 / 1.37 | 57.1% | 0.62 | ✅ PASS |
+| S3 Trend pullback (§8/§14) | 350 | 2.11 / 2.08 | 42.2% | 0.68 | ✅ PASS |
+| S4 52w-high breakout (§15) | 133 | 1.96 / 1.94 | 40.0% | 0.03 | ✅ PASS |
+
+Monthly-P&L correlation vs Connors: S2 0.49 (MR, expected), **S3 0.31, S4 0.32** (real diversifiers). S2↔S3 = 0.19.
+
+**KB cross-ref / verdict:**
+- ✅ **All 4 clear the cost-robust gate** (§12 Davey discipline). The trend/momentum pair (S3, S4) shows the classic high-payoff/low-win profile (§8 Covel "expectancy over win rate"). This is a genuine, validated multi-strategy set — a real upgrade from the single-strategy foundation.
+- ✅ **Low pairwise correlation** → diversifies SIGNAL risk in normal regimes (a bad month for mean-reversion is often fine for trend). S1+S3 is the strongest complementary pair.
+- ⚠️ **CRITICAL LIMITATION — they do NOT fix the regime (2022) risk.** All four are LONG-ONLY EQUITY, so all four fail in a broad bear year (2022 PF: 0.85 / 0.62 / 0.68 / 0.03). Monthly correlation (~0.3) badly understates TAIL correlation — in a crisis month they go down together. Diversifying across long-equity strategies reduces signal fragility but NOT market-beta fragility.
+- ❓ **GAP → the real fix is a non-equity-beta component, not more long-equity strategies:** a regime overlay that de-risks the whole book when SPY < its 200-SMA, and/or a sleeve uncorrelated to equity (inverse/short, bonds, long-vol). Note: a naive SPY<200SMA *entry block* was already REFUTED for Connors (2026-05-31 H-SEL-REGIME made 2022 worse). The overlay must scale SIZE/exposure, not just gate entries — and ideally add a genuinely uncorrelated return stream. Cannot be backtested on S&P-500-only daily data (need bond/inverse/vol series).
+
+**Discipline note (multiple-comparisons):** testing 4 strategies and keeping winners inflates false-positive risk. Survivors go to PAPER INCUBATION alongside Connors, NOT straight to live. The cost-robust gate is necessary, not sufficient.
+
+**Recommended next steps:** (1) incubate S3 (trend pullback) as the best diversifier; (2) design + backtest a regime/size overlay with a non-equity sleeve before claiming the fragility is fixed.
