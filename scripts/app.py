@@ -755,19 +755,15 @@ def price_ticker() -> None:
                 should_run    = state["logged_in"] and state["streaming"]
                 has_browsers  = len(authenticated_sids) > 0
             if should_run:
-                # Every tick: refresh active symbol fast.
-                # Every 3rd tick: also refresh other symbols (keeps Data Freshness green).
-                if tick % 3 == 0:
-                    refresh_all_prices()
-                else:
-                    refresh_prices()
+                # Only the active symbol — no more 40-symbol fan-out on every
+                # 3rd tick (#14). refresh_all_prices and _prewarm_next_chart
+                # were optimizations for a multi-tab chart grid that's being
+                # removed; if a user switches to a different chart tab the
+                # cache will be cold by ~120s, which is fine.
+                refresh_prices()
                 if tick % ACCOUNT_REFRESH_TICKS == 0:
                     refresh_account()
                 emit_state()
-                # Chart pre-warm is a UI optimization — skip when nobody's
-                # watching to save the extra yfinance call per tick.
-                if has_browsers and tick % 2 == 1:
-                    _prewarm_next_chart()
                 tick += 1
         except Exception as e:
             log.warning(f"price_ticker iteration failed: {e}")
