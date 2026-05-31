@@ -314,3 +314,22 @@ to live only via backtested, cost-robust variants (REQ-202/603.3), not by hand.*
   exit (Connors RSI(2) > 70 §19) · time-stop on a stalled flat trade (§3).
 
 **Every threshold above is a starting hypothesis → backtested before it goes live.**
+
+---
+
+## 15. Full autonomy (no manual intervention)
+
+| ID | Requirement | Rationale / source | Status |
+|----|-------------|--------------------|--------|
+| **REQ-612** | **The system shall auto-trade everything end-to-end with NO manual intervention** — signal → KB-principles/debate gate → instrument route → size → execute → manage → dynamic exit — hands-off | Operator requirement #12 | 🔄 (partial) |
+| REQ-612.1 | Autonomy spans **both routes** (stocks + options) and the **full lifecycle** (entry AND the dynamic exit ladders REQ-608/609), not just entries | dual-instrument | ⬜ |
+| REQ-612.2 | **Autonomy lives INSIDE the safety envelope**: still dry-run by default (REQ-001), paper-only until edge proven (REQ-607), every trade gated (REQ-004/005), every limit enforced (REQ-602/605/606). Autonomy ≠ ungated | safety stack | ✅ (gates) |
+| REQ-612.3 | **No approval modal** in the path — `auto_trade=True` already skips it for the screener; extend to the router + both executors + exit engine | trade_approval | 🔄 (screener only) |
+| REQ-612.4 | **Operator override always available**: emergency flatten-all, disarm, and the kill/loss circuit breakers remain one click / always-on | safety | ✅ |
+| REQ-612.5 | Runs **unattended** under the scheduler + watchdog (auto-restart, heartbeat health) — no human needed to keep it alive | §P2 #17 | ✅ |
+
+**Reading:** REQ-612 = "set it and forget it" operation, but the autonomy is
+*bounded* — it can only do what the gates, sleeves, caps, and dry-run/paper mode
+allow. Achieved when Phases 1–3 are wired end-to-end on the scheduler with no
+approval step. The operator still flips paper→live manually (REQ-607.3) and can
+always intervene (REQ-612.4).
