@@ -1747,8 +1747,10 @@ def _refresh_screener_bg():
 
 
 @socketio.on("get_screener")
-@require_auth
 def on_get_screener(data=None):
+    # #8 — screener cache is built from yfinance data; viewer is research-only.
+    # The executor (execute_screener_option / toggle_auto_execute_options) is
+    # still @require_auth so no trades can be placed without Alpaca login.
     """Client requests screener data. Return cache immediately, then refresh."""
     force = bool((data or {}).get("force", False))
     cached = screener.get_cached()
@@ -2068,8 +2070,8 @@ def _cached_chart_overlays(interval: str, range_: str, symbol: str, bars: list) 
 
 
 @socketio.on("set_active_symbol")
-@require_auth
 def on_set_active_symbol(data):
+    # #8 — UI state only. refresh_prices uses yfinance; safe pre-login.
     sym = (data or {}).get("symbol", "SPY").upper()
     if sym not in VALID_SYMBOLS:
         return
@@ -2121,8 +2123,8 @@ def _build_blocked_windows(bars: list) -> list:
 
 
 @socketio.on("get_chart_data")
-@require_auth
 def on_get_chart_data(data=None):
+    # #8 — chart data is yfinance-cached, no Alpaca TradingClient required.
     """Return OHLCV bars + signal markers for the requested symbol, interval, and range."""
     data     = data or {}
     interval = data.get("interval", "15m")
@@ -2207,18 +2209,22 @@ def on_trade_response(data):
 
 
 @socketio.on("start_stream")
-@require_auth
 def on_start_stream():
+    # #8 — log/price stream toggle. Alpaca-touching refresh_account is
+    # guarded so a public user can still resume the price feed.
     state["streaming"] = True
-    refresh_account()
+    with _state_lock:
+        is_logged_in = state["logged_in"]
+    if is_logged_in:
+        refresh_account()
     refresh_prices()
     log.info("Live stream resumed — price + log feed active")
     emit_state()
 
 
 @socketio.on("stop_stream")
-@require_auth
 def on_stop_stream():
+    # #8 — pure UI flag, safe pre-login.
     state["streaming"] = False
     emit_state()
     log.info("Live stream paused — UI feed stopped (sessions still run)")
@@ -2327,8 +2333,8 @@ def _plain_narrative(closed, wins, losses, n_open, watching, mode, spy_px, vix) 
 
 # ── Backtest UI ───────────────────────────────────────────────────────────────
 @socketio.on("run_backtest")
-@require_auth
 def on_run_backtest(data=None):
+    # #8 — pure historical compute. No Alpaca TradingClient needed.
     """Run backtest in background and stream results to the UI."""
     data       = data or {}
     symbols    = [s.strip().upper() for s in (data.get("symbols") or ["SPY"]) if s.strip()][:30]
