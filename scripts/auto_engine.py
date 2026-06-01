@@ -385,7 +385,7 @@ def manage_exits(dry_run: bool = False) -> None:
         action, why, st = eng.update(st, high=px, low=px, last=px)
         p["exit_state"] = _asdict(st)
         held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
-        if action == "exit" or held_days >= 21:
+        if action == "exit" or held_days >= TIME_CAP_DAYS:
             reason = why if action == "exit" else f"time cap {held_days}d"
             shares_executor.close(p["sym"], dry_run=p.get("dry_run", dry_run))
             entry = p.get("entry_price", px)
@@ -403,8 +403,47 @@ def manage_exits(dry_run: bool = False) -> None:
             log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  "
                      f"P&L ${realized:+.0f} ({pnl_pct:+.1f}%)")
         else:
+            # stash live price + P&L so the UI can show it for free (no extra API call)
+            entry = p.get("entry_price", px)
+            p["last_price"] = round(px, 2)
+            p["pnl_usd"] = round((px - entry) * p.get("qty", 0), 2)
+            p["pnl_pct"] = round((px - entry) / entry * 100, 2) if entry else 0.0
             still_open.append(p)
     _save_positions(still_open)
+
+
+TIME_CAP_DAYS = 21  # REQ-608: max hold for a stock position before forced exit
+
+
+def positions_snapshot() -> list[dict]:
+    """Compact view of the autonomous engine's open positions for the UI."""
+    from datetime import date as _date
+    out = []
+    for p in _load_positions():
+        st = p.get("exit_state", {})
+        entry = p.get("entry_price")
+        stop = st.get("stop")
+        held = None
+        if p.get("entry_date"):
+            try:
+                held = (_date.today() - _date.fromisoformat(p["entry_date"])).days
+            except Exception:
+                held = None
+        # exit plan: trailing stop ratchets up (no fixed target — winners ride it),
+        # backstopped by a TIME_CAP_DAYS hold limit. Once the stop locks above entry
+        # it's a profit floor, not just a stop.
+        profit_floor = stop is not None and entry is not None and stop >= entry
+        out.append({
+            "sym": p.get("sym"), "qty": p.get("qty"),
+            "strategy": p.get("strategy"), "entry": entry,
+            "last": p.get("last_price"), "stop": stop,
+            "tier": st.get("tier", 0), "pnl_usd": p.get("pnl_usd"),
+            "pnl_pct": p.get("pnl_pct"), "dry_run": p.get("dry_run", False),
+            "held_days": held,
+            "days_to_cap": (TIME_CAP_DAYS - held) if held is not None else None,
+            "profit_floor": profit_floor,
+        })
+    return out
 
 
 # ── full cycle (data → plan → shadow-log OR execute) ──────────────────────────

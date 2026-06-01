@@ -594,6 +594,10 @@ def _state_snapshot() -> dict:
     # under their own internal locks. Holding _state_lock here would create
     # unnecessary contention with price_ticker and position_monitor threads.
     snap["open_positions"]         = trader.open_positions_snapshot()
+    try:
+        snap["auto_positions"]     = auto_engine.positions_snapshot()
+    except Exception:
+        snap["auto_positions"]     = []
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
     snap["max_portfolio_risk_pct"] = round(trader.eff_max_portfolio_risk() * 100, 2)
     snap["pdt_remaining"]          = trader.pdt_day_trades_remaining()

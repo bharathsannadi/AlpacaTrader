@@ -341,7 +341,7 @@ function updateUI(s) {
   if (s.timestamp) setEl("hdr-time", s.timestamp);
 
   // Open positions card
-  if (s.open_positions !== undefined) renderPositions(s.open_positions);
+  if (s.open_positions !== undefined) renderPositions(s.open_positions, s.auto_positions);
 
   // Refresh exec brief when trade count changes
   const newCount = (s.trades_today || []).length;
@@ -2780,11 +2780,46 @@ socket.on("chart_signal", (s) => {
 });
 
 // ── Open Positions card ───────────────────────────────────────────────────────
-function renderPositions(positions) {
+function _renderAutoPositions(autoPos) {
+  // Autonomous-engine stock positions (separate store from intraday options)
+  const a = (autoPos || []).filter(p => (p.qty || 0) > 0);
+  if (!a.length) return "";
+  const rows = a.map(p => {
+    const pnl = p.pnl_usd != null
+      ? `<span class="pos-pnl ${p.pnl_usd >= 0 ? 'up' : 'down'}">${p.pnl_usd >= 0 ? '+' : ''}$${p.pnl_usd.toFixed(0)} (${(p.pnl_pct||0).toFixed(1)}%)</span>`
+      : '';
+    const tier = p.tier >= 1 ? ` · T${p.tier}` : '';
+    const dry = p.dry_run ? ' <span style="color:var(--muted);font-size:9px">[DRY]</span>' : '';
+    // Once the stop ratchets to/above entry it's a profit-locking floor, not a stop.
+    const stopLbl = p.profit_floor ? 'Floor' : 'Stop';
+    const stopCls = p.profit_floor ? ' style="color:var(--up)"' : '';
+    // Exit plan: trailing stop ratchets up (no fixed target — winners ride it) +
+    // a time-cap backstop that forces an exit after the hold limit.
+    const capTxt = (p.days_to_cap != null) ? `cap ${p.days_to_cap}d` : 'cap 21d';
+    return `<div class="pos-row">
+      <div class="pos-top">
+        <span class="pos-sym">${p.sym}${dry}</span>
+        <span class="pos-dir bull">${p.qty}sh</span>
+        ${pnl}
+      </div>
+      <div class="pos-levels">
+        <span>${p.strategy}</span>
+        <span>Entry $${(p.entry||0).toFixed(2)}</span>
+        <span>Now $${(p.last||p.entry||0).toFixed(2)}</span>
+        <span${stopCls}>${stopLbl} $${(p.stop||0).toFixed(2)}${tier}</span>
+        <span title="trailing stop ratchets up (no fixed target); ${capTxt} = forced time-cap exit">Exit: trail · ${capTxt}</span>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div style="font-size:10px;color:var(--muted);margin:6px 0 2px">🤖 Autonomous engine (${a.length})</div>${rows}`;
+}
+
+function renderPositions(positions, autoPos) {
   const el = document.getElementById("positions-list");
   if (!el) return;
   const active = (positions || []).filter(p => (p.remaining ?? p.contracts ?? 0) > 0);
-  if (!active.length) {
+  const autoHtml = _renderAutoPositions(autoPos);
+  if (!active.length && !autoHtml) {
     el.innerHTML = '<div class="pos-empty">No open positions</div>';
     return;
   }
@@ -2817,5 +2852,5 @@ function renderPositions(positions) {
       </div>
       ${narr}
     </div>`;
-  }).join('');
+  }).join('') + autoHtml;
 }
