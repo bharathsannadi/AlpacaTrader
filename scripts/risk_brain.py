@@ -157,11 +157,23 @@ class RiskBrain:
     @classmethod
     def prioritize(cls, signals: list, etf_set: set[str],
                    large_cap_set: Optional[set[str]] = None) -> list:
-        """Order signals ETF → large → small, then by strength desc (REQ-604.2)."""
+        """Order signals by selection priority, then by strength desc.
+
+        Route-aware (operator 2026-06-01): the instrument decides the priority.
+          • options-lane signals (has_vol_edge) → ETF → large → small  (ETF options
+            are liquid and clear the §9 gate; single-stock options often don't).
+          • shares-lane signals (no vol edge)   → large → small → ETF  (trade
+            individual stocks more than ETFs — more directional movement, and
+            share liquidity is rarely the constraint).
+        Refines the earlier blanket ETF→large→small ordering (REQ-604.2)."""
         def key(sig):
-            tier = cls.tier_of(getattr(sig, "symbol", sig), etf_set, large_cap_set,
+            base = cls.tier_of(getattr(sig, "symbol", sig), etf_set, large_cap_set,
                                getattr(sig, "dollar_volume", None))
-            return (tier, -getattr(sig, "strength", 0.0))
+            if getattr(sig, "has_vol_edge", False):       # options lane: ETF first
+                rank = base
+            else:                                          # shares lane: stocks first
+                rank = {TIER_ETF: 2, TIER_LARGE: 0, TIER_SMALL: 1}[base]
+            return (rank, -getattr(sig, "strength", 0.0))
         return sorted(signals, key=key)
 
     # ── snapshot / persistence ────────────────────────────────────────────────

@@ -319,12 +319,14 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
 
         # ── KB §9 liquidity gates ────────────────────────────────────────────
         if atm_mid <= 0:
-            raise ValueError(f"{sym}: ATM mid ≤ 0 (no valid quote)")
+            raise ValueError(f"{sym}: KB §9 Liquidity — ATM mid ≤ 0 (no valid quote)")
         if atm_oi < OPT_MIN_OI:
-            raise ValueError(f"{sym}: ATM OI={atm_oi} < {OPT_MIN_OI} (KB §9 gate)")
+            raise ValueError(f"{sym}: KB §9 Liquidity — ATM open interest {atm_oi} "
+                             f"< {OPT_MIN_OI} required (illiquid contract, would not fill)")
         ba_pct = (atm_ask - atm_bid) / atm_mid if atm_mid > 0 else 1.0
         if ba_pct > OPT_MAX_BID_ASK_PCT:
-            raise ValueError(f"{sym}: bid-ask spread {ba_pct*100:.1f}% > 5% (KB §9 gate)")
+            raise ValueError(f"{sym}: KB §9 Liquidity — bid-ask spread {ba_pct*100:.1f}% "
+                             f"> {OPT_MAX_BID_ASK_PCT*100:.0f}% max (too wide, excessive slippage)")
 
         log.info(f"  ATM: {atm_occ}  strike=${atm_strike:.2f}  mid=${atm_mid:.2f}  "
                  f"OI={atm_oi}  ba={ba_pct*100:.1f}%")
@@ -376,7 +378,8 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
 
         # ── Risk gate ────────────────────────────────────────────────────────
         if net_debit * 100 > max_risk:
-            raise ValueError(f"{sym}: debit ${net_debit*100:.0f} > max_risk ${max_risk:.0f} (KB §4)")
+            raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
+                             f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
 
         # ── 5. Dry run ───────────────────────────────────────────────────────
         if dry_run:
