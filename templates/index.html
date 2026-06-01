@@ -1501,6 +1501,15 @@
 <div class="tab-bar">
   <button class="symbol-tab settings-tab active" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
   <div class="tab-divider"></div>
+  <button class="symbol-tab" id="tab-chart" onclick="showCharts()">📈 Charts</button>
+  <select class="grid-dropdown" id="grid-dropdown" onchange="setGridCount(parseInt(this.value))">
+    <option value="1">1 Pane</option>
+    <option value="2">2 Panes</option>
+    <option value="4">4 Panes</option>
+    <option value="6">6 Panes</option>
+    <option value="8">8 Panes</option>
+  </select>
+  <div class="tab-divider"></div>
   <button class="symbol-tab screener-tab" id="tab-screener" onclick="showScreener()">🔍 Screener</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
 </div>

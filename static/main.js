@@ -679,8 +679,12 @@ function setMaxPortfolioRisk() {
 
 // ── Enter key on login ────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // Default to Settings view on load
-  _setViewMode("settings");
+  // Open the view that matches the URL path (/charts, /screener, /log), else Settings
+  const _path = window.location.pathname.replace(/\/+$/, "");
+  if      (_path === "/charts")   { showCharts(); }
+  else if (_path === "/screener") { showScreener(); }
+  else if (_path === "/log")      { showLog(); }
+  else                            { _setViewMode("settings"); }
 
 
   ["login-api-key", "login-api-secret"].forEach(id => {
@@ -1981,6 +1985,7 @@ function _setViewMode(mode) {
 
 function showCharts() {
   _setViewMode("chart");
+  try { if (window.location.pathname !== "/charts") history.pushState({}, "", "/charts"); } catch (e) {}
   // Ensure pane 0 shows SPY if nothing has been set yet
   if (gridManager.panes[0] && !localStorage.getItem("chart_pane_0_sym")) {
     gridManager.panes[0].setSymbol("SPY");

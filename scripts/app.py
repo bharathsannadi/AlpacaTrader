@@ -905,14 +905,26 @@ def _run_eod_review(trades_snapshot: list) -> None:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-@app.route("/")
-def index():
+def _render_spa():
     session.permanent = True
     resp = make_response(render_template("index.html"))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     resp.headers["Pragma"]        = "no-cache"
     resp.headers["Expires"]       = "0"
     return resp
+
+
+@app.route("/")
+def index():
+    return _render_spa()
+
+
+# Deep-link routes — same SPA, the frontend opens the matching view from the path.
+@app.route("/charts")
+@app.route("/screener")
+@app.route("/log")
+def spa_view():
+    return _render_spa()
 
 
 @app.route("/api/status")
