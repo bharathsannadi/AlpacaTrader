@@ -976,7 +976,7 @@ def chart_overlays(bars: list, symbol: str) -> dict:
                 for t, v in zip(times, vals)
             ]
 
-        return {
+        out = {
             "vwap":      _series("vwap"),
             "ema9":      _series("ema9"),
             "ema21":     _series("ema21"),
@@ -989,9 +989,92 @@ def chart_overlays(bars: list, symbol: str) -> dict:
                 "prev_close": pl.get("prev_close"),
             },
         }
+        # SMA/EMA 50 & 200 with warmup history (so they form on short ranges like
+        # 15m/1D where only ~39 bars are visible but a 50-MA needs 50). Only added
+        # when the visible window is too short to compute them client-side.
+        out.update(chart_ma_overlays(bars, symbol))
+        return out
     except Exception as e:
         log.warning(f"chart_overlays({symbol}): {e}")
         return {}
+
+
+# ── moving-average warmup ─────────────────────────────────────────────────────
+_MA_WARMUP_RANGE = {"1m": "5D", "5m": "1M", "15m": "1M",
+                    "30m": "3M", "1h": "3M", "1d": "5Y"}
+
+
+def _infer_interval_token(bars: list) -> str | None:
+    """Guess the bar interval token from consecutive timestamps (min positive gap)."""
+    difs = [bars[i + 1]["time"] - bars[i]["time"] for i in range(min(len(bars) - 1, 30))]
+    difs = [d for d in difs if d > 0]
+    if not difs:
+        return None
+    bar_sec = min(difs)
+    table = [(60, "1m"), (300, "5m"), (900, "15m"),
+             (1800, "30m"), (3600, "1h"), (86400, "1d")]
+    return min(table, key=lambda kv: abs(kv[0] - bar_sec))[1]
+
+
+def _sma_vals(closes: list, period: int) -> list:
+    out, s = [], 0.0
+    for i, c in enumerate(closes):
+        s += c
+        if i >= period:
+            s -= closes[i - period]
+        out.append(s / period if i >= period - 1 else None)
+    return out
+
+
+def _ema_vals(closes: list, period: int) -> list:
+    out, k, e = [], 2.0 / (period + 1), None
+    for i, c in enumerate(closes):
+        if i < period - 1:
+            out.append(None)
+        elif i == period - 1:
+            e = sum(closes[:period]) / period
+            out.append(e)
+        else:
+            e = c * k + e * (1 - k)
+            out.append(e)
+    return out
+
+
+def chart_ma_overlays(bars: list, symbol: str) -> dict:
+    """SMA/EMA 50 & 200 aligned to `bars`, computed with warmup history fetched at
+    the same interval. Returns {} when the visible bars already suffice (the client
+    computes those itself) or when warmup data is unavailable."""
+    if not bars or len(bars) >= 210:
+        return {}
+    iv = _infer_interval_token(bars)
+    if not iv:
+        return {}
+    try:
+        full = fetch_chart_bars(iv, _MA_WARMUP_RANGE.get(iv, "1M"), symbol)
+    except Exception:
+        return {}
+    if len(full) < 55:
+        return {}
+    first_ts = bars[0]["time"]
+    warm   = [b for b in full if b["time"] < first_ts]          # bars before the window
+    closes = [b["close"] for b in warm] + [b["close"] for b in bars]
+    n_warm = len(warm)
+    vtimes = [b["time"] for b in bars]
+
+    def _tail(vals):
+        seg = vals[n_warm:]
+        return [{"time": t, "value": round(v, 4)}
+                for t, v in zip(vtimes, seg) if v is not None]
+
+    res = {}
+    for key, vals in (("sma50",  _sma_vals(closes, 50)),
+                      ("sma200", _sma_vals(closes, 200)),
+                      ("ema50",  _ema_vals(closes, 50)),
+                      ("ema200", _ema_vals(closes, 200))):
+        s = _tail(vals)
+        if s:
+            res[key] = s
+    return res
 
 
 def fetch_prior_day_levels(symbol: str = "SPY"):

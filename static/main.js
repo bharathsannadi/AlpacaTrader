@@ -1498,23 +1498,29 @@ class ChartPane {
       return out;
     };
 
+    // For 50/200 MAs, prefer the server's warmup-computed series (ov.sma50/…) when
+    // present — they form even on short ranges (e.g. 15m/1D) where the visible
+    // bars alone are too few. Fall back to client compute when the window is long
+    // enough, then to the flat daily-EMA200 level.
+    const hasSrv = k => Array.isArray(ov[k]) && ov[k].length > 0;
+    const flat200 = ov.ema200d != null ? bars.map(b => ({ time: b.time, value: ov.ema200d })) : [];
+
     SET(this.sma20Series, this._ind.sma20 ? sma(20) : []);
-    SET(this.sma50Series, this._ind.sma50 ? sma(50) : []);
-    // SMA 200: compute from bars when ≥200 available; fall back to server daily EMA200 level
+    SET(this.sma50Series, this._ind.sma50
+      ? (hasSrv("sma50") ? ov.sma50 : sma(50)) : []);
     if (this._ind.sma200) {
-      SET(this.sma200Series, n >= 200 ? sma(200)
-        : ov.ema200d != null ? bars.map(b => ({ time: b.time, value: ov.ema200d })) : []);
+      SET(this.sma200Series, hasSrv("sma200") ? ov.sma200
+        : n >= 200 ? sma(200) : flat200);
     } else SET(this.sma200Series, []);
 
     const ema20v  = ChartPane._ema(closes, 20);
     const ema50v  = ChartPane._ema(closes, 50);
     SET(this.ema20Series, this._ind.ema20 ? mkLine(ema20v, 20) : []);
-    SET(this.ema50Series, this._ind.ema50 ? mkLine(ema50v, 50) : []);
-    // EMA 200: compute from bars when ≥200; fall back to server daily EMA200 flat line
+    SET(this.ema50Series, this._ind.ema50
+      ? (hasSrv("ema50") ? ov.ema50 : mkLine(ema50v, 50)) : []);
     if (this._ind.ema200) {
-      const ema200v = ChartPane._ema(closes, 200);
-      SET(this.ema200Series, n >= 200 ? mkLine(ema200v, 200)
-        : ov.ema200d != null ? bars.map(b => ({ time: b.time, value: ov.ema200d })) : []);
+      SET(this.ema200Series, hasSrv("ema200") ? ov.ema200
+        : n >= 200 ? mkLine(ChartPane._ema(closes, 200), 200) : flat200);
     } else SET(this.ema200Series, []);
 
     SET(this.vwapSeries, this._ind.vwap ? clean(ov.vwap) : []);
