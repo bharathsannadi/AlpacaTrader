@@ -40,6 +40,52 @@ RSI_LO = 10.0
 import os, json as _json
 from pathlib import Path as _Path
 POSITIONS_FILE = _Path.home() / ".spy_trader" / "auto_engine_positions.json"
+MONTH_PNL_FILE = _Path.home() / ".spy_trader" / "auto_engine_month_pnl.json"
+
+
+def _open_risk(positions: list[dict]) -> float:
+    """Total open risk on held stock positions = Σ (entry − stop) × qty.
+    A position stopped at/above breakeven contributes 0 (Elder open-risk rule)."""
+    total = 0.0
+    for p in positions:
+        if p.get("route") != "stocks":
+            continue
+        st = p.get("exit_state", {})
+        entry, stop = st.get("entry", 0), st.get("stop", 0)
+        total += max(0.0, (entry - stop)) * p.get("qty", 0)
+    return round(total, 2)
+
+
+def _month_key() -> str:
+    from datetime import date as _date
+    return _date.today().strftime("%Y-%m")
+
+
+def _month_loss() -> float:
+    """This month's realized NET LOSS (0 if net positive) — for Elder's 6% rule."""
+    try:
+        if MONTH_PNL_FILE.exists():
+            d = _json.loads(MONTH_PNL_FILE.read_text())
+            if d.get("month") == _month_key():
+                return max(0.0, -float(d.get("realized", 0.0)))
+    except Exception:
+        pass
+    return 0.0
+
+
+def _record_realized(realized_usd: float) -> None:
+    """Accumulate realized P&L for the current month (resets on month change)."""
+    try:
+        cur = {"month": _month_key(), "realized": 0.0}
+        if MONTH_PNL_FILE.exists():
+            d = _json.loads(MONTH_PNL_FILE.read_text())
+            if d.get("month") == _month_key():
+                cur = d
+        cur["realized"] = round(float(cur.get("realized", 0.0)) + realized_usd, 2)
+        MONTH_PNL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MONTH_PNL_FILE.write_text(_json.dumps(cur))
+    except Exception as e:
+        log.warning(f"[auto-engine] record realized failed: {e}")
 
 
 @dataclass
@@ -220,9 +266,10 @@ def _signal_gate(sig, route: str, vix, risk_on: bool) -> tuple[bool, str]:
 
 
 def execute_plan(plan: dict, dry_run: bool = False,
-                 vix=None, risk_on: bool = True) -> list[dict]:
+                 vix=None, risk_on: bool = True, equity: float = 0.0) -> list[dict]:
     """Place PAPER orders for the planned trades; record positions w/ exit state.
-    Each trade clears the per-trade KB-principles + debate gate (REQ-004/005).
+    Each trade clears the per-trade KB-principles + debate gate (REQ-004/005) AND
+    Elder's 6% monthly open-risk rule (REQ-611).
     Shares are executed; options execution is DEFERRED (needs contract selection)."""
     import shares_executor
     from dataclasses import asdict as _asdict
@@ -230,6 +277,9 @@ def execute_plan(plan: dict, dry_run: bool = False,
     eng = ExitEngine()
     positions = _load_positions()
     held = {p["sym"] for p in positions}
+    rb = RiskBrain(total_equity=equity) if equity > 0 else None
+    open_risk = _open_risk(positions)
+    month_loss = _month_loss()
     for pt in plan["planned"]:
         s, d = pt.signal, pt.decision
         if s.symbol in held:
@@ -239,6 +289,12 @@ def execute_plan(plan: dict, dry_run: bool = False,
         if not ok:
             log.info(f"[auto-engine] ⛔ {s.symbol} gate-blocked — {why}")
             continue
+        # ── Elder 6% monthly open-risk breaker (REQ-611) ──
+        if rb is not None:
+            ok6, why6 = rb.six_percent_ok(d.est_risk_usd, open_risk, month_loss)
+            if not ok6:
+                log.info(f"[auto-engine] ⛔ {s.symbol} {why6}")
+                continue
         if d.route != "stocks":
             log.info(f"[auto-engine] {s.symbol} routes to OPTIONS — execution deferred "
                      f"(needs contract selection); skipping")
@@ -254,6 +310,7 @@ def execute_plan(plan: dict, dry_run: bool = False,
             "order_id": res.get("order_id"), "exit_state": _asdict(st), "dry_run": dry_run,
         })
         held.add(s.symbol)
+        open_risk += max(0.0, (s.price - init_stop)) * d.qty   # for the 6% rule
         log.info(f"[auto-engine] OPENED {s.symbol} {d.qty}sh @ ~{s.price:.2f} ({s.strategy})"
                  f"{' [dry]' if dry_run else ''}")
     _save_positions(positions)
@@ -284,7 +341,9 @@ def manage_exits(dry_run: bool = False) -> None:
         if action == "exit" or held_days >= 21:
             reason = why if action == "exit" else f"time cap {held_days}d"
             shares_executor.close(p["sym"], dry_run=p.get("dry_run", dry_run))
-            log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}")
+            realized = (px - p.get("entry_price", px)) * p.get("qty", 0)
+            _record_realized(realized)   # feed the monthly 6% rule (REQ-611)
+            log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  P&L ${realized:+.0f}")
         else:
             still_open.append(p)
     _save_positions(still_open)
@@ -313,7 +372,7 @@ def run_cycle(equity: float, universe: list[str], etf_set: set,
     plan["risk_on"] = risk_on
     log.info(f"[regime {'RISK-ON' if risk_on else 'RISK-OFF (skip new)'}] " + format_plan(plan))
     if mode == "execute":
-        execute_plan(plan, dry_run=dry_run, vix=vix, risk_on=risk_on)
+        execute_plan(plan, dry_run=dry_run, vix=vix, risk_on=risk_on, equity=equity)
     return plan
 
 
