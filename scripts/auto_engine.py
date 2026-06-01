@@ -33,6 +33,12 @@ DUAL_ENGINE_ENABLED = True    # master on/off for the autonomous loop
 DUAL_ENGINE_MODE    = "execute"  # "shadow" (log only) | "execute" (place PAPER orders)
 MAX_CONCURRENT      = 8        # hard cap on open autonomous positions
 MAX_NEW_PER_CYCLE   = 3        # hard cap on new entries per cycle
+# #20: the engine can also place OPTIONS for vol-edge signals (ETFs + stocks).
+# Defaults OFF (project safety rule #1 for new order paths) — wired + ready; flip
+# on after a validation pass and the §9-OI fix (#28). Until then directional
+# signals route to shares; the separate screener auto-exec lane covers live
+# autonomous options in the meantime.
+OPTIONS_ENGINE_ENABLED = False
 
 # entry constants (match the validated backtests)
 RSI_LO = 10.0
@@ -170,10 +176,24 @@ def signals_for_symbol(sym: str, names: list[str], etf_set: Optional[set] = None
     asset = "etf" if (etf_set and sym.upper() in etf_set) else "stock"
     out = []
     for name in names:
-        if _fired(name, df):
-            out.append(Signal(symbol=sym, direction="bull", strategy=name,
-                              strength=0.7, price=float(r["close"]),
-                              atr=float(r["atr14"]), asset_class=asset))
+        if not _fired(name, df):
+            continue
+        sig = Signal(symbol=sym, direction="bull", strategy=name,
+                     strength=0.7, price=float(r["close"]),
+                     atr=float(r["atr14"]), asset_class=asset)
+        # #20: when the options engine is enabled, express ETF signals as a
+        # vol-edge route (ETF options are liquid — instrument-priority directive).
+        # IV proxy = realized vol (HV); true IVR pending the Polygon feed. Gated by
+        # the flag, so default behavior (all signals → shares) is unchanged.
+        if OPTIONS_ENGINE_ENABLED and asset == "etf":
+            try:
+                rets = np.log(df["close"]).diff().dropna().tail(20)
+                hv = float(rets.std() * np.sqrt(252) * 100) if len(rets) else 0.0
+                sig.has_vol_edge = True
+                sig.ivr = round(hv)
+            except Exception:
+                pass
+        out.append(sig)
     return out
 
 
@@ -337,9 +357,18 @@ def execute_plan(plan: dict, dry_run: bool = False,
             if not ok6:
                 log.info(f"[auto-engine] ⛔ {s.symbol} {why6}")
                 continue
+        if d.route == "options":
+            if not OPTIONS_ENGINE_ENABLED:
+                log.info(f"[auto-engine] {s.symbol} routes to OPTIONS — engine options "
+                         f"path disabled (OPTIONS_ENGINE_ENABLED=False); skipping")
+                continue
+            opos = _execute_option(s, d, dry_run=dry_run)
+            if opos is not None:
+                positions.append(opos)
+                held.add(s.symbol)
+                open_risk += float(opos.get("entry_debit") or 0.0) * 100
+            continue
         if d.route != "stocks":
-            log.info(f"[auto-engine] {s.symbol} routes to OPTIONS — execution deferred "
-                     f"(needs contract selection); skipping")
             continue
         res = shares_executor.buy(s.symbol, d.qty, dry_run=dry_run)
         if not res.get("success"):
@@ -364,6 +393,75 @@ def execute_plan(plan: dict, dry_run: bool = False,
     return positions
 
 
+def _execute_option(signal, decision, dry_run: bool = False) -> Optional[dict]:
+    """Place a PAPER option order for an options-routed signal (#20) and return the
+    position record, or None if it didn't fill / failed a gate. Reuses the
+    well-tested screener_executor, including its KB §9 liquidity gates."""
+    import screener_executor
+    from datetime import date as _date, timedelta as _td
+    struct = (decision.structure or "").lower()
+    opt_type = "Put" if "put" in struct else "Call"
+    exec_structure = (f"Debit {opt_type} Spread" if "spread" in struct else f"ATM {opt_type}")
+    payload = {
+        "sym":       signal.symbol,
+        "structure": exec_structure,
+        "expiry":    (_date.today() + _td(days=25)).isoformat(),     # KB §25 Saliba 21-28 DTE
+        "opt_type":  opt_type,
+        "max_risk":  min(float(decision.est_risk_usd or 500.0), 500.0),  # REQ-607 $500/trade
+    }
+    res = screener_executor.execute_screener_option(payload, dry_run=dry_run)
+    if not res.get("success"):
+        log.info(f"[auto-engine] {signal.symbol} option not placed — {res.get('message','')}")
+        return None
+    debit = float(res.get("actual_debit") or 0.0)
+    log.info(f"[auto-engine] OPENED {signal.symbol} OPTION {exec_structure} "
+             f"debit=${debit:.2f}{' [dry]' if dry_run else ''}")
+    return {
+        "sym": signal.symbol, "strategy": signal.strategy, "route": "options",
+        "structure": exec_structure, "opt_type": opt_type, "qty": 1,
+        "long_occ": res.get("long_occ"), "short_occ": res.get("short_occ"),
+        "entry_debit": debit, "entry_price": signal.price,
+        "expiry": payload["expiry"], "entry_date": _date.today().isoformat(),
+        "order_id": res.get("long_order_id"), "dry_run": dry_run,
+    }
+
+
+def _manage_option_exit(p: dict, dry_run: bool = False) -> bool:
+    """Exit management for an engine OPTIONS position (#20). Returns True to keep it
+    open. Currently a TIME_CAP_DAYS hold-limit exit (closes the leg(s) best-effort);
+    a dynamic debit-based profit-floor/loss ladder is a refinement that needs a live
+    option mark (tracked with the §9-OI work)."""
+    from datetime import date as _date
+    try:
+        held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
+    except Exception:
+        held_days = 0
+    if held_days < TIME_CAP_DAYS:
+        return True
+    if not p.get("dry_run", dry_run):
+        try:
+            import spy_auto_trader as _t
+            c = getattr(_t, "TRADING_CLIENT", None)
+            if c is not None:
+                for occ in (p.get("long_occ"), p.get("short_occ")):
+                    if occ:
+                        try:
+                            c.close_position(occ)
+                        except Exception as e:
+                            log.warning(f"[auto-engine] close {occ}: {e}")
+        except Exception as e:
+            log.warning(f"[auto-engine] option close {p['sym']}: {e}")
+    _log_closed_trade({
+        "sym": p["sym"], "strategy": p.get("strategy"), "route": "options",
+        "qty": p.get("qty", 1), "structure": p.get("structure"),
+        "entry_debit": p.get("entry_debit"), "entry_date": p.get("entry_date"),
+        "exit_date": _date.today().isoformat(), "hold_days": held_days,
+        "reason": f"time cap {held_days}d", "dry_run": p.get("dry_run", dry_run),
+    })
+    log.info(f"[auto-engine] CLOSED OPTION {p['sym']}: time cap {held_days}d")
+    return False
+
+
 def manage_exits(dry_run: bool = False) -> None:
     """Run the dynamic exit (REQ-608/609) on each held position; close when it fires
     or a 21-trading-day time cap is hit. Called from the position monitor."""
@@ -376,6 +474,10 @@ def manage_exits(dry_run: bool = False) -> None:
     eng = ExitEngine()
     still_open = []
     for p in positions:
+        if p.get("route") == "options":
+            if _manage_option_exit(p, dry_run=dry_run):
+                still_open.append(p)
+            continue
         if p.get("route") != "stocks":
             still_open.append(p); continue
         px = shares_executor.current_price(p["sym"])
