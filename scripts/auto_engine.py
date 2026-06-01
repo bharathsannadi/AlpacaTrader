@@ -28,7 +28,9 @@ from router import route_signal, RouteDecision, SPREADS_ENABLED
 
 log = logging.getLogger("auto_engine")
 
-DUAL_ENGINE_ENABLED = False   # master flag — default OFF (shadow only when on)
+DUAL_ENGINE_ENABLED = True    # SHADOW mode ON (logs intended trades, places NO
+                              # orders). Validate the pipeline end-to-end before
+                              # any live flip. Set False to silence the shadow loop.
 
 # entry constants (match the validated backtests)
 RSI_LO = 10.0
@@ -41,33 +43,43 @@ class PlannedTrade:
 
 
 # ── live signal generation (latest complete daily bar) ────────────────────────
-def latest_signal(strat_name: str, sym: str, etf_set: Optional[set] = None) -> Optional[Signal]:
-    """Return today's Signal for `strat_name` on `sym`, or None if no entry fires.
-    Uses the same entry conditions as the cost-robust-validated backtests."""
+def _fired(strat_name: str, df) -> bool:
+    """Does `strat_name` fire an entry on the latest bar of `df`?"""
+    r, p = df.iloc[-1], df.iloc[-2]
+    if strat_name == "connors_rsi2":
+        return r["rsi2"] < RSI_LO and r["close"] > r["sma200"]
+    if strat_name == "bollinger_reversion":
+        return (r["close"] < r["sma20"] - 2 * r["std20"]) and (r["close"] > r["sma200"])
+    if strat_name == "trend_pullback":
+        return (r["close"] > r["sma50"] > r["sma200"]) and (p["close"] < p["sma20"]) and (r["close"] > r["sma20"])
+    if strat_name == "breakout_52w":
+        return (r["close"] >= df["hi252"].iloc[-2]) and (r["close"] > r["sma200"])
+    return False
+
+
+def signals_for_symbol(sym: str, names: list[str], etf_set: Optional[set] = None) -> list[Signal]:
+    """Prep `sym` ONCE, then check all strategies (avoids 4× redundant prep)."""
     from backtest_multi_strategy import _prep   # reuse indicator prep
     df = _prep(sym)
     if df is None or len(df) < 3:
-        return None
-    r, p = df.iloc[-1], df.iloc[-2]
+        return []
+    r = df.iloc[-1]
     if np.isnan(r.get("atr14", np.nan)) or r["atr14"] <= 0:
-        return None
-
-    fired = False
-    if strat_name == "connors_rsi2":
-        fired = r["rsi2"] < RSI_LO and r["close"] > r["sma200"]
-    elif strat_name == "bollinger_reversion":
-        fired = (r["close"] < r["sma20"] - 2 * r["std20"]) and (r["close"] > r["sma200"])
-    elif strat_name == "trend_pullback":
-        fired = (r["close"] > r["sma50"] > r["sma200"]) and (p["close"] < p["sma20"]) and (r["close"] > r["sma20"])
-    elif strat_name == "breakout_52w":
-        fired = (r["close"] >= df["hi252"].iloc[-2]) and (r["close"] > r["sma200"])
-    if not fired:
-        return None
-
+        return []
     asset = "etf" if (etf_set and sym.upper() in etf_set) else "stock"
-    return Signal(symbol=sym, direction="bull", strategy=strat_name,
-                  strength=0.7, price=float(r["close"]), atr=float(r["atr14"]),
-                  asset_class=asset)
+    out = []
+    for name in names:
+        if _fired(name, df):
+            out.append(Signal(symbol=sym, direction="bull", strategy=name,
+                              strength=0.7, price=float(r["close"]),
+                              atr=float(r["atr14"]), asset_class=asset))
+    return out
+
+
+def latest_signal(strat_name: str, sym: str, etf_set: Optional[set] = None) -> Optional[Signal]:
+    """Single-strategy convenience wrapper (kept for callers/tests)."""
+    sigs = signals_for_symbol(sym, [strat_name], etf_set)
+    return sigs[0] if sigs else None
 
 
 def generate_live_signals(universe: list[str], etf_set: set,
@@ -75,14 +87,11 @@ def generate_live_signals(universe: list[str], etf_set: set,
     reg = default_registry()
     names = strategies or [s.name for s in reg.all() if s.validated]
     out: list[Signal] = []
-    for name in names:
-        for sym in universe:
-            try:
-                s = latest_signal(name, sym, etf_set)
-                if s:
-                    out.append(s)
-            except Exception as e:
-                log.debug(f"signal gen {name}/{sym}: {e}")
+    for sym in universe:
+        try:
+            out.extend(signals_for_symbol(sym, names, etf_set))
+        except Exception as e:
+            log.debug(f"signal gen {sym}: {e}")
     return out
 
 
