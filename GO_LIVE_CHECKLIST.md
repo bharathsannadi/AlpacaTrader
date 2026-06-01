@@ -72,6 +72,29 @@ Record the actual numbers in brackets when checking each box.
 - [ ] Account beneficiary / access plan exists — date/initials: ____
 - [ ] Paper instance kept running in parallel for the first 30 live days — date/initials: ____
 
+## 6. Execution integrity (lessons logged 2026-06-01)
+
+*Caught live on paper this session. A great signal on an un-fillable or
+mis-scored contract is not a tradable edge — these must be closed before live.*
+
+- [ ] **No un-executable Top Picks** — KB §9 liquidity (OI ≥ 200, bid-ask ≤ 5% of
+      mid) is folded into ranking, not just checked at execute time; nothing shows
+      `⭐ Top Pick / ✅ BUY` that the executor will reject (HOOD/CVNA class — task #22) — date/initials: ____
+- [ ] **Confidence column is honest** — relabelled "KB match" or replaced with a
+      real conviction score that scales with edge magnitude; **IVR feed populated
+      (no `—`)**; tooltip lists matched/failed principles (task #23) — date/initials: ____
+- [ ] **No phantom positions** — every recorded "open" maps to a confirmed fill
+      (`buy_order_id` set, present in the Alpaca account); the INTC-spread phantom
+      class is closed — date/initials: ____
+- [ ] **Single app instance** — launchd `KeepAlive` and the watchdog reconciled;
+      exactly one process on :5000 (the May-31 outage cause) and it survives reboot
+      under one supervisor — date/initials: ____
+- [ ] **KB-match floor enforced** on every trade (`KB_MATCH_MIN = 60%`) and the
+      debate gate runs (not silently suppressed by missing intraday indicators) — date/initials: ____
+- [ ] **If autonomous OPTIONS execution is enabled** (task #20): caps verified live
+      ($500/trade, $1,500/week) and `route=="options"` exit handling confirmed
+      firing on paper — date/initials: ____
+
 ---
 
 **Gate logic:** count of `[x]` must equal total checkboxes AND the

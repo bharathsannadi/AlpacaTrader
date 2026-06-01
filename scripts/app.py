@@ -373,8 +373,11 @@ state = {
     # Per-symbol running state (tabs are chart-only; any symbol can trade anytime)
     "sessions":        {s: False for s in _SYMBOLS_ORDERED},
     "streaming":       True,         # Live price + log streaming
-    "dry_run":         True,   # DEFAULT ON (operator directive 2026-05-31): no real
-                               # orders placed unless the operator explicitly turns this off
+    "dry_run":         False,  # DEFAULT OFF (operator directive 2026-06-01): place REAL
+                               # PAPER orders — "the whole idea is testing on paper".
+                               # Can ONLY ever be paper: PAPER_MODE + shares_executor's
+                               # non-paper refusal + the go-live gate block any live order.
+                               # Flip back to simulation anytime via the UI Dry Run toggle.
     "paper_mode":      True,         # Alpaca paper vs live
     "active_symbol":   "SPY",        # currently selected chart tab
     "session_end":     "15:45",      # all-day session end time (HH:MM ET)
@@ -397,8 +400,9 @@ state = {
     "debate_enabled":       True,   # Bull/Bear LLM debate gate (needs ANTHROPIC_API_KEY)
     "auto_trade":           True,   # skip approval modal — auto-execute on paper account
     "auto_execute_options": True,   # DEFAULT ARMED (operator directive 2026-05-31).
-                                    # Safe because dry_run defaults ON + KB/debate gate
-                                    # blocks anything that doesn't match the knowledge base.
+                                    # Now places REAL PAPER orders (dry_run OFF). Safety
+                                    # rests on: paper-only hard guards + KB-match & debate
+                                    # gates + KB §9 liquidity + MAX_AUTO_EXEC_PER_DAY cap.
 }
 
 # ── Auto-execute options dedup (prevents re-firing same symbol same day) ─────
@@ -924,11 +928,22 @@ def index():
 
 
 # Deep-link routes — same SPA, the frontend opens the matching view from the path.
-@app.route("/charts")
 @app.route("/screener")
 @app.route("/log")
 def spa_view():
     return _render_spa()
+
+
+# Charts now live on the standalone charts server (operator request 2026-06-01):
+# decoupled so charts are viewable with no Alpaca login, independent of this
+# trading app. Keep the old deep-link working by redirecting to :5001.
+CHARTS_SERVER_URL = os.environ.get("CHARTS_SERVER_URL", "http://localhost:5001/charts")
+
+
+@app.route("/charts")
+def charts_redirect():
+    from flask import redirect as _redirect
+    return _redirect(CHARTS_SERVER_URL, code=302)
 
 
 @app.route("/api/status")

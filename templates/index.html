@@ -1500,16 +1500,19 @@
 <!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
 <div class="tab-bar">
   <button class="symbol-tab settings-tab active" id="tab-settings" onclick="showSettings()">⚙ Settings</button>
-  <div class="tab-divider"></div>
-  <button class="symbol-tab" id="tab-chart" onclick="showCharts()">📈 Charts</button>
-  <select class="grid-dropdown" id="grid-dropdown" onchange="setGridCount(parseInt(this.value))">
+  <!-- Charts moved to the standalone charts server (:5001). These nav items are
+       shown ONLY in charts-only mode (data-charts-only) and hidden on the
+       trading app, since the template is shared by both servers. -->
+  <div class="tab-divider" data-charts-only></div>
+  <button class="symbol-tab" id="tab-chart" data-charts-only onclick="showCharts()">📈 Charts</button>
+  <select class="grid-dropdown" id="grid-dropdown" data-charts-only onchange="setGridCount(parseInt(this.value))">
     <option value="1">1 Pane</option>
     <option value="2">2 Panes</option>
     <option value="4">4 Panes</option>
     <option value="6">6 Panes</option>
     <option value="8">8 Panes</option>
   </select>
-  <div class="tab-divider"></div>
+  <div class="tab-divider" data-charts-only></div>
   <button class="symbol-tab screener-tab" id="tab-screener" onclick="showScreener()">🔍 Screener</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
 </div>
@@ -1951,8 +1954,6 @@
     <span class="scr-mkt-label" id="scr-mkt-status">—</span>
     <span class="scr-age" id="scr-updated"></span>
     <span class="scr-spin-label" id="scr-spin" style="display:none">⟳ refreshing…</span>
-    <span class="scr-autoexec-status" id="scr-autoexec-status"
-          title="Auto-Execute is armed/disarmed from Settings → Automation">—</span>
     <button class="scr-refresh-btn" onclick="scrRefresh()">↻ Refresh</button>
   </div>
 

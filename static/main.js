@@ -697,6 +697,12 @@ document.addEventListener("DOMContentLoaded", () => {
   else if (_path === "/log")      { showLog(); }
   else                            { _setViewMode("settings"); }
 
+  // Charts live on the standalone charts server (:5001). On the trading app
+  // (not guest-charts mode) hide the Charts tab + pane-count dropdown.
+  if (!_guestCharts) {
+    document.querySelectorAll("[data-charts-only]").forEach(el => { el.style.display = "none"; });
+  }
+
 
   ["login-api-key", "login-api-secret"].forEach(id => {
     const el = document.getElementById(id);
@@ -945,11 +951,17 @@ function updateGridLayout() {
 
 // ── Multi-Pane Chart Grid ─────────────────────────────────────────────────────
 
+// Full tradable universe (mirrors scripts/universe.py ALL, sorted). Keep in sync
+// if universe.py changes — these populate every chart pane's symbol dropdown.
 const SYMBOLS = [
-  "AAPL","ADBE","AMD","AMZN","ARM","AVGO","BAC","C","CBRE","CRM",
-  "CRWD","CRWV","GLW","GOOG","HOOD","IBM","INTC","IWM","JPM","LRCX",
-  "MA","META","MSFT","MU","NET","NFLX","NKE","NOW","NVDA","ORCL",
-  "PLTR","QQQ","SOFI","SPY","TEAM","TSM","UBER","UNH","V","WFC",
+  "AAPL","ADBE","AMD","AMZN","ARKK","ARM","AVGO","BAC","C","CBRE",
+  "CRM","CRWD","CRWV","DIA","EEM","EFA","EWZ","FXI","GDX","GLD",
+  "GLW","GOOG","HOOD","HYG","IBM","IEF","INTC","IWM","IYR","JPM",
+  "KRE","LRCX","MA","META","MSFT","MU","NET","NFLX","NKE","NOW",
+  "NVDA","ORCL","PLTR","QQQ","RSP","SLV","SMH","SOFI","SOXX","SPY",
+  "TEAM","TLT","TSM","UBER","UNH","USO","V","VOO","VTI","WFC",
+  "XBI","XHB","XLB","XLC","XLE","XLF","XLI","XLK","XLP","XLRE",
+  "XLU","XLV","XLY","XOP",
 ];
 
 const LIVE_RANGES        = new Set(["1D", "5D"]);
@@ -2092,14 +2104,8 @@ function _updateAutoExecBtn(armed, execToday) {
       ? `🔴 Armed (${execToday.length}/3 today)`
       : "⬛ Disarmed";
   }
-  // Read-only mirror in the screener topbar
-  const status = document.getElementById("scr-autoexec-status");
-  if (status) {
-    status.textContent = armed
-      ? `🔴 Auto-Exec armed (${execToday.length}/3)`
-      : "⬛ Auto-Exec off";
-    status.style.color = armed ? "var(--red)" : "var(--muted)";
-  }
+  // (screener-topbar mirror removed per operator request 2026-06-01 — the
+  //  armed control + counter live in Settings → Automation)
 }
 
 // ── Inner screener tab switch ─────────────────────────────────────────────────
