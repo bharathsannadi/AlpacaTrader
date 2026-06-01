@@ -1786,11 +1786,20 @@ def _kb_and_debate_gate(row: dict) -> tuple[bool, str]:
         miss = "; ".join(sc["failed"][:3])
         return False, (f"KB match {sc['pct']}% < {kb_principles.KB_MATCH_MIN}% floor "
                        f"— failed: {miss}")
-    # 2) Bull/bear debate gate (only if enabled + API key present)
-    if trader.DEBATE_ENABLED:
+    # 2) Bull/bear debate gate — ONLY when the full intraday technical indicator
+    #    set is present. Screener picks carry backtested-edge metrics (dir%/pf/
+    #    ivr), NOT price/RSI/VWAP/EMA/ATR, so the debate can't evaluate them and
+    #    would reject everything for "missing data". The KB-principles gate above
+    #    is the data-matched filter for screener picks; the debate applies to the
+    #    intraday signal path (which carries full indicators).
+    has_tech = bool(row.get("price")) and any(
+        row.get(k) is not None for k in ("rsi14", "rsi", "vwap_diff", "atr"))
+    if trader.DEBATE_ENABLED and has_tech:
         direction = "bull" if "Call" in str(row.get("opt_type", "")) \
             or "▲" in str(row.get("direction", "")) else "bear"
         indicators = {
+            "price": row.get("price"), "rsi": row.get("rsi14") or row.get("rsi"),
+            "vwap_diff": row.get("vwap_diff"), "atr": row.get("atr"),
             "dir_pct": row.get("dir_pct"), "pf": row.get("pf"),
             "ivr": row.get("ivr"), "structure": row.get("structure"),
             "signal": row.get("signal"), "kb_match": sc["pct"],
@@ -1800,9 +1809,9 @@ def _kb_and_debate_gate(row: dict) -> tuple[bool, str]:
             if not proceed:
                 return False, f"Debate gate suppressed (conf {conf:.2f}): {summary}"
         except Exception as e:
-            # Fail closed — a gate that vanishes on error is no gate
             return False, f"Debate gate error (failing closed): {e}"
-    return True, f"KB match {sc['pct']}% ✓ + debate ✓"
+        return True, f"KB match {sc['pct']}% ✓ + debate ✓"
+    return True, f"KB match {sc['pct']}% ✓ (debate n/a — no intraday indicators)"
 
 
 def _auto_exec_options(data: dict) -> None:

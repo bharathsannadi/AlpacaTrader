@@ -299,18 +299,11 @@ def _signal_gate(sig, route: str, vix, risk_on: bool) -> tuple[bool, str]:
                                     route=route)
     if sc["pct"] < kb_principles.KB_MATCH_MIN:
         return False, f"KB match {sc['pct']}% < {kb_principles.KB_MATCH_MIN}% — {';'.join(sc['failed'][:2])}"
-    # debate gate (only if enabled + key present); fail-closed
-    try:
-        import spy_auto_trader as trader
-        if getattr(trader, "DEBATE_ENABLED", False):
-            import debate as _d
-            ind = {"strategy": sig.strategy, "price": sig.price, "atr": sig.atr,
-                   "kb_match": sc["pct"]}
-            proceed, conf, summ = _d.run_debate(sig.symbol, sig.direction, ind)
-            if not proceed:
-                return False, f"debate suppressed (conf {conf:.2f}): {summ}"
-    except Exception as e:
-        return False, f"debate gate error (failing closed): {e}"
+    # NOTE: the bull/bear debate is NOT run on the daily auto path. The debate
+    # needs the full intraday indicator set (price/RSI/VWAP/EMA/vol/ATR); a daily
+    # Signal doesn't carry it, so the debate would reject everything for "missing
+    # data". The daily strategies are cost-robust-validated (§12) AND clear the
+    # KB-principles gate above (the data-matched filters), which is sufficient.
     return True, f"KB {sc['pct']}% ✓"
 
 
