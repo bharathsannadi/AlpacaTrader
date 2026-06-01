@@ -1453,3 +1453,26 @@ Monthly-P&L correlation vs Connors: S2 0.49 (MR, expected), **S3 0.31, S4 0.32**
 **Discipline note (multiple-comparisons):** testing 4 strategies and keeping winners inflates false-positive risk. Survivors go to PAPER INCUBATION alongside Connors, NOT straight to live. The cost-robust gate is necessary, not sufficient.
 
 **Recommended next steps:** (1) incubate S3 (trend pullback) as the best diversifier; (2) design + backtest a regime/size overlay with a non-equity sleeve before claiming the fragility is fixed.
+
+---
+
+## 2026-05-31 — Exit-ladder backtest (REQ-608 dynamic profit-protection)
+
+**Trigger:** operator REQ-608 (escalating profit floor so a winner can't become a loss). Built `backtest_exit_ladders.py` — same entries on the 4 validated strategies, re-simulated exits under a fixed baseline vs 3 pre-specified profit-floor ladders. Same 50/50 walk-forward + cost gate.
+
+| Strategy | exit | Test PF 3/5bp | win% | test $ | maxDD $ |
+|---|---|---|---|---|---|
+| connors | baseline | 1.19/1.15 | 65.2 | 4870 | 6252 |
+| connors | **L1 be+trail30** | **1.23/1.18** | 64.1 | **5523 (+653)** | **6023 (-229)** |
+| trend | baseline | 1.67/1.63 | 39.6 | 13471 | 3570 |
+| trend | **L1 be+trail30** | **1.76/1.71** | 35.9 | **14080 (+609)** | **3062 (-508)** |
+| breakout | baseline | 1.97/1.93 | 34.5 | 9839 | 2687 |
+| breakout | L1 be+trail30 | 2.01/1.96 | 27.1 | 9591 (-248) | 3327 (+640) |
+
+L1 = breakeven stop at +5% gain, trail 30% off the high-water mark, lock +10% floor at +20% gain. L2/L3 (tighter / bigger thresholds) **hurt every strategy**.
+
+**KB cross-ref / verdict:**
+- ✅ **REQ-608 validated in principle** — gentle profit-protection (L1) BEATS the fixed baseline OOS on Connors and Trend, improving PF **and** lowering max-DD. Directly serves REQ-611 (conservative, low-DD). A winner protected at breakeven can't become a loss (the operator's intent).
+- ⚠️ **The operator's *example* thresholds are too coarse for daily stock swings.** Big floors (+20/+50% triggers, L2/L3) get whipsawed — stopped on noise, miss the recovery (KB §3, the REQ-608.4 caveat, now empirically confirmed). The data prefers an EARLY breakeven (+5%) + moderate trail, not late big-step floors.
+- ❓ **Options not yet tested** — options move far more than the underlying, so the operator's +40/+80/+200% option ladder may be appropriate on option P&L (different distribution). Needs the option data (pulling now) + the spread harness to test on real option series.
+- **Discipline:** L1 is a candidate → paper incubation alongside the strategy, not a live edit to the frozen Connors exit (REQ-203/603.3). Breakout shows it's not universal — applied per-strategy.
