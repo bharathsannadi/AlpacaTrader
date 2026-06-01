@@ -46,6 +46,11 @@ def _trail(msg: str) -> None:
 # ── KB-sourced constants (mirror daily_trader.py) ─────────────────────────────
 OPT_MIN_OI           = 200     # KB §9: minimum open interest for liquidity
 OPT_MAX_BID_ASK_PCT  = 0.05   # KB §9: bid-ask < 5% of mid (live quote gate)
+OPT_TIGHT_BA_PCT     = 0.02   # §9 (#28): a ≤2% LIVE spread proves a liquid market
+                              # even when yfinance reports stale/low OI (e.g. SPY
+                              # weeklies read OI 144 with a 0.4% spread). The live
+                              # bid-ask is the reliable signal; it overrides the OI
+                              # floor. Wide spreads (HOOD 19.9%) still hard-fail.
 OPT_SPREAD_RATIO_LO  = 0.25   # KB §5: spread debit ≥ 25% of width
 OPT_SPREAD_RATIO_HI  = 0.45   # KB §5: spread debit ≤ 45% of width
 RISK_BUDGET          = 400.0  # KB §4: $400 max loss per trade
@@ -225,10 +230,14 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
         ba  = (ask - bid) / mid if mid > 0 else 1.0
         if mid <= 0:
             return {"ok": False, "reason": "no valid ATM quote", "atm_oi": oi, "ba_pct": ba}
-        if oi < OPT_MIN_OI:
-            return {"ok": False, "reason": f"ATM OI {oi} < {OPT_MIN_OI}", "atm_oi": oi, "ba_pct": ba}
+        # bid-ask is the hard, reliable gate; OI is satisfied by a real count OR a
+        # very tight live spread (which proves liquidity when yfinance OI is stale).
         if ba > OPT_MAX_BID_ASK_PCT:
             return {"ok": False, "reason": f"bid-ask {ba*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}%",
+                    "atm_oi": oi, "ba_pct": ba}
+        if oi < OPT_MIN_OI and ba > OPT_TIGHT_BA_PCT:
+            return {"ok": False,
+                    "reason": f"ATM OI {oi} < {OPT_MIN_OI} and spread {ba*100:.1f}% not tight",
                     "atm_oi": oi, "ba_pct": ba}
         return {"ok": True, "reason": "liquid", "atm_oi": oi, "ba_pct": ba}
     except Exception as e:
@@ -368,15 +377,18 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         result["long_occ"] = atm_occ
 
         # ── KB §9 liquidity gates ────────────────────────────────────────────
+        # bid-ask is the hard, reliable gate; OI is satisfied by a real count OR a
+        # very tight live spread (proves liquidity when yfinance OI is stale, #28).
         if atm_mid <= 0:
             raise ValueError(f"{sym}: KB §9 Liquidity — ATM mid ≤ 0 (no valid quote)")
-        if atm_oi < OPT_MIN_OI:
-            raise ValueError(f"{sym}: KB §9 Liquidity — ATM open interest {atm_oi} "
-                             f"< {OPT_MIN_OI} required (illiquid contract, would not fill)")
         ba_pct = (atm_ask - atm_bid) / atm_mid if atm_mid > 0 else 1.0
         if ba_pct > OPT_MAX_BID_ASK_PCT:
             raise ValueError(f"{sym}: KB §9 Liquidity — bid-ask spread {ba_pct*100:.1f}% "
                              f"> {OPT_MAX_BID_ASK_PCT*100:.0f}% max (too wide, excessive slippage)")
+        if atm_oi < OPT_MIN_OI and ba_pct > OPT_TIGHT_BA_PCT:
+            raise ValueError(f"{sym}: KB §9 Liquidity — ATM open interest {atm_oi} "
+                             f"< {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight "
+                             f"(≤{OPT_TIGHT_BA_PCT*100:.0f}%) — illiquid, would not fill")
 
         log.info(f"  ATM: {atm_occ}  strike=${atm_strike:.2f}  mid=${atm_mid:.2f}  "
                  f"OI={atm_oi}  ba={ba_pct*100:.1f}%")
