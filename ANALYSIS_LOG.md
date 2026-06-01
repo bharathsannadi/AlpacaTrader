@@ -1476,3 +1476,22 @@ L1 = breakeven stop at +5% gain, trail 30% off the high-water mark, lock +10% fl
 - ⚠️ **The operator's *example* thresholds are too coarse for daily stock swings.** Big floors (+20/+50% triggers, L2/L3) get whipsawed — stopped on noise, miss the recovery (KB §3, the REQ-608.4 caveat, now empirically confirmed). The data prefers an EARLY breakeven (+5%) + moderate trail, not late big-step floors.
 - ❓ **Options not yet tested** — options move far more than the underlying, so the operator's +40/+80/+200% option ladder may be appropriate on option P&L (different distribution). Needs the option data (pulling now) + the spread harness to test on real option series.
 - **Discipline:** L1 is a candidate → paper incubation alongside the strategy, not a live edit to the frozen Connors exit (REQ-203/603.3). Breakout shows it's not universal — applied per-strategy.
+
+---
+
+## 2026-05-31 — Regime/hedge overlay backtest (Phase 4, the 2022 tail-risk fix)
+
+**Trigger:** the multi-strategy backtest showed all 4 validated strategies are long-only equity → all fail 2022 (tail risk, REQ-205/611.2). Built `backtest_regime_overlay.py` on the combined 4-strategy portfolio.
+
+| variant | n | PF | total$ | maxDD$ | 2022 PF | 2022 $ |
+|---|---|---|---|---|---|---|
+| A baseline (long-equity only) | 723 | 1.13 | 7092 | 9850 | 0.58 | -6536 |
+| **B regime-skip (SPY<200SMA → no entry)** | 535 | **1.18** | 7186 | **6046** | 0.28 | **-3402** |
+| C regime-half (half size risk-off) | 723 | 1.15 | 7139 | 7948 | 0.51 | -4969 |
+| D + TLT sleeve (bonds when risk-off) | 738 | 1.09 | 5298 | 11579 | 0.53 | -8044 |
+
+**KB cross-ref / verdict:**
+- ✅ **Regime-skip (B) is the validated tail-risk fix.** Skipping new entries when SPY < its 200-SMA HALVES the 2022 loss (-6536 → -3402) and cuts max drawdown 39% (9850 → 6046), while *improving* overall PF (1.13 → 1.18). Directly serves REQ-205 (regime overlay) + REQ-611.2 (low-DD conservative). KB §8 Gunn (un-conditioned = no edge) — the broad-market regime is the conditioning the long-equity portfolio was missing.
+- ❌ **TLT non-equity sleeve REFUTED (D).** 2022 was a rare joint stock+bond selloff (rates spiked), so bonds were NOT a haven — the sleeve made the tail WORSE. Honest lesson: a hedge only diversifies if uncorrelated IN THAT crisis; don't assume bonds protect.
+- ⚠️ **Reconciles the earlier H-SEL-REGIME result (per-Connors gate made 2022 worse):** the win here is PORTFOLIO-level — the skip mainly kills trend/breakout entries (death in a bear, breakout 2022 PF 0.03), which dominates the small dent to mean-reversion. Apply the regime overlay at the PORTFOLIO/risk-brain level, not per-mean-reversion-strategy.
+- **Next:** wire a portfolio regime gate (SPY<200SMA → no new entries) into the risk brain as a candidate, validated here; → incubation, not a live edit to frozen Connors. Consider regime-half (C) as a softer variant (keeps more upside, still cuts DD).
