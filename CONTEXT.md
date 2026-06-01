@@ -6,9 +6,16 @@ Quick-resume doc for Claude (and humans). Keep it current. Read this first; deep
 
 ## 🧭 The 30-second handoff
 
-- **Project:** SPY Auto Trader — Flask + SocketIO options day-trading bot. Paper mode.
-- **⚠️ Strategy state (2026-05-19):** NO validated edge. Options strategy disproven (backtest); shares over-claim corrected & refuted @realistic cost; building the **2S dual-instrument** framework + **3R phased roadmap** as PAPER-ONLY scaffolding. Read "Last session" + ANALYSIS_LOG before any strategy work. Do NOT treat the framework build as edge validation.
-- **Working directory:** `/Users/bsannadi/Desktop/AlpacaTrader`
+- **Project:** SPY Auto Trader — Flask + SocketIO trading bot. Paper mode.
+- **⚠️ Strategy state (2026-05-31):** 4 KB-grounded daily strategies now PASS the
+  cost-robust gate (Connors/Bollinger/Trend/Breakout). An **autonomous dual-
+  instrument engine** (`auto_engine.py`) is LIVE in **execute mode** placing PAPER
+  orders Monday, with regime-skip + KB/debate + Elder-6% + sleeves/caps. Still
+  PAPER-ONLY, edge not yet proven (incubation). Read 2026-05-31 "Last session" +
+  REQUIREMENTS.md + ANALYSIS_LOG first. KILL SWITCH: `auto_engine.DUAL_ENGINE_MODE="shadow"`.
+- **⚠️ CODE FREEZE 2026-05-31 PM:** no code changes until Monday's first autonomous
+  run is observed (operator directive). Docs/reading only.
+- **Working directory:** `/Users/bsannadi/Desktop/bharath/AlpacaTrader`
 - **Preferred launch:** `open "/Applications/SPY Auto Trader.app"` (native macOS app — gradient bar-chart icon)
 - **CLI fallback:** `nohup /Users/bsannadi/Desktop/AlpacaTrader/venv/bin/python3.11 /Users/bsannadi/Desktop/AlpacaTrader/scripts/app.py > /dev/null 2>&1 &` → http://localhost:5000
 - ⚠️ **Use `python3.11`, not `python`** (the latter is 3.9 with missing deps)
@@ -109,6 +116,81 @@ context-aware stops.
 5. **Friday gamma trap.** 7-DTE on Monday is 4-DTE on Friday. With only 3 trades/week, one Friday gamma blowup = the whole week.
 
 These are the constraints we'll design tomorrow's backtest and risk-gate work around.
+
+---
+
+## 📌 Last session: 2026-05-31 (AUTONOMOUS DUAL-INSTRUMENT BUILD — huge)
+
+> The biggest single session in the project. Built an end-to-end autonomous,
+> KB-gated, regime-aware paper trading system + a full requirements spec, mined
+> books against it, and archived 5yr Polygon data. 163 tests. All on paper.
+
+### 🤖 Autonomous engine is LIVE (execute mode) — starts Monday market open
+- **`auto_engine.py`** orchestrates: live signals (4 validated strategies) →
+  tier-priority (ETF→large→small) → KB-principles + debate gate → KB-driven
+  router (shares vs option, §5/§2) → risk_brain (sleeves/caps/sizing) → Elder
+  6% breaker → **places PAPER orders** → dynamic exits.
+- **Flags:** `DUAL_ENGINE_ENABLED=True`, `DUAL_ENGINE_MODE="execute"`.
+  **KILL SWITCH:** set MODE="shadow" (log-only) or ENABLED=False.
+- **Safety stack (all live):** regime-skip (SPY<200SMA → no entry), KB≥60% +
+  debate gate, Elder 6% monthly open-risk breaker, $95K stock / rest options
+  sleeves, $500/trade + $1500/week options caps, fixed 10-share stocks, dedup,
+  ≤3 new/cycle, ≤8 concurrent, 2×ATR stop + breakeven/trail dynamic exit, 21d
+  time cap. PAPER-ONLY hard guard in shares_executor.
+- **State:** `~/.spy_trader/auto_engine_positions.json` + `auto_engine_month_pnl.json`.
+- ⚠️ Shares the paper account with the Connors incubation — a SEPARATE paper
+  account is recommended (REQ-613; needs 2nd key set in .env).
+- ⚠️ Options route DEFERRED (needs contract selection; all signals route to
+  shares today since live signals carry no IVR). Per-trade KB/debate gate IS wired.
+
+### 🧱 New modules (6, all behind flags, 163 tests)
+`trade_signal.py` (Signal — NOT `signal.py`, stdlib clash) · `strategy.py`
+(registry, 4 validated strategies, refuses unvalidated) · `risk_brain.py`
+(sleeves/caps/sizing/tiers + Elder 6% rule) · `router.py` (KB §5/§2) ·
+`exit_engine.py` (dynamic profit-floor ladder) · `auto_engine.py` (orchestrator)
+· `shares_executor.py` (paper share orders). `kb_principles.score_signal()` added.
+
+### 🔬 Backtests run (cached daily data, $0)
+- **Multi-strategy:** 4 KB-grounded strategies ALL pass cost-robust gate
+  (Connors 1.35/1.32 · Bollinger 1.40/1.37 · Trend-pullback 2.11/2.08 · 52w
+  Breakout 1.96/1.94 @3/5bp OOS). Low pairwise corr (0.19-0.49).
+- **Exit ladders:** L1 profit-protection (breakeven +5%, trail 30%, lock +10%
+  @+20%) BEATS fixed baseline OOS on Connors+Trend (PF up, maxDD down). Tighter
+  ladders whipsaw. → exit_engine default.
+- **Regime overlay (the 2022 tail fix):** regime-skip (SPY<200SMA → no entry)
+  HALVES 2022 loss (−6536→−3402), cuts maxDD 39%, improves PF. **TLT sleeve
+  REFUTED** (2022 stock+bond joint crash). → wired live.
+- MIN_ATR_PCT=1.5%: NOT validated. H-SEL-REGIME: refuted (worsens 2022).
+
+### 🖥️ Live UI / behaviour changes (server restarted each time)
+- DRY_RUN **default ON** (REQ-001; overridden only for the autonomous engine's
+  own paper path). Auto-Execute **armed by default**, moved to Settings.
+- Screener: KB-principles **Confidence%** column, **15-row** tables, **20-symbol**
+  universe (stocks+ETFs), **held-position exits** shown, row-alignment fix.
+- Debate gate re-added to Settings.
+
+### 🌐 Universe expanded (operator)
+- **Stock-trading universe = 74** (40 stocks + 34 long-only ETFs); ETFS_HEDGE
+  (SH/PSQ/SDS/SQQQ/VIXY) excluded from long-only. Screener +11 ETFs.
+- **Options universe = all S&P500 + all ETFs**; priority ETFs→large→small.
+
+### 💾 Polygon 5yr archival (deadline 2026-06-16) — RUNNING
+- Daily: **all 503 S&P500 + 42 ETFs ✓**. Minute: ETFs ✓ + top-100 stocks.
+- Options: ETF-first then S&P-by-liquidity (±15% monthly calls+puts), running.
+- `polygon_cache.py` (--batch sp500, --phase) + `polygon_options.py` (--scope
+  etfs/full, prioritized_universe). API key moved to .env (⚠️ ROTATE — was in git).
+- ⚠️ Keep the Mac awake — pulls pause on sleep/reboot. Resumable.
+
+### 📋 Docs created
+- **`REQUIREMENTS.md`** — operator requirements REQ-601..613 + Appendix A
+  (KB-derived entry/exit criteria). **`IMPLEMENTATION_PLAN.md`** — 7-phase plan.
+- Book mining → KB: §5/§19/§20 (spread harness/variance premium), §RM (Elder
+  2%/6% rules + Davey MC/Calmar/strategy-pipeline), §21-26 earlier. All in ANALYSIS_LOG.
+
+### ⏭️ Pending (gated, none urgent)
+Options-route execution (post-2S-B) · separate paper account (REQ-613) · proactive
+go-live signal (REQ-607.2) · Monte Carlo + Calmar in validation · strategy-pipeline
++ edge-decay monitor (Davey) · self-learning auto-write (REQ-610).
 
 ---
 
@@ -235,18 +317,22 @@ Connors RSI(2) daily-bar backtest (`backtest_connors_daily.py`):
 
 ## 🟢 What's running right now (verify before assuming)
 
-- **⏳ POLYGON DEADLINE 2026-06-16** — subscription lapses; archiving 5yr data.
-  - ✅ Daily stock bars: ALL 503 S&P 500 cached (`polygon_cache.py --batch sp500 --phase daily`)
-  - 🔄 Options: top-100 liquid names, monthly, ±15%, calls+puts running in bg
-    (`polygon_options.py --top 100` → `/tmp/poly_options.log`, ~25-40h, resumable).
-    Cache: `~/Desktop/bharath/AlpacaTrader_Data/polygon_cache/options/{SYM}_options_daily.parquet`
-  - ⬜ Minute stock bars for top-100 NOT yet pulled (intraday has no validated
-    edge; grab with `polygon_cache.py --batch sp500 --phase minute` if wanted).
-- **Strategy state:** NO validated edge yet. Options route disproven;
-  shares route refuted @realistic cost; spreads unresolved. Hypotheses
-  H-REGIME/H-RUN/H-VSA/H-SPR/H-VOL/H-KELLY queued, all ≥3bp-gated.
-- **Background job:** 39-ticker `backtest_shares_robust.py ALL` run
-  (cached Polygon, $0). Check `/tmp/bsr39.log` for `Report →`.
+- **🤖 AUTONOMOUS ENGINE LIVE (execute mode)** — `auto_engine.py`, starts Monday
+  market open. Runs every ~5min, places PAPER share orders through all rails.
+  Verify: `python3.11 -c "import sys;sys.path.insert(0,'scripts');import auto_engine as a;print(a.DUAL_ENGINE_ENABLED,a.DUAL_ENGINE_MODE)"`.
+  Watch: server log `[auto-engine]` lines; positions `~/.spy_trader/auto_engine_positions.json`.
+  KILL: set `DUAL_ENGINE_MODE="shadow"` or `DUAL_ENGINE_ENABLED=False` + restart.
+- **⏳ POLYGON DEADLINE 2026-06-16** — archiving 5yr data (keep Mac awake).
+  - ✅ Daily: ALL 503 S&P 500 + 42 ETFs. ✅ Minute: 42 ETFs + top-100 stocks.
+  - 🔄 Options: ETF-first then S&P-by-liquidity (`polygon_options.py --scope full`
+    → `/tmp/poly_options_full.log`, resumable). Cache:
+    `~/Desktop/bharath/AlpacaTrader_Data/polygon_cache/options/{SYM}_options_daily.parquet`.
+    Monitor: `ls …/polygon_cache/options/*.parquet | wc -l`.
+- **Strategy state:** 4 daily strategies PASS cost-robust gate (Connors/Bollinger/
+  Trend/Breakout). Regime-skip validated as the 2022 tail fix. Edge NOT yet proven
+  live (paper incubation). Options route still blocked on 2S-B spread harness.
+- **Defaults:** `DRY_RUN=True` (legacy paths), `auto_execute_options=True`,
+  `DUAL_ENGINE_MODE="execute"`, `PDT_RULE_ENABLED=False`. 163 tests pass.
 - **Launch path:** macOS app at `/Applications/SPY Auto Trader.app` → Flask
   via `desktop.py` (or `scripts/app.py` directly)
 - **Log file:** `auto_trader.log` (RotatingFileHandler 10 MB × 5) +

@@ -1513,3 +1513,19 @@ L1 = breakeven stop at +5% gain, trail 30% off the high-water mark, lock +10% fl
 | **Davey: selection-bias rookie mistake (p.39):** testing 20-25 instruments then keeping the best = the multiple-comparisons trap. | REQ-202 | ✅ ENFORCED — exactly the discipline we've held (every strategy its OWN cost-robust gate; survivors → incubation). |
 
 **Net:** the deep-read produced 3 concrete enhancement candidates that strengthen the CONSERVATIVE objective (REQ-611): (1) Elder's **6% monthly open-risk circuit breaker** + open-risk accounting in risk_brain, (2) Davey's **Monte Carlo + Calmar** in validation, (3) a **strategy pipeline + edge-decay monitor** (REQ-201). All are risk-reducing, all align with the existing discipline, and the 6%-rule + breakeven synergy is elegant: protecting profits (REQ-608) literally frees risk budget. → candidates for the risk_brain / validation roadmap, gated as usual.
+
+---
+
+## 2026-05-31 — Book deep-read round 2 (Weiss, "Mechanical Trading Systems")
+
+**Trigger:** operator "keep reading" during the code freeze. Mined Weiss for portfolio/robustness content vs our requirements.
+
+| Finding (p.) | Serves | Verdict |
+|---|---|---|
+| **Simple = robust (p.16, p.49):** simple systems minimize risk of ruin; 2-MA beat 3-MA; "simple is better" throughout. | REQ-202/611 | ✅ ENFORCED — validates our deliberately simple strategies (Connors RSI2, SMA trend, 52w breakout). Don't over-engineer. |
+| **Three types of diversification (p.177):** parameter sets, systems, markets. | REQ-201 | ❓ GAP — we diversify across STRATEGIES (systems); could add parameter-set + market diversification. |
+| **Low/neg-correlated asset classes raise return + cut DD (p.29, p.42).** | REQ-205 | ✅ confirms the regime/non-equity need — BUT correlation must hold IN the crisis (our TLT-2022 refutation: bonds correlated to stocks exactly when it mattered). |
+| **Redundant systems give no diversification (p.58)** if outputs are near-identical. | REQ-201 | ✅ ENFORCED — we measured strategy correlation (0.19-0.49); they're genuinely diversifying. |
+| **Equal-weighting: no market should dwarf others (p.66).** | REQ-606 | ⚠️ TENSION — our fixed-10-share sizing gives high-priced names more $ exposure (e.g. 10×$500 vs 10×$30). Weiss argues for $-equalized weighting. Operator chose fixed-10 deliberately; revisit if it skews the book. |
+
+**Net:** mostly confirmations of the existing discipline (simple, diversified, low-correlation, non-redundant), plus a reminder that the fixed-10-share rule (REQ-606) conflicts with equal-$ weighting — a known, accepted operator trade-off to watch.
