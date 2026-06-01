@@ -43,6 +43,8 @@ import screener_engine as screener
 import screener_executor
 import kb_principles
 import debate as debate_mod
+import auto_engine
+from universe import ETFS_TRADE, ETFS_HEDGE
 from universe import ALL as _UNIVERSE_ALL
 from security import (
     get_or_create_secret_key,
@@ -1617,6 +1619,15 @@ def scheduler():
                 _screener_last_refresh = _time.time()
                 socketio.start_background_task(_refresh_screener_bg)
 
+            # Autonomous dual-engine — SHADOW (Phase 5b). Default OFF
+            # (auto_engine.DUAL_ENGINE_ENABLED). When on, logs what it WOULD
+            # trade every ~5 min during market hours; places no orders.
+            if market_open and auto_engine.DUAL_ENGINE_ENABLED:
+                global _shadow_last_run
+                if _time.time() - _shadow_last_run >= 300:
+                    _shadow_last_run = _time.time()
+                    socketio.start_background_task(_run_shadow_engine)
+
         except SystemExit:
             # SystemExit is intentional shutdown — re-raise so eventlet hub
             # can clean up properly. Don't swallow this.
@@ -1899,6 +1910,43 @@ def _auto_exec_options(data: dict) -> None:
             with _auto_exec_lock:
                 _auto_exec_today.discard(sym)
                 _save_auto_exec_state()
+
+
+# Autonomous shadow-engine throttle (module-level; scheduler uses `global`)
+_shadow_last_run = 0.0
+_SHADOW_ETF_SET = set(ETFS_TRADE) | set(ETFS_HEDGE)
+
+
+def _run_shadow_engine():
+    """Run one SHADOW autonomous cycle: generate signals → route → size → LOG the
+    plan. Places NO orders (Phase 5b shadow). Gated by DUAL_ENGINE_ENABLED."""
+    try:
+        from universe import ALL as _UNI
+        with _state_lock:
+            equity = state.get("account_value") or 0.0
+        if equity <= 0:
+            try:
+                equity = float(trader.account_value() or 0.0)
+            except Exception:
+                equity = 0.0
+        if equity <= 0:
+            log.info("[auto-engine] no equity yet — shadow cycle skipped")
+            return
+        plan = auto_engine.run_cycle(equity, list(_UNI), _SHADOW_ETF_SET, enabled=True)
+        if plan:
+            socketio.emit("shadow_plan", {
+                "planned": [
+                    {"symbol": pt.signal.symbol, "strategy": pt.signal.strategy,
+                     "route": pt.decision.route, "structure": pt.decision.structure,
+                     "qty": pt.decision.qty, "cost": pt.decision.est_cost_usd,
+                     "risk": pt.decision.est_risk_usd, "reason": pt.decision.reason}
+                    for pt in plan["planned"]
+                ],
+                "n_signals": plan["n_signals"],
+                "n_skipped": len(plan["skipped"]),
+            })
+    except Exception as e:
+        log.warning(f"[auto-engine] shadow cycle error: {e}")
 
 
 def _refresh_screener_bg():
