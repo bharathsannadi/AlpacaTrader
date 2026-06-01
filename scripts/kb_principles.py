@@ -128,6 +128,31 @@ def score_stock_candidate(row: dict, vix: float | None = None) -> dict:
     return _tally(checks)
 
 
+def score_signal(strat_pf: float | None, strength: float, asset_class: str,
+                 vix: float | None = None, risk_on: bool = True,
+                 has_vol_edge: bool = False, route: str = "stocks") -> dict:
+    """KB-principles match for an autonomous-engine Signal (REQ-004).
+    The validated strategy is the core principle; layered with regime, conviction,
+    VIX, and instrument-appropriateness."""
+    checks: list[tuple[float, bool, str]] = []
+    pf = strat_pf or 0.0
+    # §12 — the strategy itself is cost-robust validated (the strongest principle, weight 3)
+    checks.append((3.0, pf >= 1.10, f"strategy PF {pf:.2f} ≥ 1.10 cost-robust (§12)"))
+    # §8 Gunn — broad-market regime risk-on for longs (weight 2)
+    checks.append((2.0, bool(risk_on), "broad-market risk-on SPY>200SMA (§8)"))
+    # signal quality — conviction (weight 1)
+    checks.append((1.0, strength >= 0.5, f"conviction {strength:.2f} ≥ 0.5 (§ signal quality)"))
+    # §appendix — VIX gate (weight 1)
+    if vix is not None:
+        checks.append((1.0, vix < 30, f"VIX {vix:.1f} < 30 (§ appendix)"))
+    # §5/§2 — instrument-appropriate: options need a volatility edge (weight 1)
+    if route == "options":
+        checks.append((1.0, has_vol_edge, "option route carries a volatility edge (§2/§5)"))
+    else:
+        checks.append((1.0, asset_class in ("stock", "etf"), "tradable equity/ETF (§14)"))
+    return _tally(checks)
+
+
 def _tally(checks: list[tuple[float, bool, str]]) -> dict:
     total_w = sum(w for w, _, _ in checks) or 1.0
     got_w   = sum(w for w, ok, _ in checks if ok)

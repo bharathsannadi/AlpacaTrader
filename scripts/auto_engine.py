@@ -193,8 +193,36 @@ def spy_risk_on() -> bool:
         return False
 
 
-def execute_plan(plan: dict, dry_run: bool = False) -> list[dict]:
+def _signal_gate(sig, route: str, vix, risk_on: bool) -> tuple[bool, str]:
+    """Per-trade KB-principles + debate gate for the auto path (REQ-004/005)."""
+    import kb_principles
+    from strategy import default_registry
+    spec = default_registry().get(sig.strategy)
+    pf = spec.test_pf_3bp if spec else None
+    sc = kb_principles.score_signal(pf, sig.strength, sig.asset_class, vix=vix,
+                                    risk_on=risk_on, has_vol_edge=sig.has_vol_edge,
+                                    route=route)
+    if sc["pct"] < kb_principles.KB_MATCH_MIN:
+        return False, f"KB match {sc['pct']}% < {kb_principles.KB_MATCH_MIN}% — {';'.join(sc['failed'][:2])}"
+    # debate gate (only if enabled + key present); fail-closed
+    try:
+        import spy_auto_trader as trader
+        if getattr(trader, "DEBATE_ENABLED", False):
+            import debate as _d
+            ind = {"strategy": sig.strategy, "price": sig.price, "atr": sig.atr,
+                   "kb_match": sc["pct"]}
+            proceed, conf, summ = _d.run_debate(sig.symbol, sig.direction, ind)
+            if not proceed:
+                return False, f"debate suppressed (conf {conf:.2f}): {summ}"
+    except Exception as e:
+        return False, f"debate gate error (failing closed): {e}"
+    return True, f"KB {sc['pct']}% ✓"
+
+
+def execute_plan(plan: dict, dry_run: bool = False,
+                 vix=None, risk_on: bool = True) -> list[dict]:
     """Place PAPER orders for the planned trades; record positions w/ exit state.
+    Each trade clears the per-trade KB-principles + debate gate (REQ-004/005).
     Shares are executed; options execution is DEFERRED (needs contract selection)."""
     import shares_executor
     from dataclasses import asdict as _asdict
@@ -205,6 +233,11 @@ def execute_plan(plan: dict, dry_run: bool = False) -> list[dict]:
     for pt in plan["planned"]:
         s, d = pt.signal, pt.decision
         if s.symbol in held:
+            continue
+        # ── per-trade KB-principles + debate gate ──
+        ok, why = _signal_gate(s, d.route, vix, risk_on)
+        if not ok:
+            log.info(f"[auto-engine] ⛔ {s.symbol} gate-blocked — {why}")
             continue
         if d.route != "stocks":
             log.info(f"[auto-engine] {s.symbol} routes to OPTIONS — execution deferred "
@@ -261,7 +294,7 @@ def manage_exits(dry_run: bool = False) -> None:
 def run_cycle(equity: float, universe: list[str], etf_set: set,
               large_cap_set: Optional[set] = None,
               enabled: bool = None, mode: str = None,
-              dry_run: bool = False) -> Optional[dict]:
+              dry_run: bool = False, vix: float = None) -> Optional[dict]:
     """Run one autonomous cycle.
     mode 'shadow' → log the plan; mode 'execute' → place PAPER orders (all rails on)."""
     if enabled is None:
@@ -280,7 +313,7 @@ def run_cycle(equity: float, universe: list[str], etf_set: set,
     plan["risk_on"] = risk_on
     log.info(f"[regime {'RISK-ON' if risk_on else 'RISK-OFF (skip new)'}] " + format_plan(plan))
     if mode == "execute":
-        execute_plan(plan, dry_run=dry_run)
+        execute_plan(plan, dry_run=dry_run, vix=vix, risk_on=risk_on)
     return plan
 
 

@@ -1947,8 +1947,10 @@ def _run_shadow_engine():
             return
         # execute mode places real PAPER orders (dry_run=False); shadow logs only
         _dry = (auto_engine.DUAL_ENGINE_MODE != "execute")
+        with _state_lock:
+            _vix = state.get("vix")
         plan = auto_engine.run_cycle(equity, list(_UNI), _SHADOW_ETF_SET,
-                                     enabled=True, dry_run=_dry)
+                                     enabled=True, dry_run=_dry, vix=_vix)
         if plan:
             socketio.emit("shadow_plan", {
                 "mode": plan.get("mode"), "risk_on": plan.get("risk_on"),
