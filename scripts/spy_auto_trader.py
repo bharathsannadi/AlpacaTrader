@@ -891,8 +891,13 @@ def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "S
             if c > 0 and (b["high"] - b["low"]) / c > OUTLIER_PCT and yf_iv in ("1m", "5m", "15m"):
                 dropped += 1
                 continue
-            # Drop if the bar's close is wildly off the median (pre-market spike)
-            if median_close and median_close > 0 and abs(c - median_close) / median_close > 0.03:
+            # Drop if the bar's close is wildly off the median (pre-market spike).
+            # ONLY for the single-day (1D) view: within one session a 3% jump from
+            # the median is a bad print. Over multi-day / daily ranges (5D…5Y) price
+            # legitimately trends far from the median, so this filter must NOT apply —
+            # it was decimating long ranges (1Y daily → 73 bars) and starving the
+            # 50/200 moving averages of the data they need.
+            if today_only and median_close and median_close > 0 and abs(c - median_close) / median_close > 0.03:
                 dropped += 1
                 continue
             out.append({
