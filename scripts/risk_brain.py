@@ -28,6 +28,7 @@ OPT_PER_TRADE_MAX_USD  = 500.0      # REQ-605
 OPT_WEEK_MAX_USD       = 1_500.0    # REQ-605
 STOCK_SHARES_FIXED     = 10         # REQ-606
 WEEK_MODE              = "rolling5" # REQ-605.3: "rolling5" (5 trading days) | "calendar" (Mon-Fri)
+SIX_PCT_MONTH_CAP      = 0.06       # Elder 6% Rule: month losses + open risk ≤ 6% equity (REQ-611)
 
 STATE_FILE = Path.home() / ".spy_trader" / "risk_brain_state.json"
 
@@ -120,6 +121,23 @@ class RiskBrain:
         rs = self.stocks if route == "stocks" else self.options
         rs.deployed_usd = max(0.0, rs.deployed_usd - cost_usd)
         rs.open_positions = max(0, rs.open_positions - 1)
+
+    # ── Elder 6% Rule (REQ-611, book-dig 2026-05-31) ──────────────────────────
+    def six_percent_ok(self, new_risk_usd: float, open_risk_usd: float,
+                       month_loss_usd: float,
+                       month_start_equity: float | None = None) -> tuple[bool, str]:
+        """Elder's 6% Rule: refuse a new entry if this month's realized losses PLUS
+        open risk on all positions PLUS this trade's risk would exceed 6% of
+        month-start equity. Note: a position stopped at breakeven has ZERO open
+        risk (caller excludes it), so protecting profits (REQ-608) frees budget."""
+        base = month_start_equity or self.total_equity
+        cap = base * SIX_PCT_MONTH_CAP
+        total = abs(month_loss_usd) + max(0.0, open_risk_usd) + max(0.0, new_risk_usd)
+        if total > cap:
+            return False, (f"6% rule: month-loss ${abs(month_loss_usd):.0f} + open-risk "
+                           f"${open_risk_usd:.0f} + trade ${new_risk_usd:.0f} = ${total:.0f} "
+                           f"> 6% cap ${cap:.0f} (Elder)")
+        return True, "ok"
 
     # ── tier prioritization (REQ-604.2) ───────────────────────────────────────
     @staticmethod

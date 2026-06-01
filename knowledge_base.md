@@ -3080,3 +3080,42 @@ USD (Dollar) → Commodities → Bonds → Stocks
 - **IV > 40% on single stock:** always use spreads (bull call or bull put spread) never naked long options — IV crush on resolution will destroy naked long option value
 - **Covered call writing rule (McMillan):** Write covered calls on 50% of your position when RSI14 > 65 — reduces cost basis while maintaining 50% upside exposure
 
+
+---
+
+## §RM — Portfolio Risk & System Discipline (Elder + Davey) — added 2026-05-31
+
+*From a requirements-driven deep-read of Elder, "The New Trading for a Living"
+(Ch. on the 2%/6% Rules) and Davey, "Building Winning Algorithmic Trading Systems".*
+
+### Elder's 2% and 6% Rules (portfolio risk control)
+- **2% Rule:** risk ≤ 2% of account equity on any single trade. (Our autonomous
+  caps — $500/option-trade, ~1% shares — sit well under this.)
+- **6% Rule (monthly circuit breaker):** stop opening NEW trades for the month
+  once **(this month's realized losses + open risk on all current positions)
+  reaches 6% of month-start equity.** Resume next month.
+- **Open-risk accounting:** open risk on a position = (entry − current stop) ×
+  size. A position whose stop is at **breakeven has ZERO open risk** → it no
+  longer counts against the 6% budget. **Corollary:** protecting profits (moving
+  the stop to breakeven, §3/REQ-608) literally **frees capacity for new trades.**
+- **Risk-per-trade ↔ concurrency:** at 2%/trade you can hold ≤3 positions before
+  the 6% cap; at 1%/trade, ≤6. Size per-trade risk to the concurrency you want.
+- Implemented: `risk_brain.six_percent_ok()`.
+
+### Davey's system-portfolio discipline
+- **Strategies decay — keep spares in reserve.** Do not assume a validated
+  strategy works forever; maintain a PIPELINE of validated strategies and monitor
+  live edge-decay, rotating in reserves as edges fade.
+- **Monte Carlo + Calmar (return/max-DD) is the primary metric**, above raw PF.
+  Randomize trade order to estimate worst-case drawdown; size off THAT, and judge
+  systems by return/drawdown, not net profit alone.
+- **Live drawdowns will be worse and longer than the backtest** — size money
+  management assuming both. Haircut the backtested max-DD.
+- **Selection bias is the rookie trap:** testing many instruments/variants then
+  keeping the winners inflates false positives — every strategy must clear its
+  OWN out-of-sample cost-robust gate (the discipline this project already holds).
+
+**Rules for our system (candidates, gated):** add the 6% monthly open-risk
+breaker + open-risk accounting to the risk brain (live); add Monte Carlo + Calmar
+to the validation harness; build a strategy pipeline + edge-decay monitor. All
+serve the conservative, capital-preserving objective (REQ-611).

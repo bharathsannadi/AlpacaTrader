@@ -124,3 +124,22 @@ def test_unknown_route_refused():
     rb = RiskBrain(total_equity=107_846)
     ok, reason = rb.can_enter("futures", 100, 100)
     assert not ok and "unknown route" in reason
+
+
+# ── Elder 6% Rule (REQ-611, book-dig) ─────────────────────────────────────────
+def test_six_percent_rule_blocks_over_cap():
+    rb = RiskBrain(total_equity=100_000)   # 6% = $6000
+    # month loss $3000 + open risk $2500 + new trade $1000 = $6500 > $6000
+    ok, reason = rb.six_percent_ok(new_risk_usd=1000, open_risk_usd=2500, month_loss_usd=3000)
+    assert not ok and "6% rule" in reason
+
+def test_six_percent_rule_allows_under_cap():
+    rb = RiskBrain(total_equity=100_000)
+    ok, _ = rb.six_percent_ok(new_risk_usd=1000, open_risk_usd=2000, month_loss_usd=1000)
+    assert ok  # $4000 < $6000
+
+def test_six_percent_breakeven_frees_budget():
+    # Elder: a breakeven-stopped position has ZERO open risk (caller passes 0)
+    rb = RiskBrain(total_equity=100_000)
+    ok, _ = rb.six_percent_ok(new_risk_usd=1500, open_risk_usd=0, month_loss_usd=4000)
+    assert ok  # $5500 < $6000 because breakeven positions free the budget

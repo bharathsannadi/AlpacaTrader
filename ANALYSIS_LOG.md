@@ -1495,3 +1495,21 @@ L1 = breakeven stop at +5% gain, trail 30% off the high-water mark, lock +10% fl
 - ❌ **TLT non-equity sleeve REFUTED (D).** 2022 was a rare joint stock+bond selloff (rates spiked), so bonds were NOT a haven — the sleeve made the tail WORSE. Honest lesson: a hedge only diversifies if uncorrelated IN THAT crisis; don't assume bonds protect.
 - ⚠️ **Reconciles the earlier H-SEL-REGIME result (per-Connors gate made 2022 worse):** the win here is PORTFOLIO-level — the skip mainly kills trend/breakout entries (death in a bear, breakout 2022 PF 0.03), which dominates the small dent to mean-reversion. Apply the regime overlay at the PORTFOLIO/risk-brain level, not per-mean-reversion-strategy.
 - **Next:** wire a portfolio regime gate (SPY<200SMA → no new entries) into the risk brain as a candidate, validated here; → incubation, not a live edit to frozen Connors. Consider regime-half (C) as a softer variant (keeps more upside, still cuts DD).
+
+---
+
+## 2026-05-31 — Requirements-driven book deep-read (Davey + Elder → REQ mapping)
+
+**Trigger:** operator request to deep-read the library for content serving our requirements (REQ-601..613). Mined Davey *Building Winning Algorithmic Trading Systems* + Elder *The New Trading for a Living*.
+
+| Finding (book, page) | Serves | Verdict / action |
+|---|---|---|
+| **Elder 6% Rule (p.224-226):** stop new entries for the month when (month's realized losses + open risk on all positions) ≥ 6% of month-start equity. 2%/trade → ≤3 concurrent; 1%/trade → ≤6. | REQ-611, REQ-602 | ❓ GAP → **add a monthly 6% open-risk circuit breaker to risk_brain.** We have daily-loss + options-weekly caps but NOT Elder's monthly portfolio rule. Our MAX_CONCURRENT=8 is slightly loose vs the 6% rule (~1%/trade × 8 = 8%); tighten or gate on open-risk. |
+| **Elder open-risk accounting (p.224):** a position whose stop is at breakeven has ZERO open risk → frees the 6% budget for a new trade. | REQ-608 + REQ-611 | ✅ SYNERGY → our breakeven ratchet (REQ-608) literally INCREASES capacity. **risk_brain should track OPEN RISK (Σ dist-to-stop × size), not just deployed capital** — then breakeven-stopped positions don't count. |
+| **Elder 2×ATR trailing stop "outside the zone of market noise" (p.237):** trail at every bar, gradually reducing risk. | REQ-608/609 | ✅ ENFORCED — matches our exit_engine (2×ATR init + trail). "Outside market noise" = the whipsaw caveat we found empirically (REQ-608.4). |
+| **Davey: strategies DECAY; keep spares in reserve (p.51):** "I naively thought I could trade the same strategies forever... had no extra strategies waiting in limbo when the first group lost their edge." | REQ-201 | ❓ GAP → **build a PIPELINE of validated strategies + monitor live edge-decay.** We have 4 validated; Davey says keep MORE in reserve and watch for decay. |
+| **Davey: Monte Carlo + return/drawdown (Calmar) is the #1 metric (p.75-83):** simulate trade-order randomization → worst-case DD; size off that, not the single historical curve. | REQ-202, REQ-611 | ❓ GAP → **add Monte Carlo to the validation harness + use Calmar (return/maxDD)**, not just PF. Directly serves the conservative/low-DD objective. |
+| **Davey: live drawdowns will be WORSE/longer than backtest (p.72):** size money management assuming both. | REQ-611 | ⚠️ → size for worse-than-backtest DD (haircut the backtest maxDD). |
+| **Davey: selection-bias rookie mistake (p.39):** testing 20-25 instruments then keeping the best = the multiple-comparisons trap. | REQ-202 | ✅ ENFORCED — exactly the discipline we've held (every strategy its OWN cost-robust gate; survivors → incubation). |
+
+**Net:** the deep-read produced 3 concrete enhancement candidates that strengthen the CONSERVATIVE objective (REQ-611): (1) Elder's **6% monthly open-risk circuit breaker** + open-risk accounting in risk_brain, (2) Davey's **Monte Carlo + Calmar** in validation, (3) a **strategy pipeline + edge-decay monitor** (REQ-201). All are risk-reducing, all align with the existing discipline, and the 6%-rule + breakeven synergy is elegant: protecting profits (REQ-608) literally frees risk budget. → candidates for the risk_brain / validation roadmap, gated as usual.
