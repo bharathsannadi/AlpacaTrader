@@ -185,6 +185,56 @@ def _live_option_mid(opt_client, occ: str) -> float | None:
     return None
 
 
+def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
+    """KB §9 liquidity pre-check for the screener ranking (#22): fetch the ATM
+    contract and verify OI + bid-ask WITHOUT placing an order, so an illiquid
+    option never shows as a Top Pick / ✅ BUY the executor would later reject.
+
+    Returns {ok, reason, atm_oi, ba_pct}. `ok` is True (liquid), False (confirmed
+    illiquid → demote the row), or None (couldn't check → leave the row as-is)."""
+    from datetime import datetime as _dt
+    sym = sym.upper()
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(sym)
+        hist = ticker.history(period="1d")
+        if hist.empty:
+            return {"ok": None, "reason": "no spot price"}
+        spot = float(hist["Close"].iloc[-1])
+        try:
+            chain = ticker.option_chain(expiry)
+        except Exception:
+            avail = list(ticker.options or ())
+            if not avail:
+                return {"ok": None, "reason": "no option chain"}
+            try:
+                tgt = _dt.strptime(expiry, "%Y-%m-%d").date()
+                expiry = min(avail, key=lambda d: abs((_dt.strptime(d, "%Y-%m-%d").date() - tgt).days))
+            except Exception:
+                expiry = avail[0]
+            chain = ticker.option_chain(expiry)
+        opts = (chain.calls if opt_type == "Call" else chain.puts)
+        opts = opts[opts["bid"] > 0].copy()
+        if opts.empty:
+            return {"ok": False, "reason": "no contracts with a live bid"}
+        opts["mid"]  = (opts["bid"] + opts["ask"]) / 2.0
+        opts["dist"] = (opts["strike"] - spot).abs()
+        atm = opts.sort_values("dist").iloc[0]
+        mid = float(atm["mid"]); bid = float(atm["bid"]); ask = float(atm["ask"])
+        oi  = int(atm.get("openInterest", 0) or 0)
+        ba  = (ask - bid) / mid if mid > 0 else 1.0
+        if mid <= 0:
+            return {"ok": False, "reason": "no valid ATM quote", "atm_oi": oi, "ba_pct": ba}
+        if oi < OPT_MIN_OI:
+            return {"ok": False, "reason": f"ATM OI {oi} < {OPT_MIN_OI}", "atm_oi": oi, "ba_pct": ba}
+        if ba > OPT_MAX_BID_ASK_PCT:
+            return {"ok": False, "reason": f"bid-ask {ba*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}%",
+                    "atm_oi": oi, "ba_pct": ba}
+        return {"ok": True, "reason": "liquid", "atm_oi": oi, "ba_pct": ba}
+    except Exception as e:
+        return {"ok": None, "reason": f"liquidity check failed: {e}"}
+
+
 def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
     """
     Execute a screener options recommendation.

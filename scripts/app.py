@@ -1757,6 +1757,40 @@ def _annotate_kb(data: dict) -> None:
             r["kb_match"] = None
 
 
+# §9 liquidity pre-check cache for the screener ranking (#22). OI/spread don't move
+# fast — cache 10 min and only check ✅ BUY option rows to limit option-chain fetches.
+_liquidity_cache: dict = {}
+_LIQUIDITY_TTL_SEC = 600
+
+
+def _annotate_liquidity(data: dict) -> None:
+    """Demote option rows whose ATM contract fails the KB §9 liquidity gate, so a
+    'Top Pick / ✅ BUY' is never something the executor will later reject for OI or
+    bid-ask (#22 — the HOOD/CVNA class). Fail-open: only demote on a CONFIRMED
+    illiquid result; an unknown (fetch failed) leaves the row unchanged."""
+    now = time.monotonic()
+    for o in data.get("options", []):
+        if o.get("action") != "✅ BUY":
+            continue
+        sym, expiry = (o.get("sym") or "").upper(), (o.get("expiry") or "")
+        if not sym or not expiry:
+            continue
+        key = (sym, expiry, o.get("opt_type", "Call"))
+        cached = _liquidity_cache.get(key)
+        if cached and now - cached[1] < _LIQUIDITY_TTL_SEC:
+            res = cached[0]
+        else:
+            res = screener_executor.liquidity_check(sym, expiry, o.get("opt_type", "Call"))
+            _liquidity_cache[key] = (res, now)
+        o["liquidity"] = res
+        if res.get("ok") is False:               # confirmed illiquid → not tradable
+            o["action"] = "⚠ Illiquid"
+            if str(o.get("badge", "")).startswith("⭐"):
+                o["badge"] = "📈 Valid"
+            o["confidence"] = (f"⚠ illiquid — {res.get('reason', '§9')} (won't fill) · "
+                               + o.get("confidence", ""))[:200]
+
+
 def _position_exit_plan(pos: dict) -> dict:
     """Compute the exit plan for a held daily position, for UI display.
     Returns {stop, target, trigger, instrument, entry, status}."""
@@ -2076,6 +2110,7 @@ def _refresh_screener_bg():
             pass
         data = screener.refresh_screener(positions)
         _annotate_kb(data)
+        _annotate_liquidity(data)
         _annotate_held_exits(data, positions)
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
@@ -2097,6 +2132,7 @@ def on_get_screener(data=None):
     cached = screener.get_cached()
     if cached.get("dt"):
         _annotate_kb(cached)
+        _annotate_liquidity(cached)
         try:
             _annotate_held_exits(cached, dtrad._load_positions())
         except Exception:
