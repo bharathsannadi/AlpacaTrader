@@ -2151,7 +2151,7 @@ function _scrConfCell(pct, principles) {
   const p = principles || {};
   const matched = (p.matched || []).map(s => "✓ " + s).join("\n");
   const failed  = (p.failed  || []).map(s => "✗ " + s).join("\n");
-  const tip = `KB-principles match ${pct}% (gate floor 60%)\n\n${matched}${failed ? "\n\n" + failed : ""}`
+  const tip = `KB match ${pct}% — share of codified KB rules this setup satisfies (NOT a win probability). Gate floor 60%.\n\n${matched}${failed ? "\n\n" + failed : ""}`
     .replace(/"/g, "'");
   const gate = pct < 60 ? " 🔒" : "";
   return `<td title="${tip}"><b style="color:${color}">${pct}%</b>${gate}</td>`;

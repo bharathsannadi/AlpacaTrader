@@ -649,7 +649,13 @@ def _build_options(dt_rows: list[dict], daily_positions: list[dict]) -> list[dic
             "structure": structure,
             "expiry":    expiry,
             "dte":       dte,
-            "ivr":       "—",
+            # IV proxy: we don't have a live IV-rank feed yet, so use HV20 as the
+            # documented proxy (line ~493). This is consistent with the structure
+            # decision above (both use the vol regime) and lets the KB §2 check
+            # evaluate instead of being silently docked for a missing IVR. True
+            # IVR will come from the Polygon options IV feed (tracked separately).
+            "ivr":       round(hv),
+            "ivr_is_proxy": True,
             "max_risk":  400,
             "dir_pct":   bt["dir_pct"],
             "pf":        bt["pf"],
