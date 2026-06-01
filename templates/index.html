@@ -641,6 +641,21 @@
   body.view-screener .log-panel      { display: none !important; }
   body.view-screener .screener-panel { display: flex; }
 
+  /* Positions view (#24 — dedicated open-positions table) */
+  .positions-panel { display: none; flex-direction: column; height: calc(100vh - 56px - 36px - 38px); overflow-y: auto; background: var(--bg); padding: var(--s-4); }
+  body.view-positions .dashboard       { display: none !important; }
+  body.view-positions .log-panel       { display: none !important; }
+  body.view-positions .screener-panel  { display: none !important; }
+  body.view-positions .positions-panel { display: flex; }
+  .postab-section-title { font-size: var(--fs-sm); font-weight: 600; color: var(--text); margin: var(--s-3) 0 var(--s-2); }
+  .postab-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+  .postab-table th { text-align: left; padding: 6px 10px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); }
+  .postab-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .postab-table tr:hover td { background: rgba(148,163,184,0.06); }
+  .postab-empty { color: var(--muted); padding: var(--s-4); text-align: center; }
+  .postab-pnl-up { color: var(--up); } .postab-pnl-down { color: var(--down); }
+  .postab-floor  { color: var(--up); font-weight: 600; }
+
   /* Screener tab */
   .screener-tab { color: #f59e0b !important; }
   .screener-tab.active { background: rgba(245,158,11,0.08) !important; border-bottom-color: #f59e0b !important; text-shadow: 0 0 16px rgba(245,158,11,0.5) !important; }
@@ -1514,6 +1529,7 @@
   </select>
   <div class="tab-divider" data-charts-only></div>
   <button class="symbol-tab screener-tab" id="tab-screener" onclick="showScreener()">🔍 Screener</button>
+  <button class="symbol-tab positions-tab" id="tab-positions" onclick="showPositions()">📊 Positions</button>
   <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
 </div>
 
@@ -2106,6 +2122,15 @@
       <span class="log-line log-INFO" style="color:#334155">Waiting for session to start...</span>
     </div>
   </div>
+</div>
+
+<!-- ── Positions tab (#24 — dedicated open-positions table) ─────────────────── -->
+<div class="positions-panel" id="positions-panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;">
+    <div class="card-title">📊 Open Positions</div>
+    <button class="scr-refresh-btn" onclick="socket.emit('refresh')">↻ Refresh</button>
+  </div>
+  <div id="positions-tab-body"><div class="postab-empty">Loading…</div></div>
 </div>
 
 <!-- ── Trade approval modal ──────────────────────────────────────────────── -->

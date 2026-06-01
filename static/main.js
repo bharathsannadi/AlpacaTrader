@@ -343,6 +343,13 @@ function updateUI(s) {
   // Open positions card
   if (s.open_positions !== undefined) renderPositions(s.open_positions, s.auto_positions);
 
+  // Positions tab (#24): cache + re-render if it's the active view
+  if (s.open_positions !== undefined || s.auto_positions !== undefined) {
+    _lastPositions = { open: s.open_positions || _lastPositions.open,
+                       auto: s.auto_positions || _lastPositions.auto };
+    if (document.body.classList.contains("view-positions")) _renderPositionsTable();
+  }
+
   // Refresh exec brief when trade count changes
   const newCount = (s.trades_today || []).length;
   if (newCount !== (updateUI._lastTradeCount ?? -1)) {
@@ -2008,9 +2015,9 @@ function setGridCount(n) {
 
 // ── View mode ─────────────────────────────────────────────────────────────────
 function _setViewMode(mode) {
-  document.body.classList.remove("view-chart", "view-settings", "view-log", "view-screener");
+  document.body.classList.remove("view-chart", "view-settings", "view-log", "view-screener", "view-positions");
   document.body.classList.add("view-" + mode);
-  document.querySelectorAll("#tab-chart, #tab-settings, #tab-log, #tab-screener, .bt-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll("#tab-chart, #tab-settings, #tab-log, #tab-screener, #tab-positions, .bt-tab").forEach(t => t.classList.remove("active"));
   if (mode === "chart") {
     const tc = document.getElementById("tab-chart");
     if (tc) tc.classList.add("active");
@@ -2053,6 +2060,74 @@ function showSettings() {
 function showLog() {
   _setViewMode("log");
   document.getElementById("tab-log").classList.add("active");
+}
+
+// ── Positions tab (#24) ───────────────────────────────────────────────────────
+let _lastPositions = { open: [], auto: [] };
+
+function showPositions() {
+  _setViewMode("positions");
+  const t = document.getElementById("tab-positions");
+  if (t) t.classList.add("active");
+  _renderPositionsTable();
+  socket.emit("refresh");   // pull fresh account/positions
+}
+
+function _posPnl(usd, pct) {
+  if (usd == null) return "—";
+  const cls = usd >= 0 ? "postab-pnl-up" : "postab-pnl-down";
+  return `<span class="${cls}">${usd >= 0 ? "+" : ""}$${usd.toFixed(0)}${pct != null ? ` (${pct.toFixed(1)}%)` : ""}</span>`;
+}
+
+function _renderPositionsTable() {
+  const el = document.getElementById("positions-tab-body");
+  if (!el) return;
+  const open = (_lastPositions.open || []).filter(p => (p.remaining ?? p.contracts ?? 0) > 0);
+  const auto = (_lastPositions.auto || []).filter(p => (p.qty || 0) > 0);
+  if (!open.length && !auto.length) {
+    el.innerHTML = `<div class="postab-empty">No open positions.</div>`;
+    return;
+  }
+  let html = "";
+  // Autonomous engine — stocks
+  if (auto.length) {
+    html += `<div class="postab-section-title">🤖 Autonomous engine — stocks (${auto.length})</div>`;
+    html += `<table class="postab-table"><thead><tr>
+      <th>Symbol</th><th>Qty</th><th>Strategy</th><th>Entry</th><th>Now</th>
+      <th>Stop / Floor</th><th>Exit</th><th>P&L</th></tr></thead><tbody>`;
+    html += auto.map(p => {
+      const isFloor = p.profit_floor;
+      const stopCell = `<span class="${isFloor ? "postab-floor" : ""}">${isFloor ? "Floor" : "Stop"} $${(p.stop || 0).toFixed(2)}${p.tier >= 1 ? ` ·T${p.tier}` : ""}</span>`;
+      const cap = p.days_to_cap != null ? `cap ${p.days_to_cap}d` : "cap 21d";
+      return `<tr>
+        <td><b>${p.sym}</b>${p.dry_run ? ' <span style="color:var(--muted);font-size:9px">[DRY]</span>' : ""}</td>
+        <td>${p.qty}</td><td>${p.strategy || "—"}</td>
+        <td>$${(p.entry || 0).toFixed(2)}</td><td>$${(p.last || p.entry || 0).toFixed(2)}</td>
+        <td>${stopCell}</td><td>trail · ${cap}</td><td>${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
+    }).join("");
+    html += `</tbody></table>`;
+  }
+  // Intraday options
+  if (open.length) {
+    html += `<div class="postab-section-title">🎯 Options (${open.length})</div>`;
+    html += `<table class="postab-table"><thead><tr>
+      <th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Stop</th>
+      <th>T1</th><th>T2</th><th>P&L %</th></tr></thead><tbody>`;
+    html += open.map(p => {
+      const dir = (p.direction || "bull").toLowerCase();
+      const qty = p.remaining ?? p.contracts ?? 0;
+      const unreal = p.unrealized_pct;
+      const pcls = unreal == null ? "" : unreal >= 0 ? "postab-pnl-up" : "postab-pnl-down";
+      return `<tr>
+        <td><b>${p.symbol || p.sym || "—"}</b></td>
+        <td>${dir === "bull" ? "CALL" : "PUT"}</td><td>${qty}</td>
+        <td>$${(p.entry_price ?? 0).toFixed(2)}</td><td>$${(p.stop_price ?? 0).toFixed(2)}</td>
+        <td>$${(p.target_50 ?? 0).toFixed(2)}</td><td>$${(p.target_75 ?? 0).toFixed(2)}</td>
+        <td><span class="${pcls}">${unreal == null ? "—" : (unreal >= 0 ? "+" : "") + unreal.toFixed(1) + "%"}</span></td></tr>`;
+    }).join("");
+    html += `</tbody></table>`;
+  }
+  el.innerHTML = html;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
