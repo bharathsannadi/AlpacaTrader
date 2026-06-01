@@ -35,8 +35,8 @@ socket.on("login_required", () => {
     // Silent re-auth — submit cached credentials without showing the login modal.
     appendLog("Reconnecting…", "INFO");
     socket.emit("login", { api_key: creds.apiKey, api_secret: creds.apiSecret, paper: creds.paper });
-  } else {
-    // No cached credentials — show the login modal.
+  } else if (!_guestCharts) {
+    // No cached credentials — show the login modal (skip in guest charts mode).
     document.getElementById("login-overlay").classList.remove("hidden");
     appendLog("Session expired — please log in again.", "WARNING");
   }
@@ -203,9 +203,13 @@ function playAlertSound() {
   }
 }
 
+// Guest charts mode: /charts is viewable WITHOUT Alpaca login (bars come from
+// yfinance via the ungated get_chart_data handler — no TradingClient needed).
+let _guestCharts = false;
+
 // ── UI update ─────────────────────────────────────────────────────────────────
 function updateUI(s) {
-  if (!s.logged_in) {
+  if (!s.logged_in && !_guestCharts) {
     document.getElementById("login-overlay").classList.remove("hidden");
   }
 
@@ -681,7 +685,14 @@ function setMaxPortfolioRisk() {
 document.addEventListener("DOMContentLoaded", () => {
   // Open the view that matches the URL path (/charts, /screener, /log), else Settings
   const _path = window.location.pathname.replace(/\/+$/, "");
-  if      (_path === "/charts")   { showCharts(); }
+  if (_path === "/charts") {
+    // Guest charts — no login required (yfinance data). Hide the modal + build the grid.
+    _guestCharts = true;
+    const ov = document.getElementById("login-overlay");
+    if (ov) ov.classList.add("hidden");
+    if (!_gridInitialised) { gridManager.init(); _gridInitialised = true; }
+    showCharts();
+  }
   else if (_path === "/screener") { showScreener(); }
   else if (_path === "/log")      { showLog(); }
   else                            { _setViewMode("settings"); }
@@ -1532,17 +1543,25 @@ class ChartPane {
     // ── Support & resistance ──────────────────────────────────────────────────
     this._clearPivotLines();
     if (this._ind.pivots && this.candleSeries) {
-      // Use server prior_levels — works on all timeframes including 1D range
-      // (client-side bar grouping fails when viewing only today's bars)
+      // Prefer server prior_levels (needs Alpaca); fall back to client-side
+      // _computePivots(bars) so pivots also work without login (guest charts).
       const pl_data = ov.prior_levels || {};
-      const pdH = pl_data.prev_high, pdL = pl_data.prev_low, pdC = pl_data.prev_close;
-      if (pdH && pdL && pdC) {
-        const pp = (pdH + pdL + pdC) / 3, rng = pdH - pdL;
+      let pp, r1, r2, r3, s1, s2, s3;
+      if (pl_data.prev_high && pl_data.prev_low && pl_data.prev_close) {
+        const pdH = pl_data.prev_high, pdL = pl_data.prev_low, pdC = pl_data.prev_close;
+        pp = (pdH + pdL + pdC) / 3; const rng = pdH - pdL;
+        r1 = 2*pp - pdL; r2 = pp + rng; r3 = pdH + 2*(pp-pdL);
+        s1 = 2*pp - pdH; s2 = pp - rng; s3 = pdL - 2*(pdH-pp);
+      } else {
+        const cp = ChartPane._computePivots(bars, (this.interval || "1d"));
+        if (cp) ({ pp, r1, r2, r3, s1, s2, s3 } = cp);
+      }
+      if (pp != null) {
         const addPL = (price, color, title) =>
           this._pivotLines.push(this.candleSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
-        addPL(pp,               "#94a3b8",   "PP");
-        addPL(2*pp - pdL,       "#f43f5e99", "R1"); addPL(pp + rng,       "#f43f5e66", "R2"); addPL(pdH + 2*(pp-pdL), "#f43f5e44", "R3");
-        addPL(2*pp - pdH,       "#00e5a099", "S1"); addPL(pp - rng,       "#00e5a066", "S2"); addPL(pdL - 2*(pdH-pp), "#00e5a044", "S3");
+        addPL(pp, "#94a3b8", "PP");
+        addPL(r1, "#f43f5e99", "R1"); addPL(r2, "#f43f5e66", "R2"); addPL(r3, "#f43f5e44", "R3");
+        addPL(s1, "#00e5a099", "S1"); addPL(s2, "#00e5a066", "S2"); addPL(s3, "#00e5a044", "S3");
       }
     }
 
@@ -1785,7 +1804,7 @@ class ChartPane {
     for (let i=8;  i<n; i++) tenkan.push({ time:bars[i].time, value:midN(bars,i-8,9) });
     for (let i=25; i<n; i++) {
       const k=midN(bars,i-25,26); kijun.push({ time:bars[i].time, value:k });
-      const ti=i-17; // tenkan index offset (i-8 from tenkan start i=8 → tenkan[i-8])
+      const ti=i-8; // tenkan[] index 0 = bar 8, so tenkan at bar i is tenkan[i-8]
       const tVal=ti>=0&&ti<tenkan.length?tenkan[ti].value:null;
       if (tVal!=null) senkouA.push({ time:bars[i].time, value:(tVal+k)/2 });
     }
