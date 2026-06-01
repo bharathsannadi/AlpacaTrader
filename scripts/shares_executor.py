@@ -44,9 +44,10 @@ def buy(symbol: str, qty: int, dry_run: bool = False) -> dict:
         order = c.submit_order(MarketOrderRequest(
             symbol=symbol, qty=qty, side=OrderSide.BUY,
             time_in_force=TimeInForce.DAY))
-        log.info(f"[shares] BUY {qty} {symbol} → order {order.id}")
+        fill = _fill_price(c, order.id)   # best-effort actual fill (paper fills fast)
+        log.info(f"[shares] BUY {qty} {symbol} → order {order.id} fill={fill}")
         return {"success": True, "symbol": symbol, "qty": qty,
-                "order_id": str(order.id), "dry_run": False}
+                "order_id": str(order.id), "fill_price": fill, "dry_run": False}
     except Exception as e:
         log.warning(f"[shares] BUY {symbol} failed: {e}")
         return {"success": False, "symbol": symbol, "message": str(e)}
@@ -67,6 +68,25 @@ def close(symbol: str, dry_run: bool = False) -> dict:
     except Exception as e:
         log.warning(f"[shares] CLOSE {symbol} failed: {e}")
         return {"success": False, "symbol": symbol, "message": str(e)}
+
+
+def _fill_price(client, order_id) -> float | None:
+    """Best-effort actual fill price (paper market orders fill near-instantly)."""
+    try:
+        import time as _t
+        for _ in range(3):
+            o = client.get_order_by_id(order_id)
+            if getattr(o, "filled_avg_price", None):
+                return float(o.filled_avg_price)
+            _t.sleep(0.4)
+    except Exception:
+        pass
+    return None
+
+
+def close_fill(symbol: str) -> float | None:
+    """Approximate close fill = latest price (for slippage on exit)."""
+    return current_price(symbol)
 
 
 def current_price(symbol: str) -> float | None:

@@ -892,6 +892,13 @@ def _run_eod_review(trades_snapshot: list) -> None:
         for line in review.splitlines():
             if line.strip():
                 socketio.emit("log", {"message": line, "level": "INFO"})
+        # Autonomous-engine EOD summary (its own closed-trades review)
+        try:
+            for line in auto_engine.eod_summary().splitlines():
+                if line.strip():
+                    socketio.emit("log", {"message": line, "level": "INFO"})
+        except Exception as e:
+            log.warning(f"auto-engine EOD summary failed: {e}")
         log.info("EOD Review: complete")
     except Exception as e:
         log.warning(f"EOD Review failed: {e}")

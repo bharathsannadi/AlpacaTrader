@@ -41,6 +41,55 @@ import os, json as _json
 from pathlib import Path as _Path
 POSITIONS_FILE = _Path.home() / ".spy_trader" / "auto_engine_positions.json"
 MONTH_PNL_FILE = _Path.home() / ".spy_trader" / "auto_engine_month_pnl.json"
+TRADES_LOG_FILE = _Path.home() / ".spy_trader" / "auto_engine_trades.json"
+
+
+def _log_closed_trade(rec: dict) -> None:
+    """Append a closed-trade record (append-only) for post-day review."""
+    try:
+        hist = []
+        if TRADES_LOG_FILE.exists():
+            hist = _json.loads(TRADES_LOG_FILE.read_text())
+        hist.append(rec)
+        TRADES_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TRADES_LOG_FILE.write_text(_json.dumps(hist, indent=2))
+    except Exception as e:
+        log.warning(f"[auto-engine] log trade failed: {e}")
+
+
+def eod_summary() -> str:
+    """One-shot end-of-day review of the autonomous engine's CLOSED trades today.
+    Aggregates n / win% / P&L overall and per-strategy. Logs + returns the text."""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    try:
+        hist = _json.loads(TRADES_LOG_FILE.read_text()) if TRADES_LOG_FILE.exists() else []
+    except Exception:
+        hist = []
+    todays = [t for t in hist if t.get("exit_date") == today]
+    open_now = _load_positions()
+    if not todays and not open_now:
+        msg = "[auto-engine EOD] no trades closed and no open positions today."
+        log.info(msg); return msg
+    wins = [t for t in todays if t.get("pnl_usd", 0) > 0]
+    loss = [t for t in todays if t.get("pnl_usd", 0) < 0]
+    tot = sum(t.get("pnl_usd", 0) for t in todays)
+    wr = (len(wins) / len(todays) * 100) if todays else 0
+    avg_slip = (sum(abs(t.get("entry_slippage_bps", 0)) for t in todays) / len(todays)) if todays else 0
+    by_strat: dict[str, list] = {}
+    for t in todays:
+        by_strat.setdefault(t.get("strategy", "?"), []).append(t.get("pnl_usd", 0))
+    lines = [
+        "── [auto-engine] EOD review ──",
+        f"  Closed today: {len(todays)}  ({len(wins)}W / {len(loss)}L, win {wr:.0f}%)  "
+        f"P&L ${tot:+.0f}  avg entry-slippage {avg_slip:.1f}bp",
+        f"  Open positions carried: {len(open_now)}",
+    ]
+    for st, pnls in sorted(by_strat.items(), key=lambda kv: -sum(kv[1])):
+        lines.append(f"    {st:18} n={len(pnls):2}  P&L ${sum(pnls):+.0f}")
+    msg = "\n".join(lines)
+    log.info(msg)
+    return msg
 
 
 def _open_risk(positions: list[dict]) -> float:
@@ -302,11 +351,16 @@ def execute_plan(plan: dict, dry_run: bool = False,
         res = shares_executor.buy(s.symbol, d.qty, dry_run=dry_run)
         if not res.get("success"):
             continue
-        init_stop = s.price - 2.0 * s.atr if s.atr > 0 else s.price * 0.92
-        st = eng.init_position(entry=s.price, init_stop=init_stop)
+        # actual fill (entry slippage vs the signal price) for review
+        fill = res.get("fill_price") or s.price
+        slip_bps = round((fill - s.price) / s.price * 1e4, 1) if s.price else 0.0
+        init_stop = fill - 2.0 * s.atr if s.atr > 0 else fill * 0.92
+        st = eng.init_position(entry=fill, init_stop=init_stop)
         positions.append({
             "sym": s.symbol, "strategy": s.strategy, "route": "stocks",
-            "qty": d.qty, "entry_price": s.price, "entry_date": _date.today().isoformat(),
+            "qty": d.qty, "entry_price": fill, "signal_price": s.price,
+            "entry_slippage_bps": slip_bps,
+            "entry_date": _date.today().isoformat(),
             "order_id": res.get("order_id"), "exit_state": _asdict(st), "dry_run": dry_run,
         })
         held.add(s.symbol)
@@ -341,9 +395,20 @@ def manage_exits(dry_run: bool = False) -> None:
         if action == "exit" or held_days >= 21:
             reason = why if action == "exit" else f"time cap {held_days}d"
             shares_executor.close(p["sym"], dry_run=p.get("dry_run", dry_run))
-            realized = (px - p.get("entry_price", px)) * p.get("qty", 0)
+            entry = p.get("entry_price", px)
+            realized = (px - entry) * p.get("qty", 0)
+            pnl_pct = round((px - entry) / entry * 100, 2) if entry else 0.0
             _record_realized(realized)   # feed the monthly 6% rule (REQ-611)
-            log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  P&L ${realized:+.0f}")
+            _log_closed_trade({          # append-only review log
+                "sym": p["sym"], "strategy": p.get("strategy"), "route": "stocks",
+                "qty": p.get("qty"), "entry_price": entry, "exit_price": round(px, 2),
+                "entry_date": p.get("entry_date"), "exit_date": _date.today().isoformat(),
+                "hold_days": held_days, "pnl_usd": round(realized, 2), "pnl_pct": pnl_pct,
+                "reason": reason, "entry_slippage_bps": p.get("entry_slippage_bps", 0),
+                "dry_run": p.get("dry_run", dry_run),
+            })
+            log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  "
+                     f"P&L ${realized:+.0f} ({pnl_pct:+.1f}%)")
         else:
             still_open.append(p)
     _save_positions(still_open)
