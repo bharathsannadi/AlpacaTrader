@@ -2079,16 +2079,19 @@ def on_execute_screener_option(data=None):
     with _state_lock:
         dry = state["dry_run"]
 
-    # KB-principles + debate gate (operator directive — even manual clicks must
-    # match the knowledge base). Score from the row payload the UI sent.
-    allowed, gate_reason = _kb_and_debate_gate(data)
-    if not allowed:
-        socketio.emit("screener_order_result", {
-            "success": False, "sym": sym,
-            "message": f"Blocked by KB/debate gate — {gate_reason}"
-        }, to=request.sid)
-        _emit_log(f"EXEC ⛔ {sym} blocked by gate — {gate_reason}", level="WARNING")
-        return
+    # KB-principles + debate gate. Manual clicks can OVERRIDE (second click) —
+    # the gate is advisory for a conscious manual trade, hard for the auto engine.
+    if not data.get("kb_override"):
+        allowed, gate_reason = _kb_and_debate_gate(data)
+        if not allowed:
+            socketio.emit("screener_order_result", {
+                "success": False, "sym": sym, "gate_blocked": True,
+                "message": f"{gate_reason}. Click again to override."
+            }, to=request.sid)
+            _emit_log(f"EXEC ⛔ {sym} blocked by gate — {gate_reason}", level="WARNING")
+            return
+    else:
+        _emit_log(f"EXEC ⚠️ {sym} KB gate OVERRIDDEN (manual)", level="WARNING")
 
     sid = request.sid
     log.info(f"execute_screener_option: {sym}  structure={data.get('structure')}  "
@@ -2100,6 +2103,48 @@ def on_execute_screener_option(data=None):
         level = "INFO" if result.get("success") else "WARNING"
         _emit_log(f"SCREENER EXEC  {result.get('message', '')}", level=level)
 
+    socketio.start_background_task(_run)
+
+
+@socketio.on("execute_screener_stock")
+@require_auth
+def on_execute_screener_stock(data=None):
+    """Buy 10 shares of a screener stock pick (REQ-606), KB-gated (override-able)."""
+    if not data:
+        return
+    sym = str(data.get("sym", "")).upper().strip()
+    if not sym or not sym.replace(".", "").isalpha():
+        socketio.emit("screener_order_result", {"success": False, "sym": sym,
+                      "message": "Invalid symbol."}, to=request.sid)
+        return
+    with _state_lock:
+        dry = state["dry_run"]
+        vix = state.get("vix")
+    # KB-principles gate (score the stock row) — manual clicks can override
+    if not data.get("kb_override"):
+        try:
+            sc = kb_principles.score_stock_candidate(data, vix=vix)
+            if sc["pct"] < kb_principles.KB_MATCH_MIN:
+                socketio.emit("screener_order_result", {
+                    "success": False, "sym": sym, "gate_blocked": True,
+                    "kb_score": sc["pct"],
+                    "message": (f"KB match {sc['pct']}% < {kb_principles.KB_MATCH_MIN}% "
+                                f"— {'; '.join(sc['failed'][:2])}. Click again to override."),
+                }, to=request.sid)
+                return
+        except Exception as e:
+            log.warning(f"stock gate scoring error: {e}")
+    sid = request.sid
+
+    def _run():
+        import shares_executor
+        res = shares_executor.buy(sym, 10, dry_run=dry)
+        res["sym"] = sym
+        res["message"] = (f"Bought 10 {sym}" if res.get("success") else
+                          res.get("message", "stock order failed")) + (" [dry]" if dry else "")
+        socketio.emit("screener_order_result", res)
+        _emit_log(f"SCREENER STOCK EXEC  {res['message']}",
+                  level="INFO" if res.get("success") else "WARNING")
     socketio.start_background_task(_run)
 
 

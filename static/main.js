@@ -2166,13 +2166,14 @@ function _renderDtTable(rows) {
   const valid   = rows.filter(r => r.valid);
   const neutral = rows.filter(r => !r.valid);
   const all     = [...valid, ...neutral].slice(0, 15);
+  window._scrDtRows = all;   // for the per-row Execute button
 
   // Update tab count badge
   const countEl = document.getElementById("scr-stocks-count");
   if (countEl) countEl.textContent = all.length || "—";
 
   if (!all.length) {
-    tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+    tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
       Loading live data… (takes ~60 s for 25 symbols)</td></tr>`;
     return;
   }
@@ -2244,9 +2245,12 @@ function _renderDtTable(rows) {
       <td>${retDisp}</td>
       ${_scrConfCell(r.kb_match, r.kb_principles)}
       <td>${r.held ? _scrExitInline(r.exit_plan) : pickDisp}</td>
+      <td>${(isValid && !r.held)
+        ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerStock(${all.indexOf(r)})' title="Buy 10 shares of ${r.sym} (paper)">⚡ Buy</button>`
+        : `<span style="color:var(--muted);font-size:10px">—</span>`}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
-      <td colspan="13">
+      <td colspan="14">
         <div class="scr-detail-panel">
           ${reason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${reason}</div>` : ""}
           ${strategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${strategy}</div>` : ""}
@@ -2380,24 +2384,27 @@ socket.on("screener_data", function(data) {
 });
 
 // Result handler for options execution
+window._kbBlocked = {};
 socket.on("screener_order_result", function(r) {
   const ok   = r.success;
   const sym  = r.sym || "";
   const msg  = r.message || (ok ? "Order submitted" : "Order failed");
   const paper = r.paper !== false;  // default true = paper
 
-  // Toast notification
+  // Gate-blocked manual click → arm an override so a second click forces it
+  if (r.gate_blocked) { window._kbBlocked[sym] = true; }
+  else if (ok) { delete window._kbBlocked[sym]; }
+
   _scrToast(
-    ok ? `✅ ${sym} Order Submitted${paper ? " (paper)" : " ⚠ LIVE!"}` : `❌ ${sym} Order Failed`,
+    ok ? `✅ ${sym} Order Submitted${paper ? " (paper)" : " ⚠ LIVE!"}`
+       : (r.gate_blocked ? `⚠️ ${sym} below KB floor` : `❌ ${sym} Order Failed`),
     msg,
-    ok ? (paper ? "info" : "warn") : "error"
+    ok ? (paper ? "info" : "warn") : (r.gate_blocked ? "warn" : "error")
   );
 
-  // Re-enable any spinning execute buttons
-  document.querySelectorAll(".scr-exec-btn").forEach(b => {
-    b.disabled = false;
-    b.textContent = "⚡ Execute";
-  });
+  // Re-enable execute buttons (restore the right label per table)
+  document.querySelectorAll("#scr-opt-tbody .scr-exec-btn").forEach(b => { b.disabled = false; b.textContent = "⚡ Execute"; });
+  document.querySelectorAll("#scr-dt-tbody  .scr-exec-btn").forEach(b => { b.disabled = false; b.textContent = "⚡ Buy"; });
 });
 
 // ── Options execute function ───────────────────────────────────────────────────
@@ -2423,6 +2430,32 @@ function _execScreenerOption(idx) {
     expiry:    o.expiry,
     opt_type:  o.opt_type || "Call",
     max_risk:  o.max_risk || 400,
+    // scoring fields so the server KB gate can evaluate the row (was missing →
+    // gate saw 0% dir / 0 PF and blocked valid picks like HOOD)
+    dir_pct:   o.dir_pct,
+    pf:        o.pf,
+    ivr:       o.ivr,
+    direction: o.direction,
+    signal:    o.signal,
+    kb_override: !!window._kbBlocked[o.sym],
+  });
+}
+
+// ── Stock execute function (buy 10 shares, paper) ─────────────────────────────
+function _execScreenerStock(idx) {
+  const rows = window._scrDtRows || [];
+  const r = rows[idx];
+  if (!r) return;
+  if (!_autoTrade) {
+    if (!confirm(`Buy 10 shares of ${r.sym} (${r.setup})?\n\nPrice ~$${(r.price||0).toFixed(2)}  ·  Paper (dry_run mirrors server)`)) return;
+  }
+  const btns = document.querySelectorAll("#scr-dt-tbody .scr-exec-btn");
+  const btn = btns[idx];
+  if (btn) { btn.disabled = true; btn.textContent = "⏳…"; }
+  socket.emit("execute_screener_stock", {
+    sym: r.sym, price: r.price, setup: r.setup, valid: r.valid,
+    bt_pf: r.bt_pf, rel_vol: r.rel_vol, rsi14: r.rsi14, impulse: r.impulse,
+    kb_override: !!window._kbBlocked[r.sym],
   });
 }
 
