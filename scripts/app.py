@@ -109,6 +109,10 @@ socketio = SocketIO(
     async_mode=_ASYNC_MODE,           # eventlet preferred, threading fallback
     cookie="__Host-spy_io",
     manage_session=False,
+    # Tolerate brief eventlet-hub stalls (network blips, slow yfinance) without
+    # dropping the socket — a drop forces a reconnect that logs the browser out.
+    ping_timeout=60,
+    ping_interval=25,
 )
 
 # ── Rate limiter (login endpoint) ─────────────────────────────────────────────
@@ -419,8 +423,10 @@ _auto_exec_date:  str  = ""
 # ── Daily P&L circuit breaker ────────────────────────────────────────────────
 # Snapshot equity at start-of-day; halt auto-execute if drawdown exceeds limit.
 DAILY_LOSS_LIMIT_PCT = 2.0   # halt auto-exec if today's equity drops > 2%
+LOSS_BREACH_CONFIRM  = 2     # consecutive breaching reads required to halt (debounce)
 _session_start_equity: float = 0.0
 _session_start_date:   str   = ""
+_loss_breach_count:    int   = 0     # consecutive readings under the loss limit
 
 
 def _load_auto_exec_state() -> None:
@@ -1025,6 +1031,17 @@ def health():
 def on_connect():
     ip = request.remote_addr
     security_log.info(f"WebSocket connect from {ip}")
+    # Restore auth across reconnects from the Flask session cookie (8h lifetime).
+    # Auth is otherwise bound to the socket id, so a reconnect (after any hub stall
+    # or network blip) would log the browser out and force an Alpaca re-login —
+    # the "logging off often" symptom. If this browser already authenticated and
+    # the shared Alpaca client is connected, silently re-grant the new sid.
+    if (request.sid not in authenticated_sids
+            and session.get("authenticated")
+            and getattr(trader, "TRADING_CLIENT", None) is not None):
+        with _state_lock:
+            authenticated_sids.add(request.sid)
+        security_log.info(f"Re-authenticated reconnecting browser from {ip} (session cookie)")
     # Per-client state with `logged_in` reflecting this specific socket's auth.
     snapshot = _state_snapshot()
     snapshot["logged_in"] = request.sid in authenticated_sids
@@ -1151,7 +1168,8 @@ def on_login(data):
         state["logged_in"]   = True
         state["paper_mode"]  = paper
         authenticated_sids.add(request.sid)
-    session["authenticated"]  = True            # allows /api/status HTTP endpoint
+    session.permanent         = True            # honor PERMANENT_SESSION_LIFETIME (8h)
+    session["authenticated"]  = True            # allows /api/status + reconnect re-auth
     session["api_key_prefix"] = api_key[:6] + "…"
     session["login_time"]     = datetime.now(timezone.utc).isoformat()
     login_tracker.record_success(ip)
@@ -1878,19 +1896,38 @@ def _auto_exec_options(data: dict) -> None:
     if _session_start_equity > 0:
         try:
             cur_eq = float(trader.account_value() or 0.0)
+            # Guard against a failed/garbage equity fetch. account_value() returns
+            # 0 / None on a transient API or DNS hiccup; a real account holding cash
+            # + long positions cannot read $0, and given the risk caps a true
+            # single-day drop past -50% is impossible. Treat such readings as bad
+            # DATA, not a real loss — skip the check rather than false-halting.
+            global _loss_breach_count
             dd_pct = (cur_eq - _session_start_equity) / _session_start_equity * 100
-            if dd_pct <= -DAILY_LOSS_LIMIT_PCT:
-                _emit_log(
-                    f"⛔ AUTO-EXEC HALTED — daily P&L {dd_pct:+.2f}% breached "
-                    f"-{DAILY_LOSS_LIMIT_PCT:.1f}% loss limit (equity "
-                    f"${cur_eq:,.2f} vs start ${_session_start_equity:,.2f})",
-                    level="WARNING",
-                )
-                # Disarm so the user has to explicitly re-arm tomorrow
-                with _state_lock:
-                    state["auto_execute_options"] = False
-                emit_state()
-                return
+            if cur_eq <= 0 or dd_pct <= -50.0:
+                # Implausible reading (failed fetch): don't count it either way.
+                log.warning(f"[auto-exec] ignoring implausible equity reading "
+                            f"${cur_eq:,.2f} (dd {dd_pct:+.1f}%) — likely a failed "
+                            f"fetch, not a real loss; circuit breaker not tripped")
+            elif dd_pct <= -DAILY_LOSS_LIMIT_PCT:
+                # Debounce: require LOSS_BREACH_CONFIRM consecutive breaching reads
+                # so a single flaky equity fetch can't disarm a healthy account.
+                _loss_breach_count += 1
+                if _loss_breach_count >= LOSS_BREACH_CONFIRM:
+                    _emit_log(
+                        f"⛔ AUTO-EXEC HALTED — daily P&L {dd_pct:+.2f}% breached "
+                        f"-{DAILY_LOSS_LIMIT_PCT:.1f}% loss limit (equity "
+                        f"${cur_eq:,.2f} vs start ${_session_start_equity:,.2f})",
+                        level="WARNING",
+                    )
+                    with _state_lock:
+                        state["auto_execute_options"] = False
+                    emit_state()
+                    return
+                log.warning(f"[auto-exec] loss-limit breach {_loss_breach_count}/"
+                            f"{LOSS_BREACH_CONFIRM} (dd {dd_pct:+.1f}%, equity "
+                            f"${cur_eq:,.2f}) — not halting until confirmed")
+            else:
+                _loss_breach_count = 0          # healthy reading resets the streak
         except Exception as e:
             log.warning(f"[auto-exec] equity check failed: {e}")
 
