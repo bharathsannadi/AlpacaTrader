@@ -857,6 +857,14 @@ def position_monitor() -> None:
                 refresh_account()
                 emit_state()
 
+            # Autonomous-engine exit management (REQ-608/609 dynamic exits on its
+            # own paper positions). Cheap; runs every tick when execute mode is on.
+            if auto_engine.DUAL_ENGINE_ENABLED and auto_engine.DUAL_ENGINE_MODE == "execute":
+                try:
+                    auto_engine.manage_exits(dry_run=False)
+                except Exception as e:
+                    log.warning(f"[auto-engine] manage_exits error: {e}")
+
         except Exception as e:
             log.warning(f"position_monitor error: {e}")
 
@@ -1918,23 +1926,32 @@ _SHADOW_ETF_SET = set(ETFS_TRADE) | set(ETFS_HEDGE)
 
 
 def _run_shadow_engine():
-    """Run one SHADOW autonomous cycle: generate signals → route → size → LOG the
-    plan. Places NO orders (Phase 5b shadow). Gated by DUAL_ENGINE_ENABLED."""
+    """Run one autonomous cycle. In "execute" mode it places PAPER orders through
+    all rails (regime-skip, sleeves/caps, dedup, concurrent cap); in "shadow" mode
+    it only logs. PAPER-only by hard guard in shares_executor. Gated by
+    DUAL_ENGINE_ENABLED + market open."""
     try:
         from universe import ALL as _UNI
         with _state_lock:
             equity = state.get("account_value") or 0.0
+            logged = state["logged_in"]
+        if not logged:
+            return
         if equity <= 0:
             try:
                 equity = float(trader.account_value() or 0.0)
             except Exception:
                 equity = 0.0
         if equity <= 0:
-            log.info("[auto-engine] no equity yet — shadow cycle skipped")
+            log.info("[auto-engine] no equity yet — cycle skipped")
             return
-        plan = auto_engine.run_cycle(equity, list(_UNI), _SHADOW_ETF_SET, enabled=True)
+        # execute mode places real PAPER orders (dry_run=False); shadow logs only
+        _dry = (auto_engine.DUAL_ENGINE_MODE != "execute")
+        plan = auto_engine.run_cycle(equity, list(_UNI), _SHADOW_ETF_SET,
+                                     enabled=True, dry_run=_dry)
         if plan:
             socketio.emit("shadow_plan", {
+                "mode": plan.get("mode"), "risk_on": plan.get("risk_on"),
                 "planned": [
                     {"symbol": pt.signal.symbol, "strategy": pt.signal.strategy,
                      "route": pt.decision.route, "structure": pt.decision.structure,

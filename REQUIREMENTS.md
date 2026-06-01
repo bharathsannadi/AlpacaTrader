@@ -333,3 +333,19 @@ to live only via backtested, cost-robust variants (REQ-202/603.3), not by hand.*
 allow. Achieved when Phases 1–3 are wired end-to-end on the scheduler with no
 approval step. The operator still flips paper→live manually (REQ-607.3) and can
 always intervene (REQ-612.4).
+
+---
+
+## 16. Live paper testing (always) + multi-account A/B
+
+| ID | Requirement | Rationale / source | Status |
+|----|-------------|--------------------|--------|
+| **REQ-613** | **Always do LIVE testing on paper** — validate under real fills/slippage on the paper account, not just backtests/shadow | Operator: "the whole idea is testing" | 🔄 (building) |
+| REQ-613.1 | **Support multiple paper accounts** for parallel testing — run different strategy configs / risk profiles side-by-side and compare (live A/B) | Operator: "we can create multiple paper accounts" | ⬜ |
+| REQ-613.2 | Each account's credentials in `.env` (e.g. ALPACA_API_KEY_A/B); a config selects which account a given engine instance trades | infra | ⬜ |
+| REQ-613.3 | All paper testing still runs through the full safety stack (regime-skip, KB/debate gate, sleeves/caps, dedup, hard caps) — "live paper" ≠ ungated | safety | 🔄 |
+
+**Note:** "always live on paper" supersedes the dry-run-default for the autonomous
+engine — it gets its OWN paper-execution path (places real PAPER orders, fake
+money) so the legacy dry-run paths are undisturbed. Multiple paper accounts let
+us A/B configs (e.g. regime-skip on vs off) under real fills simultaneously.

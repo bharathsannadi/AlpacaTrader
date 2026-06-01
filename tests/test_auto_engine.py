@@ -56,3 +56,28 @@ def test_sleeve_accumulates_within_cycle():
 def test_run_cycle_disabled_returns_none():
     # default flag OFF → no cycle
     assert run_cycle(100_000, ["AAPL"], ETF, enabled=False) is None
+
+
+# ── execution safety rails (REQ-205 regime-skip, dedup, caps) ─────────────────
+def test_regime_off_skips_all_entries():
+    sigs = [Signal("AAPL", "bull", "connors_rsi2", price=200, atr=4, has_vol_edge=False)]
+    plan = build_plan(sigs, equity=107_846, etf_set=ETF, risk_on=False)
+    assert plan["planned"] == []
+    assert any("risk-off" in r[1] for r in plan["skipped"])
+
+def test_dedup_skips_held_symbols():
+    sigs = [Signal("AAPL", "bull", "connors_rsi2", price=200, atr=4, has_vol_edge=False)]
+    plan = build_plan(sigs, equity=107_846, etf_set=ETF, held_symbols={"AAPL"})
+    assert plan["planned"] == []
+
+def test_max_new_per_cycle_cap():
+    sigs = [Signal(f"S{i}", "bull", "connors_rsi2", price=50, atr=1, has_vol_edge=False)
+            for i in range(10)]
+    plan = build_plan(sigs, equity=107_846, etf_set=ETF, max_new=3)
+    assert len(plan["planned"]) == 3
+
+def test_max_concurrent_cap_via_open_count():
+    sigs = [Signal(f"S{i}", "bull", "connors_rsi2", price=50, atr=1, has_vol_edge=False)
+            for i in range(10)]
+    plan = build_plan(sigs, equity=107_846, etf_set=ETF, open_count=7, max_concurrent=8, max_new=5)
+    assert len(plan["planned"]) == 1   # only 1 slot left (8-7)

@@ -25,15 +25,21 @@ from trade_signal import Signal
 from strategy import default_registry
 from risk_brain import RiskBrain
 from router import route_signal, RouteDecision, SPREADS_ENABLED
+from exit_engine import ExitEngine, ExitState
 
 log = logging.getLogger("auto_engine")
 
-DUAL_ENGINE_ENABLED = True    # SHADOW mode ON (logs intended trades, places NO
-                              # orders). Validate the pipeline end-to-end before
-                              # any live flip. Set False to silence the shadow loop.
+DUAL_ENGINE_ENABLED = True    # master on/off for the autonomous loop
+DUAL_ENGINE_MODE    = "execute"  # "shadow" (log only) | "execute" (place PAPER orders)
+MAX_CONCURRENT      = 8        # hard cap on open autonomous positions
+MAX_NEW_PER_CYCLE   = 3        # hard cap on new entries per cycle
 
 # entry constants (match the validated backtests)
 RSI_LO = 10.0
+
+import os, json as _json
+from pathlib import Path as _Path
+POSITIONS_FILE = _Path.home() / ".spy_trader" / "auto_engine_positions.json"
 
 
 @dataclass
@@ -98,27 +104,43 @@ def generate_live_signals(universe: list[str], etf_set: set,
 # ── pure plan builder (testable) ──────────────────────────────────────────────
 def build_plan(signals: list[Signal], equity: float, etf_set: set,
                large_cap_set: Optional[set] = None,
-               spreads_enabled: bool = SPREADS_ENABLED) -> dict:
+               spreads_enabled: bool = SPREADS_ENABLED,
+               risk_on: bool = True,
+               held_symbols: Optional[set] = None,
+               open_count: int = 0,
+               max_concurrent: int = MAX_CONCURRENT,
+               max_new: int = MAX_NEW_PER_CYCLE) -> dict:
     """Prioritize → route → size against a fresh RiskBrain; return the plan.
-    Pure: no I/O, no order placement. RiskBrain accumulates within the cycle so
-    sleeves/caps bind across the planned trades."""
+    Pure: no I/O, no order placement.
+
+    Safety rails baked in (the operator wanted them on for testing):
+      • REGIME-SKIP (validated 2026-05-31): if not risk_on (SPY<200SMA), no new entries
+      • dedup: skip a symbol we already hold (held_symbols)
+      • caps: ≤ max_new this cycle, ≤ max_concurrent total open positions
+      • sleeves/caps via RiskBrain (REQ-602/605/606)"""
+    held = {s.upper() for s in (held_symbols or set())}
+    if not risk_on:
+        return {"planned": [], "skipped": [("ALL", "regime risk-off (SPY<200SMA) — no new entries")],
+                "risk_snapshot": RiskBrain(total_equity=equity).snapshot(),
+                "n_signals": len(signals)}
     rb = RiskBrain(total_equity=equity)
     ordered = RiskBrain.prioritize(signals, etf_set, large_cap_set)
     planned: list[PlannedTrade] = []
     skipped: list[tuple[str, str]] = []
+    slots = max(0, max_concurrent - open_count)
+    seen: set = set()
     for sig in ordered:
+        if len(planned) >= max_new or len(planned) >= slots:
+            skipped.append((sig.symbol, "cap reached (max_new/concurrent)")); continue
+        if sig.symbol in held or sig.symbol in seen:
+            skipped.append((sig.symbol, "already held / duplicate")); continue
         d = route_signal(sig, rb, spreads_enabled=spreads_enabled)
         if d.route == "skip":
-            skipped.append((sig.symbol, d.reason))
-            continue
+            skipped.append((sig.symbol, d.reason)); continue
         rb.register_entry(d.route, d.est_cost_usd, d.est_risk_usd)
-        planned.append(PlannedTrade(sig, d))
-    return {
-        "planned": planned,
-        "skipped": skipped,
-        "risk_snapshot": rb.snapshot(),
-        "n_signals": len(signals),
-    }
+        planned.append(PlannedTrade(sig, d)); seen.add(sig.symbol)
+    return {"planned": planned, "skipped": skipped,
+            "risk_snapshot": rb.snapshot(), "n_signals": len(signals)}
 
 
 def format_plan(plan: dict) -> str:
@@ -137,19 +159,128 @@ def format_plan(plan: dict) -> str:
     return "\n".join(lines)
 
 
-# ── full cycle (data → plan → shadow-log) ─────────────────────────────────────
+# ── position store + regime + execution ───────────────────────────────────────
+def _load_positions() -> list[dict]:
+    try:
+        if POSITIONS_FILE.exists():
+            return _json.loads(POSITIONS_FILE.read_text())
+    except Exception:
+        pass
+    return []
+
+
+def _save_positions(positions: list[dict]) -> None:
+    try:
+        POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = POSITIONS_FILE.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(positions, indent=2))
+        tmp.replace(POSITIONS_FILE)
+    except Exception as e:
+        log.warning(f"[auto-engine] save positions failed: {e}")
+
+
+def spy_risk_on() -> bool:
+    """REGIME gate (validated 2026-05-31): True when SPY > its 200-SMA.
+    Fail-safe = False (risk-off → no new entries) if SPY data is unavailable."""
+    try:
+        from backtest_multi_strategy import _prep
+        df = _prep("SPY")
+        if df is None or len(df) < 1:
+            return False
+        r = df.iloc[-1]
+        return bool(r["close"] > r["sma200"])
+    except Exception:
+        return False
+
+
+def execute_plan(plan: dict, dry_run: bool = False) -> list[dict]:
+    """Place PAPER orders for the planned trades; record positions w/ exit state.
+    Shares are executed; options execution is DEFERRED (needs contract selection)."""
+    import shares_executor
+    from dataclasses import asdict as _asdict
+    from datetime import date as _date
+    eng = ExitEngine()
+    positions = _load_positions()
+    held = {p["sym"] for p in positions}
+    for pt in plan["planned"]:
+        s, d = pt.signal, pt.decision
+        if s.symbol in held:
+            continue
+        if d.route != "stocks":
+            log.info(f"[auto-engine] {s.symbol} routes to OPTIONS — execution deferred "
+                     f"(needs contract selection); skipping")
+            continue
+        res = shares_executor.buy(s.symbol, d.qty, dry_run=dry_run)
+        if not res.get("success"):
+            continue
+        init_stop = s.price - 2.0 * s.atr if s.atr > 0 else s.price * 0.92
+        st = eng.init_position(entry=s.price, init_stop=init_stop)
+        positions.append({
+            "sym": s.symbol, "strategy": s.strategy, "route": "stocks",
+            "qty": d.qty, "entry_price": s.price, "entry_date": _date.today().isoformat(),
+            "order_id": res.get("order_id"), "exit_state": _asdict(st), "dry_run": dry_run,
+        })
+        held.add(s.symbol)
+        log.info(f"[auto-engine] OPENED {s.symbol} {d.qty}sh @ ~{s.price:.2f} ({s.strategy})"
+                 f"{' [dry]' if dry_run else ''}")
+    _save_positions(positions)
+    return positions
+
+
+def manage_exits(dry_run: bool = False) -> None:
+    """Run the dynamic exit (REQ-608/609) on each held position; close when it fires
+    or a 21-trading-day time cap is hit. Called from the position monitor."""
+    import shares_executor
+    from dataclasses import asdict as _asdict
+    from datetime import date as _date
+    positions = _load_positions()
+    if not positions:
+        return
+    eng = ExitEngine()
+    still_open = []
+    for p in positions:
+        if p.get("route") != "stocks":
+            still_open.append(p); continue
+        px = shares_executor.current_price(p["sym"])
+        if px is None:
+            still_open.append(p); continue
+        st = ExitState(**p["exit_state"])
+        action, why, st = eng.update(st, high=px, low=px, last=px)
+        p["exit_state"] = _asdict(st)
+        held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
+        if action == "exit" or held_days >= 21:
+            reason = why if action == "exit" else f"time cap {held_days}d"
+            shares_executor.close(p["sym"], dry_run=p.get("dry_run", dry_run))
+            log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}")
+        else:
+            still_open.append(p)
+    _save_positions(still_open)
+
+
+# ── full cycle (data → plan → shadow-log OR execute) ──────────────────────────
 def run_cycle(equity: float, universe: list[str], etf_set: set,
               large_cap_set: Optional[set] = None,
-              enabled: bool = None) -> Optional[dict]:
-    """Run one autonomous cycle. SHADOW: logs the plan, places no orders."""
+              enabled: bool = None, mode: str = None,
+              dry_run: bool = False) -> Optional[dict]:
+    """Run one autonomous cycle.
+    mode 'shadow' → log the plan; mode 'execute' → place PAPER orders (all rails on)."""
     if enabled is None:
         enabled = DUAL_ENGINE_ENABLED
+    if mode is None:
+        mode = DUAL_ENGINE_MODE
     if not enabled:
         return None
+    risk_on = spy_risk_on()
+    held = {p["sym"] for p in _load_positions()}
+    open_count = len(held)
     signals = generate_live_signals(universe, etf_set)
-    plan = build_plan(signals, equity, etf_set, large_cap_set)
-    log.info(format_plan(plan))
-    plan["mode"] = "shadow"
+    plan = build_plan(signals, equity, etf_set, large_cap_set,
+                      risk_on=risk_on, held_symbols=held, open_count=open_count)
+    plan["mode"] = mode
+    plan["risk_on"] = risk_on
+    log.info(f"[regime {'RISK-ON' if risk_on else 'RISK-OFF (skip new)'}] " + format_plan(plan))
+    if mode == "execute":
+        execute_plan(plan, dry_run=dry_run)
     return plan
 
 
