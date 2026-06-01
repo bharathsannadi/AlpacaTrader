@@ -40,3 +40,6 @@ venv/
 .claude/session_summary.md
 .claude/settings.local.json
 logs/
+
+# env backups (contain secrets) — never commit
+.env.bak*
