@@ -807,6 +807,11 @@ _RANGE_DAYS: dict[str, int] = {
 }
 
 
+# Yahoo rate-limit backoff (shared by all yfinance fetches in this module)
+_YF_COOLDOWN_SEC   = 90.0
+_yf_cooldown_until = 0.0
+
+
 def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "SPY") -> list:
     """Fetch OHLCV bars via yfinance.
 
@@ -820,6 +825,7 @@ def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "S
     If the (interval, range_) combo exceeds yfinance limits (e.g. 1m bars for
     3 months), the lookback is capped to the maximum allowed — no error raised.
     """
+    global _yf_cooldown_until
     symbol = symbol.upper()
 
     # Map our interval token to the yfinance interval string
@@ -835,6 +841,13 @@ def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "S
 
     today_only = (range_ == "1D")
     prepost    = today_only          # extended hours only for single-day view
+
+    # Yahoo 429 cooldown: if we recently got rate-limited, skip the call and
+    # return empty (callers degrade gracefully) instead of hammering Yahoo and
+    # stretching the cooldown — repeated 429 retries were stalling the app.
+    if time.monotonic() < _yf_cooldown_until:
+        log.debug(f"fetch_chart_bars({symbol}): skipped — Yahoo 429 cooldown active")
+        return []
 
     try:
         ticker = yf.Ticker(symbol)
@@ -917,7 +930,13 @@ def fetch_chart_bars(interval: str = "15m", range_: str = "1D", symbol: str = "S
         return out
 
     except Exception as e:
-        log.warning(f"fetch_chart_bars({symbol}, {interval}+{range_}): {e}")
+        # On a Yahoo rate-limit, start a cooldown so we stop hammering.
+        if any(t in str(e).lower() for t in ("429", "too many requests", "rate limit")):
+            _yf_cooldown_until = time.monotonic() + _YF_COOLDOWN_SEC
+            log.warning(f"fetch_chart_bars({symbol}): Yahoo rate-limited (429) — "
+                        f"backing off {_YF_COOLDOWN_SEC}s")
+        else:
+            log.warning(f"fetch_chart_bars({symbol}, {interval}+{range_}): {e}")
         return []
 
 

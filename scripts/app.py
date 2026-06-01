@@ -2894,8 +2894,29 @@ def _auto_login():
     )
 
 
+def _single_instance_guard(port: int = 5000) -> None:
+    """Refuse to start if something is already serving on `port`.
+
+    The recurring 'app unresponsive' outages were two processes colliding on
+    :5000 (a stale instance + a fresh one). If the port already accepts a
+    connection, an instance is up — exit cleanly rather than fighting over the
+    socket. Plain socket check only (urllib gets trampolined by eventlet).
+    """
+    import sys as _sys
+    import socket as _socket
+    try:
+        with _socket.create_connection(("127.0.0.1", port), timeout=2):
+            pass
+    except OSError:
+        return  # nothing listening — safe to start
+    log.error(f"Another process is already serving on :{port}. Refusing to start a "
+              f"second instance (this avoids the port-collision hang). Exiting.")
+    _sys.exit(0)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    _single_instance_guard(5000)   # never run two instances on the same port
     _load_auto_exec_state()   # restore today's dedup set if mid-day restart
     _load_trades_today()      # restore today's closed trades (#17)
     socketio.start_background_task(price_ticker)
