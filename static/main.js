@@ -2121,6 +2121,19 @@ function _scrConfCell(pct, principles) {
   return `<td title="${tip}"><b style="color:${color}">${pct}%</b>${gate}</td>`;
 }
 
+// ── Held-position exit plan cell (operator: show OUR exits for what we bought)
+function _scrExitInline(ep) {
+  if (!ep) return "";
+  const f = v => (v == null ? "—" : (typeof v === "number" ? v.toFixed(2) : v));
+  const stop = ep.stop != null ? `stop ${f(ep.stop)}` : "";
+  const tgt  = ep.target != null ? ` · tgt ${f(ep.target)}` : "";
+  const tip = `HELD ${ep.instrument} · entry ${f(ep.entry)} (${ep.unit||""})\n` +
+              `stop ${f(ep.stop)}${ep.target!=null?` · target ${f(ep.target)}`:""}\n` +
+              `exit: ${ep.trigger||""}`;
+  return `<span title="${tip.replace(/"/g,"'")}" style="color:var(--cyan);font-weight:700">🔵 HELD</span>` +
+         `<br><span style="font-size:9px;color:var(--muted)">${stop}${tgt}</span>`;
+}
+
 // ── Table 1 renderer — Day Trading Stocks ────────────────────────────────────
 function _renderDtTable(rows) {
   const tbody = document.getElementById("scr-dt-tbody");
@@ -2206,7 +2219,7 @@ function _renderDtTable(rows) {
       <td>${pfDisp}</td>
       <td>${retDisp}</td>
       ${_scrConfCell(r.kb_match, r.kb_principles)}
-      <td>${pickDisp}</td>
+      <td>${r.held ? _scrExitInline(r.exit_plan) : pickDisp}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
       <td colspan="13">
@@ -2280,11 +2293,14 @@ function _renderOptTable(rows) {
       dir_pct: o.dir_pct, pf: o.pf, ivr: o.ivr,
       direction: o.direction, signal: o.signal
     }).replace(/"/g, "&quot;");
-    const execBtn = canExec
-      ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerOption(${idx})'
-           title="Place limit order via Alpaca (paper account)\n${o.sym} ${o.structure} ${o.expiry}\nMax risk: $${o.max_risk||400}"
-           data-payload="${execPayload}">⚡ Execute</button>`
-      : `<span style="color:var(--muted);font-size:10px">—</span>`;
+    // If we HOLD this symbol, show OUR exit plan instead of the Execute button
+    const execBtn = o.held
+      ? _scrExitInline(o.exit_plan)
+      : (canExec
+        ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerOption(${idx})'
+             title="Place limit order via Alpaca (paper account)\n${o.sym} ${o.structure} ${o.expiry}\nMax risk: $${o.max_risk||400}"
+             data-payload="${execPayload}">⚡ Execute</button>`
+        : `<span style="color:var(--muted);font-size:10px">—</span>`);
 
     const oReason   = (o.reason   || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const oStrategy = (o.strategy || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");

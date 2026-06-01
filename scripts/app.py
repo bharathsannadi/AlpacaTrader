@@ -1682,6 +1682,53 @@ def _annotate_kb(data: dict) -> None:
             r["kb_match"] = None
 
 
+def _position_exit_plan(pos: dict) -> dict:
+    """Compute the exit plan for a held daily position, for UI display.
+    Returns {stop, target, trigger, instrument, entry, status}."""
+    instr = pos.get("instrument", "shares")
+    entry = pos.get("entry_price")
+    trigger = "RSI(2) > 70 → sell next open (§19)"
+    if instr == "options":
+        debit = pos.get("entry_debit") or pos.get("est_debit")
+        width = pos.get("width")
+        structure = pos.get("structure", "")
+        stop = pos.get("stop_debit")
+        if stop is None and debit:
+            stop = round(debit * 0.50, 2)   # OPT_STOP_PCT = 50% of premium (§9)
+        # target: 80% of max profit on a spread (§24), else +80% of premium
+        if width and debit and "spread" in structure:
+            target = round(debit + 0.80 * (width - debit), 2)   # 80% of max
+        elif debit:
+            target = round(debit * 1.80, 2)
+        else:
+            target = None
+        return {"instrument": "options", "entry": debit,
+                "stop": stop, "target": target,
+                "trigger": "RSI(2)>70 · +80% profit · D-2 earnings (§23/§24)",
+                "unit": "$ debit", "status": pos.get("status")}
+    # shares
+    return {"instrument": "shares", "entry": entry,
+            "stop": pos.get("stop_price"),
+            "target": None,   # shares exit on the signal, no fixed target
+            "trigger": trigger, "unit": "$ price", "status": pos.get("status")}
+
+
+def _annotate_held_exits(data: dict, positions: list) -> None:
+    """Mark screener rows for symbols we HOLD and attach their exit plan (in place).
+    So the screener shows OUR EXITS for the stocks/options we bought (operator req)."""
+    held: dict[str, dict] = {}
+    for p in positions or []:
+        if p.get("status") in ("open", "pending", "signal"):
+            held[str(p.get("sym", "")).upper()] = _position_exit_plan(p)
+    for row in data.get("options", []) + data.get("dt", []):
+        sym = str(row.get("sym", "")).upper()
+        if sym in held:
+            row["held"] = True
+            row["exit_plan"] = held[sym]
+        else:
+            row["held"] = False
+
+
 def _kb_and_debate_gate(row: dict) -> tuple[bool, str]:
     """Pre-trade gate: a trade is only taken if it (1) clears the KB-principles
     floor AND (2) passes the bull/bear debate gate (when enabled).
@@ -1878,6 +1925,7 @@ def _refresh_screener_bg():
             pass
         data = screener.refresh_screener(positions)
         _annotate_kb(data)
+        _annotate_held_exits(data, positions)
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
@@ -1898,6 +1946,10 @@ def on_get_screener(data=None):
     cached = screener.get_cached()
     if cached.get("dt"):
         _annotate_kb(cached)
+        try:
+            _annotate_held_exits(cached, dtrad._load_positions())
+        except Exception:
+            pass
         socketio.emit("screener_data", cached, to=request.sid)
     if force or not cached.get("dt"):
         socketio.start_background_task(_refresh_screener_bg)
