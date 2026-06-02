@@ -256,8 +256,11 @@ function updateUI(s) {
     const fmt = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2 });
     setEl("hdr-account", fmt(s.account_value));
     setEl("hdr-bp",      fmt(s.buying_power ?? 0));
-    const riskPct = parseFloat(document.getElementById("risk-pct").value) / 100;
-    setEl("hdr-risk", fmt(s.account_value * riskPct));
+    // Risk per Trade control was removed; guard the (now-optional) element so a
+    // missing #risk-pct can't throw and abort the rest of updateUI (which would
+    // blank the Positions tab and stop other state updates).
+    const _riskEl = document.getElementById("risk-pct");
+    if (_riskEl) setEl("hdr-risk", fmt(s.account_value * (parseFloat(_riskEl.value) / 100)));
   }
 
   // Active symbol — sync ticker display
