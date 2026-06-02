@@ -1818,6 +1818,11 @@ def _annotate_kb(data: dict) -> None:
             sc = kb_principles.score_option_candidate(o, vix=vix)
             o["kb_match"] = sc["pct"]
             o["kb_principles"] = {"matched": sc["matched"], "failed": sc["failed"]}
+            # operator 2026-06-02: a perfect 100% KB-match is a BUY regardless of
+            # is_top/⭐ ranking. (§9 liquidity is relaxed separately, so this fills.)
+            if sc["pct"] >= 100 and o.get("action") != "✅ BUY":
+                o["action"] = "✅ BUY"
+                o["kb100_upgrade"] = True
         except Exception:
             o["kb_match"] = None
     for r in data.get("dt", []):
@@ -1825,6 +1830,9 @@ def _annotate_kb(data: dict) -> None:
             sc = kb_principles.score_stock_candidate(r, vix=vix)
             r["kb_match"] = sc["pct"]
             r["kb_principles"] = {"matched": sc["matched"], "failed": sc["failed"]}
+            if sc["pct"] >= 100 and r.get("action") != "✅ BUY":
+                r["action"] = "✅ BUY"
+                r["kb100_upgrade"] = True
         except Exception:
             r["kb_match"] = None
 

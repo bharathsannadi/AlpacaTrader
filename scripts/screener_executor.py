@@ -55,6 +55,30 @@ OPT_SPREAD_RATIO_LO  = 0.25   # KB §5: spread debit ≥ 25% of width
 OPT_SPREAD_RATIO_HI  = 0.45   # KB §5: spread debit ≤ 45% of width
 RISK_BUDGET          = 400.0  # KB §4: $400 max loss per trade
 
+# ── Operator 2026-06-02: RELAXED-FILL mode ────────────────────────────────────
+# Fill everything (incl. illiquid) at market, no $400 cap. Every time a KB rule is
+# relaxed to let an order through, log a 'KB-RELAXED' note + append to an audit
+# file so it can be analysed later. (Paper; dry-run on by default.)
+OPT_RELAX_LIQUIDITY  = True    # §9 liquidity gate advisory, not blocking
+OPT_MARKET_ORDERS    = True    # place option legs at market so they fill
+OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss cap
+_KB_RELAXED_LOG = os.path.expanduser("~/.spy_trader/kb_relaxed.jsonl")
+
+
+def _log_kb_relaxed(sym: str, rule: str, detail: str) -> None:
+    """Audit a KB rule that was relaxed to fill an order (operator override) — to
+    the logger (also surfaces in the UI log) AND a structured file for analysis."""
+    log.warning(f"⚠️ KB-RELAXED [{rule}] {sym}: {detail} — order allowed anyway "
+                f"(operator relaxed-fill override)")
+    try:
+        import json as _j, datetime as _dt
+        os.makedirs(os.path.dirname(_KB_RELAXED_LOG), exist_ok=True)
+        with open(_KB_RELAXED_LOG, "a") as fh:
+            fh.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "sym": sym,
+                               "rule": rule, "detail": detail}) + "\n")
+    except Exception:
+        pass
+
 
 # ── Credential helpers ────────────────────────────────────────────────────────
 def _load_env() -> tuple[str, str, bool]:
@@ -232,13 +256,16 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
             return {"ok": False, "reason": "no valid ATM quote", "atm_oi": oi, "ba_pct": ba}
         # bid-ask is the hard, reliable gate; OI is satisfied by a real count OR a
         # very tight live spread (which proves liquidity when yfinance OI is stale).
-        if ba > OPT_MAX_BID_ASK_PCT:
-            return {"ok": False, "reason": f"bid-ask {ba*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}%",
-                    "atm_oi": oi, "ba_pct": ba}
-        if oi < OPT_MIN_OI and ba > OPT_TIGHT_BA_PCT:
-            return {"ok": False,
-                    "reason": f"ATM OI {oi} < {OPT_MIN_OI} and spread {ba*100:.1f}% not tight",
-                    "atm_oi": oi, "ba_pct": ba}
+        wide   = ba > OPT_MAX_BID_ASK_PCT
+        thinOI = oi < OPT_MIN_OI and ba > OPT_TIGHT_BA_PCT
+        if wide or thinOI:
+            why = (f"bid-ask {ba*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}%" if wide
+                   else f"ATM OI {oi} < {OPT_MIN_OI} and spread {ba*100:.1f}% not tight")
+            if OPT_RELAX_LIQUIDITY:        # operator: fill anyway — keep it tradable, just audit
+                _log_kb_relaxed(sym, "§9 liquidity (rank)", why)
+                return {"ok": True, "reason": f"§9 relaxed: {why}", "atm_oi": oi, "ba_pct": ba,
+                        "relaxed": True}
+            return {"ok": False, "reason": why, "atm_oi": oi, "ba_pct": ba}
         return {"ok": True, "reason": "liquid", "atm_oi": oi, "ba_pct": ba}
     except Exception as e:
         return {"ok": None, "reason": f"liquidity check failed: {e}"}
@@ -382,13 +409,16 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         if atm_mid <= 0:
             raise ValueError(f"{sym}: KB §9 Liquidity — ATM mid ≤ 0 (no valid quote)")
         ba_pct = (atm_ask - atm_bid) / atm_mid if atm_mid > 0 else 1.0
-        if ba_pct > OPT_MAX_BID_ASK_PCT:
-            raise ValueError(f"{sym}: KB §9 Liquidity — bid-ask spread {ba_pct*100:.1f}% "
-                             f"> {OPT_MAX_BID_ASK_PCT*100:.0f}% max (too wide, excessive slippage)")
-        if atm_oi < OPT_MIN_OI and ba_pct > OPT_TIGHT_BA_PCT:
-            raise ValueError(f"{sym}: KB §9 Liquidity — ATM open interest {atm_oi} "
-                             f"< {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight "
-                             f"(≤{OPT_TIGHT_BA_PCT*100:.0f}%) — illiquid, would not fill")
+        _wide   = ba_pct > OPT_MAX_BID_ASK_PCT
+        _thinOI = atm_oi < OPT_MIN_OI and ba_pct > OPT_TIGHT_BA_PCT
+        if _wide or _thinOI:
+            _why = (f"bid-ask spread {ba_pct*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}% max"
+                    if _wide else f"ATM OI {atm_oi} < {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight")
+            if OPT_RELAX_LIQUIDITY:        # operator relaxed-fill: allow it, audit it
+                _log_kb_relaxed(sym, "§9 liquidity (exec)",
+                                f"{_why} — filling at market, expect to pay the spread")
+            else:
+                raise ValueError(f"{sym}: KB §9 Liquidity — {_why} — illiquid, would not fill")
 
         log.info(f"  ATM: {atm_occ}  strike=${atm_strike:.2f}  mid=${atm_mid:.2f}  "
                  f"OI={atm_oi}  ba={ba_pct*100:.1f}%")
@@ -440,8 +470,11 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
 
         # ── Risk gate ────────────────────────────────────────────────────────
         if net_debit * 100 > max_risk:
-            raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
-                             f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
+            if OPT_ENFORCE_MAX_RISK:
+                raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
+                                 f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
+            _log_kb_relaxed(sym, "§4 max-risk",
+                            f"debit ${net_debit*100:.0f} > ${max_risk:.0f} cap (cap removed)")
 
         # ── 5. Dry run ───────────────────────────────────────────────────────
         if dry_run:
@@ -463,7 +496,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         tc, oc, paper = _make_clients()
         result["paper"] = paper
 
-        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
         from alpaca.trading.enums    import OrderSide, TimeInForce
 
         # Refresh long leg price from Alpaca (more current than yfinance EOD)
@@ -471,15 +504,18 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         long_limit    = round(live_long_mid + 0.05, 2)   # pay slightly above mid
 
         # ── BTO long leg ─────────────────────────────────────────────────────
-        req = LimitOrderRequest(
-            symbol=atm_occ, qty=1,
-            side=OrderSide.BUY,
-            time_in_force=TimeInForce.DAY,
-            limit_price=long_limit,
-        )
+        # operator relaxed-fill: market order so it fills even on a wide spread
+        # (you pay the ask). Otherwise a limit slightly above mid.
+        if OPT_MARKET_ORDERS:
+            req = MarketOrderRequest(symbol=atm_occ, qty=1, side=OrderSide.BUY,
+                                     time_in_force=TimeInForce.DAY)
+        else:
+            req = LimitOrderRequest(symbol=atm_occ, qty=1, side=OrderSide.BUY,
+                                    time_in_force=TimeInForce.DAY, limit_price=long_limit)
         order         = tc.submit_order(req)
         long_order_id = str(order.id)
-        log.info(f"  BTO {atm_occ}  lmt=${long_limit:.2f}  id={long_order_id}  paper={paper}")
+        log.info(f"  BTO {atm_occ}  {'MKT' if OPT_MARKET_ORDERS else f'lmt=${long_limit:.2f}'}  "
+                 f"id={long_order_id}  paper={paper}")
         result["long_order_id"] = long_order_id
 
         # ── Fill verification (BTO) ──────────────────────────────────────────
@@ -509,16 +545,16 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
             short_limit    = round(max(live_short_mid - 0.05,
                                        live_short_mid * 0.90, 0.01), 2)
             try:
-                req = LimitOrderRequest(
-                    symbol=short_occ, qty=1,
-                    side=OrderSide.SELL,
-                    time_in_force=TimeInForce.DAY,
-                    limit_price=short_limit,
-                )
+                if OPT_MARKET_ORDERS:
+                    req = MarketOrderRequest(symbol=short_occ, qty=1, side=OrderSide.SELL,
+                                             time_in_force=TimeInForce.DAY)
+                else:
+                    req = LimitOrderRequest(symbol=short_occ, qty=1, side=OrderSide.SELL,
+                                            time_in_force=TimeInForce.DAY, limit_price=short_limit)
                 order          = tc.submit_order(req)
                 short_order_id = str(order.id)
                 actual_short_mid = live_short_mid
-                log.info(f"  STO {short_occ}  lmt=${short_limit:.2f}  id={short_order_id}")
+                log.info(f"  STO {short_occ}  {'MKT' if OPT_MARKET_ORDERS else f'lmt=${short_limit:.2f}'}  id={short_order_id}")
 
                 # Verify STO didn't get rejected downstream. If it did, we
                 # have an unhedged long — trigger the same rollback path as
