@@ -2853,8 +2853,11 @@ def _build_exec_brief() -> None:
             vix      = state["vix"]
             dry_run  = state["dry_run"]
 
-        positions = trader.open_positions_snapshot()
-        n_open    = len([p for p in positions if p.get("remaining", 0) > 0])
+        positions = trader.open_positions_snapshot()                  # options
+        account_pos = _account_equity_positions()                     # stocks + ETFs (truth)
+        n_opt     = len([p for p in positions if p.get("remaining", 0) > 0])
+        n_open    = n_opt + len(account_pos)
+        equity_pnl = sum(float(p.get("pnl_usd", 0) or 0) for p in account_pos)
         closed    = [t for t in trades if not t.get("is_partial")]
         wins      = [t for t in closed if t.get("pnl_pct", 0) > 0]
         losses    = [t for t in closed if t.get("pnl_pct", 0) < 0]
@@ -2872,11 +2875,16 @@ def _build_exec_brief() -> None:
         if closed:
             for t in closed:
                 plain += f"  {t.get('symbol','?')} {t.get('direction','?').upper()} {t.get('pnl_pct',0):+.1f}% ({t.get('reason','')})\n"
-        plain += f"Open positions: {n_open}\n"
-        if positions:
-            for p in positions[:4]:
-                pnl = p.get("unrealized_pct", 0) or 0
-                plain += f"  {p.get('occ_symbol','?')} {p.get('direction','?').upper()} entry=${p.get('entry_price',0):.2f} unrealized={pnl:+.1f}%\n"
+        plain += (f"Open positions: {n_open} total "
+                  f"({len(account_pos)} stocks/ETFs, {n_opt} options) — "
+                  f"unrealized P&L ${equity_pnl:+,.0f}\n")
+        if account_pos:
+            for p in sorted(account_pos, key=lambda x: -abs(x.get("pnl_usd", 0)))[:8]:
+                plain += (f"  {p['sym']} {p['qty']}sh entry=${p['entry']:.2f} "
+                          f"P&L ${p.get('pnl_usd',0):+.0f} ({p.get('pnl_pct',0):+.1f}%)\n")
+        for p in positions[:3]:
+            pnl = p.get("unrealized_pct", 0) or 0
+            plain += f"  {p.get('occ_symbol','?')} {p.get('direction','?').upper()} unrealized={pnl:+.1f}%\n"
 
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if api_key:
@@ -2886,10 +2894,14 @@ def _build_exec_brief() -> None:
                 if client is None:
                     raise RuntimeError('no anthropic client')
                 prompt = (
-                    "You are the co-pilot AI for an automated SPY options trading system. "
-                    "Write ONE short paragraph (3-4 sentences max) summarising today's trading activity "
-                    "for the dashboard. Include: what the bot did, current state, what it's watching. "
-                    "Be direct and specific. No preamble, no bullet points — just a flowing sentence or two.\n\n"
+                    "You are the co-pilot AI for an automated multi-strategy PAPER trading "
+                    "system that trades stocks, ETFs and options across several lanes "
+                    "(an autonomous ETF/stock engine, options auto-exec, and stock auto-buy). "
+                    "Write ONE short paragraph (3-4 sentences max) summarising the current state "
+                    "for the dashboard. GROUND IT IN THE DATA: state the number of OPEN POSITIONS "
+                    "and total unrealized P&L accurately — do NOT say 'no positions' or 'full cash' "
+                    "if positions are listed below. Be direct and specific; no preamble, no bullet "
+                    "points.\n\n"
                     f"Today's data:\n{plain}"
                 )
                 resp = client.messages.create(
