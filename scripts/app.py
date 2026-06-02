@@ -579,6 +579,7 @@ _ACCT_POS_TTL   = 8.0   # cache Alpaca positions ~8s (state snapshot runs often)
 
 
 _opt_peak: dict = {}   # per-underlying option {peak P&L, ts} for the stall time-stop
+_exit_mgmt_state = {"last": 0.0}   # throttle the heavy exit-management block (~30s)
 
 
 def _journal_recent(n: int = 25) -> list:
@@ -1043,9 +1044,13 @@ def position_monitor() -> None:
                 refresh_account()
                 emit_state()
 
-            # Autonomous-engine exit management (REQ-608/609 dynamic exits on its
-            # own paper positions). Cheap; runs every tick when execute mode is on.
-            if auto_engine.DUAL_ENGINE_ENABLED and auto_engine.DUAL_ENGINE_MODE == "execute":
+            # Autonomous-engine exit management (REQ-608/609). This does several
+            # Alpaca + yfinance calls (account fetch, option exits, per-symbol price,
+            # closes) — heavy enough to stall the eventlet hub if run every 10s tick.
+            # Throttle to ~every 30s; stops still fire well within tolerance.
+            if (auto_engine.DUAL_ENGINE_ENABLED and auto_engine.DUAL_ENGINE_MODE == "execute"
+                    and time.monotonic() - _exit_mgmt_state["last"] >= 30):
+                _exit_mgmt_state["last"] = time.monotonic()
                 try:
                     _protect_untracked_stocks()        # give stock buys a stop too
                     _manage_option_positions()         # ±20% exit on options
