@@ -2428,9 +2428,10 @@ function _renderOptTable(rows) {
     const structColor = o.structure.includes("Spread") ? "#f59e0b" : "#22d3ee";
     const structBadge = _scrBadge(o.structure, structColor);
 
-    // Action
+    // Action — mark rows promoted to BUY purely on a 100% KB-match
     const actCls  = o.action === "✅ BUY" ? "scr-action-buy" : "scr-action-watch";
-    const action  = `<span class="${actCls}">${o.action}</span>`;
+    const kb100   = o.kb100_upgrade ? ` <span title="promoted to BUY on 100% KB-match" style="font-size:9px;color:#22c55e">⭐100</span>` : "";
+    const action  = `<span class="${actCls}">${o.action}</span>${kb100}`;
 
     // IVR
     const ivrDisp = o.ivr && o.ivr !== "—"
@@ -2452,8 +2453,8 @@ function _renderOptTable(rows) {
       ? _scrExitInline(o.exit_plan)
       : (canExec
         ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerOption(${idx})'
-             title="Place limit order via Alpaca (paper account)\n${o.sym} ${o.structure} ${o.expiry}\nMax risk: $${o.max_risk||400}"
-             data-payload="${execPayload}">⚡ Execute</button>`
+             title="Place MARKET order via Alpaca (paper · relaxed-fill, §9 advisory)\n${o.sym} ${o.structure} ${o.expiry}\nHard ceiling: $600 · ±20% exit"
+             data-payload="${execPayload}">⚡ Buy @ Mkt</button>`
         : `<span style="color:var(--muted);font-size:10px">—</span>`);
 
     const oReason   = (o.reason   || "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -2474,7 +2475,7 @@ function _renderOptTable(rows) {
       <td><b>${o.dte}</b>d</td>
       <td>${ivrDisp}</td>
       ${_scrConfCell(o.kb_match, o.kb_principles)}
-      <td style="color:#f59e0b"><b>$${(o.max_risk||400).toLocaleString()}</b></td>
+      <td style="color:#f59e0b" title="Hard ceiling $600/trade — fills at market, ±20% exit"><b>≤$600</b></td>
       <td>${action}</td>
       <td>${execBtn}</td>
     </tr>

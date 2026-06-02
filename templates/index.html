@@ -2053,9 +2053,9 @@
             <th title="Days to expiration">DTE</th>
             <th title="IV Rank — naked if IVR<30, spread if IVR≥30 (KB §2)">IVR</th>
             <th title="KB-principles match: % of codified knowledge-base rules this trade satisfies (dir-edge, PF, IVR routing, DTE, risk budget, VIX). Trades below 60% are gate-blocked.">KB%</th>
-            <th title="Max risk per trade ($400 = ½-Kelly from 2yr backtest)">Max $</th>
-            <th title="Action based on backtested edge">Action</th>
-            <th title="Place limit order via Alpaca (paper by default)">Execute</th>
+            <th title="Hard ceiling: $600 max per option trade (always enforced). Fills at market; trades over $600 are blocked.">Max $</th>
+            <th title="Action: ✅ BUY (incl. 100%-KB ⭐100 upgrades) / ⚠ WATCH. §9 liquidity is advisory in relaxed-fill mode.">Action</th>
+            <th title="Place MARKET order via Alpaca (paper · relaxed-fill). ±20% take-profit / stop.">Execute</th>
           </tr>
         </thead>
         <tbody id="scr-opt-tbody">
