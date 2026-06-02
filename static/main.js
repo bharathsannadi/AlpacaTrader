@@ -344,9 +344,10 @@ function updateUI(s) {
   if (s.open_positions !== undefined) renderPositions(s.open_positions, s.auto_positions);
 
   // Positions tab (#24): cache + re-render if it's the active view
-  if (s.open_positions !== undefined || s.auto_positions !== undefined) {
-    _lastPositions = { open: s.open_positions || _lastPositions.open,
-                       auto: s.auto_positions || _lastPositions.auto };
+  if (s.open_positions !== undefined || s.auto_positions !== undefined || s.account_positions !== undefined) {
+    _lastPositions = { open:    s.open_positions    || _lastPositions.open,
+                       auto:    s.auto_positions    || _lastPositions.auto,
+                       account: s.account_positions || _lastPositions.account };
     if (document.body.classList.contains("view-positions")) _renderPositionsTable();
   }
 
@@ -2063,7 +2064,7 @@ function showLog() {
 }
 
 // ── Positions tab (#24) ───────────────────────────────────────────────────────
-let _lastPositions = { open: [], auto: [] };
+let _lastPositions = { open: [], auto: [], account: [] };
 
 function showPositions() {
   _setViewMode("positions");
@@ -2083,27 +2084,35 @@ function _renderPositionsTable() {
   const el = document.getElementById("positions-tab-body");
   if (!el) return;
   const open = (_lastPositions.open || []).filter(p => (p.remaining ?? p.contracts ?? 0) > 0);
-  const auto = (_lastPositions.auto || []).filter(p => (p.qty || 0) > 0);
-  if (!open.length && !auto.length) {
+  // ALL equity positions (the truth) — engine ETFs + stock auto-buys + manual.
+  const acct = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0);
+  const autoBy = {};
+  (_lastPositions.auto || []).forEach(p => { autoBy[p.sym] = p; });
+  if (!open.length && !acct.length) {
     el.innerHTML = `<div class="postab-empty">No open positions.</div>`;
     return;
   }
   let html = "";
-  // Autonomous engine — stocks
-  if (auto.length) {
-    html += `<div class="postab-section-title">🤖 Autonomous engine — stocks (${auto.length})</div>`;
+  // Stocks & ETFs — every equity position in the account, enriched with the
+  // engine's strategy/stop/exit when the symbol came from the autonomous engine.
+  if (acct.length) {
+    html += `<div class="postab-section-title">📈 Stocks &amp; ETFs (${acct.length})</div>`;
     html += `<table class="postab-table"><thead><tr>
-      <th>Symbol</th><th>Qty</th><th>Strategy</th><th>Entry</th><th>Now</th>
+      <th>Symbol</th><th>Qty</th><th>Source</th><th>Entry</th><th>Now</th>
       <th>Stop / Floor</th><th>Exit</th><th>P&L</th></tr></thead><tbody>`;
-    html += auto.map(p => {
-      const isFloor = p.profit_floor;
-      const stopCell = `<span class="${isFloor ? "postab-floor" : ""}">${isFloor ? "Floor" : "Stop"} $${(p.stop || 0).toFixed(2)}${p.tier >= 1 ? ` ·T${p.tier}` : ""}</span>`;
-      const cap = p.days_to_cap != null ? `cap ${p.days_to_cap}d` : "cap 21d";
+    html += acct.map(p => {
+      const e = autoBy[p.sym];                       // engine metadata if present
+      const src = e ? `🤖 ${e.strategy || "engine"}` : "manual / auto-buy";
+      let stopCell = "—", exitCell = "—";
+      if (e) {
+        const isFloor = e.profit_floor;
+        stopCell = `<span class="${isFloor ? "postab-floor" : ""}">${isFloor ? "Floor" : "Stop"} $${(e.stop || 0).toFixed(2)}${e.tier >= 1 ? ` ·T${e.tier}` : ""}</span>`;
+        exitCell = `trail · ${e.days_to_cap != null ? `cap ${e.days_to_cap}d` : "cap 21d"}`;
+      }
       return `<tr>
-        <td><b>${p.sym}</b>${p.dry_run ? ' <span style="color:var(--muted);font-size:9px">[DRY]</span>' : ""}</td>
-        <td>${p.qty}</td><td>${p.strategy || "—"}</td>
+        <td><b>${p.sym}</b></td><td>${p.qty}</td><td>${src}</td>
         <td>$${(p.entry || 0).toFixed(2)}</td><td>$${(p.last || p.entry || 0).toFixed(2)}</td>
-        <td>${stopCell}</td><td>trail · ${cap}</td><td>${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
+        <td>${stopCell}</td><td>${exitCell}</td><td>${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
     }).join("");
     html += `</tbody></table>`;
   }
