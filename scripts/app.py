@@ -1897,35 +1897,44 @@ def _position_exit_plan(pos: dict) -> dict:
 def _annotate_held_exits(data: dict, positions: list) -> None:
     """Mark screener rows for symbols we HOLD and attach their exit plan (in place).
     So the screener shows OUR EXITS for the stocks/options we bought (operator req)."""
-    held: dict[str, dict] = {}
+    # Held by instrument-appropriate source:
+    #  • option rows  → only an actual OPTION/daily position (holding HOOD *shares*
+    #    must NOT mark the HOOD *option* row held — that would hide its Execute btn).
+    #  • stock rows   → daily-strategy positions OR any equity holding in the account.
+    held_opt:    dict[str, dict] = {}
+    held_shares: dict[str, dict] = {}
     for p in positions or []:
         if p.get("status") in ("open", "pending", "signal"):
-            held[str(p.get("sym", "")).upper()] = _position_exit_plan(p)
-    # Also mark every equity position actually in the account (engine ETFs, stock
-    # auto-buys, manual buys) so the screener shows what we already own + its stop.
+            sym = str(p.get("sym", "")).upper()
+            plan = _position_exit_plan(p)
+            (held_opt if p.get("instrument") == "options" else held_shares)[sym] = plan
     try:
         eng_by = {p["sym"]: p for p in auto_engine.positions_snapshot()}
-        for ap in _account_equity_positions():
+        for ap in _account_equity_positions():           # account equity → shares only
             sym = ap["sym"]
-            if sym in held:
+            if sym in held_shares:
                 continue
             e = eng_by.get(sym) or {}
-            held[sym] = {
+            held_shares[sym] = {
                 "instrument": "shares", "qty": ap.get("qty"), "entry": ap.get("entry"),
-                "stop": e.get("stop"),
-                "target": None,
+                "stop": e.get("stop"), "target": None,
                 "trigger": "dynamic trail · 21d cap" if e else "held",
                 "unit": "$ price", "status": "open",
             }
     except Exception as _e:
         log.debug(f"held-from-account: {_e}")
-    for row in data.get("options", []) + data.get("dt", []):
+
+    for row in data.get("options", []):
+        plan = held_opt.get(str(row.get("sym", "")).upper())
+        row["held"] = plan is not None
+        if plan:
+            row["exit_plan"] = plan
+    for row in data.get("dt", []):
         sym = str(row.get("sym", "")).upper()
-        if sym in held:
-            row["held"] = True
-            row["exit_plan"] = held[sym]
-        else:
-            row["held"] = False
+        plan = held_shares.get(sym) or held_opt.get(sym)
+        row["held"] = plan is not None
+        if plan:
+            row["exit_plan"] = plan
 
 
 def _kb_and_debate_gate(row: dict) -> tuple[bool, str]:
