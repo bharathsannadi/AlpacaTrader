@@ -2071,7 +2071,9 @@ function showPositions() {
   const t = document.getElementById("tab-positions");
   if (t) t.classList.add("active");
   _renderPositionsTable();
-  socket.emit("refresh");   // pull fresh account/positions
+  // NOTE: do NOT emit the auth-gated "refresh" here — if the socket isn't
+  // authenticated it would disconnect the client and blank the whole UI. The
+  // server pushes state (incl. account_positions) every few seconds anyway.
 }
 
 function _posPnl(usd, pct) {
@@ -2083,6 +2085,7 @@ function _posPnl(usd, pct) {
 function _renderPositionsTable() {
   const el = document.getElementById("positions-tab-body");
   if (!el) return;
+  try {
   const open = (_lastPositions.open || []).filter(p => (p.remaining ?? p.contracts ?? 0) > 0);
   // ALL equity positions (the truth) — engine ETFs + stock auto-buys + manual.
   const acct = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0);
@@ -2142,6 +2145,10 @@ function _renderPositionsTable() {
     html += `</tbody></table>`;
   }
   el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = `<div class="postab-empty">Positions render error: ${err.message}</div>`;
+    console.error("renderPositionsTable", err);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
