@@ -1579,7 +1579,7 @@
         <div class="card-title">Automation</div>
         <div class="auto-schedule-row">
           <span class="auto-schedule-label" style="color:var(--yellow)">Auto-Execute</span>
-          <span class="auto-schedule-hint">Place KB-matched ✅ BUY rows · max 3/day · $400</span>
+          <span class="auto-schedule-hint">KB-matched ✅ BUY @ market · options ≤3/day ≤$600 · stocks uncapped · exits ±2% / ±20%</span>
           <button class="auto-schedule-btn armed" id="btn-auto-exec" onclick="scrToggleAutoExec()">🔴 Armed (0/3 today)</button>
         </div>
         <div class="auto-schedule-row" style="margin-top:6px">
@@ -2097,7 +2097,7 @@
 <div class="positions-panel" id="positions-panel">
   <div style="display:flex;align-items:center;justify-content:space-between;">
     <div class="card-title">📊 Open Positions</div>
-    <button class="scr-refresh-btn" onclick="_renderPositionsTable()">↻ Refresh</button>
+    <button class="scr-refresh-btn" onclick="refreshPositions()">↻ Refresh</button>
   </div>
   <div id="positions-tab-body"><div class="postab-empty">Loading…</div></div>
 </div>

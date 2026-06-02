@@ -1175,6 +1175,21 @@ def on_connect():
     socketio.emit("state", snapshot, to=request.sid)
 
 
+@socketio.on("refresh_positions")
+def on_refresh_positions():
+    """Force a FRESH pull of account positions and push state to the caller (used by
+    the Positions tab refresh button). NOT auth-gated — only reads/emits positions
+    the client already sees, and avoids the disconnect that the auth-gated 'refresh'
+    would cause if the socket isn't authenticated."""
+    try:
+        _acct_pos_cache["ts"] = 0.0      # invalidate cache → next read re-fetches
+        snap = _state_snapshot()
+        snap["logged_in"] = request.sid in authenticated_sids
+        socketio.emit("state", snap, to=request.sid)
+    except Exception as e:
+        log.debug(f"refresh_positions: {e}")
+
+
 @socketio.on("disconnect")
 def on_disconnect():
     """Disconnect a browser session.

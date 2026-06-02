@@ -2081,6 +2081,11 @@ function showPositions() {
   // server pushes state (incl. account_positions) every few seconds anyway.
 }
 
+function refreshPositions() {
+  socket.emit("refresh_positions");   // server invalidates cache + re-pushes state
+  _renderPositionsTable();            // immediate re-render from current cache
+}
+
 function _posPnl(usd, pct) {
   if (usd == null) return "—";
   const cls = usd >= 0 ? "postab-pnl-up" : "postab-pnl-down";
@@ -2104,8 +2109,9 @@ function _renderPositionsTable() {
   // Portfolio grand total — equity + options together (operator: options in P&L)
   const gTot = acct.reduce((s,p)=>s+(p.pnl_usd||0),0) + acctOpts.reduce((s,p)=>s+(p.pnl_usd||0),0);
   const gDay = acct.reduce((s,p)=>s+(p.day_pnl_usd||0),0) + acctOpts.reduce((s,p)=>s+(p.day_pnl_usd||0),0);
-  html += `<div class="postab-section-title" style="font-size:12px">💰 Portfolio (${acct.length + acctOpts.length}) ·
-    Total ${_posPnl(gTot)} · Today ${_posPnl(gDay)}</div>`;
+  html += `<div class="postab-section-title" style="font-size:12px;display:flex;align-items:center;gap:10px">
+    <span>💰 Portfolio (${acct.length + acctOpts.length}) · Total ${_posPnl(gTot)} · Today ${_posPnl(gDay)}</span>
+    <button class="scr-refresh-btn" style="font-size:10px;padding:2px 8px" onclick="refreshPositions()">↻ Refresh</button></div>`;
   // Stocks & ETFs — every equity position in the account, enriched with the
   // engine's strategy/stop/exit when the symbol came from the autonomous engine.
   if (acct.length) {
@@ -2123,7 +2129,7 @@ function _renderPositionsTable() {
       if (e) {
         const isFloor = e.profit_floor;
         stopCell = `<span class="${isFloor ? "postab-floor" : ""}">${isFloor ? "Floor" : "Stop"} $${(e.stop || 0).toFixed(2)}${e.tier >= 1 ? ` ·T${e.tier}` : ""}</span>`;
-        exitCell = `trail · ${e.days_to_cap != null ? `cap ${e.days_to_cap}d` : "cap 21d"}`;
+        exitCell = `±2% · trail · ${e.days_to_cap != null ? `${e.days_to_cap}d` : "21d"}`;
       }
       return `<tr>
         <td><b>${p.sym}</b></td><td>${p.qty}</td><td>${src}</td>
