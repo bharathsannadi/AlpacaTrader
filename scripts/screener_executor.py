@@ -74,6 +74,7 @@ except Exception:
     _ETF_SET = set()
 OPT_TAKE_PROFIT_PCT  = 0.20    # sell an option position at +20% (net debit)
 OPT_STOP_LOSS_PCT    = 0.20    # sell an option position at -20% (net debit)
+OPT_STALL_MINUTES    = 60      # time-stop: close a green-but-stalled option after N min
 OPT_MAX_OPEN         = 3       # max concurrent option positions (by underlying)
 _KB_RELAXED_LOG = os.path.expanduser("~/.spy_trader/kb_relaxed.jsonl")
 

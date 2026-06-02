@@ -632,7 +632,7 @@ def _manage_option_positions() -> None:
                 _opt_peak[u] = {"peak": pct, "ts": now}
             stall_min = (now - _opt_peak.get(u, {"ts": now})["ts"]).total_seconds() / 60
             stalled = (pct >= auto_engine.STALL_MIN_PROFIT_PCT
-                       and stall_min >= auto_engine.STALL_MINUTES)
+                       and stall_min >= screener_executor.OPT_STALL_MINUTES)
             reason = None
             if pct >= tp:
                 reason = f"take-profit +{tp*100:.0f}%"
@@ -776,7 +776,8 @@ def _state_snapshot() -> dict:
         "stock_sl_pct":  round(auto_engine.STOCK_STOP_PCT * 100, 2),
         "opt_tp_pct":    round(screener_executor.OPT_TAKE_PROFIT_PCT * 100, 2),
         "opt_sl_pct":    round(screener_executor.OPT_STOP_LOSS_PCT * 100, 2),
-        "stall_min":     auto_engine.STALL_MINUTES,
+        "stock_stall_min": auto_engine.STALL_MINUTES,
+        "opt_stall_min":   screener_executor.OPT_STALL_MINUTES,
         "time_cap_days": auto_engine.TIME_CAP_DAYS,
     }
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
@@ -1231,7 +1232,8 @@ def _apply_exit_config(cfg: dict) -> None:
         if "stock_sl_pct" in cfg: auto_engine.STOCK_STOP_PCT        = max(0.1, float(cfg["stock_sl_pct"])) / 100
         if "opt_tp_pct"   in cfg: screener_executor.OPT_TAKE_PROFIT_PCT = max(1.0, float(cfg["opt_tp_pct"])) / 100
         if "opt_sl_pct"   in cfg: screener_executor.OPT_STOP_LOSS_PCT   = max(1.0, float(cfg["opt_sl_pct"])) / 100
-        if "stall_min"    in cfg: auto_engine.STALL_MINUTES = max(5, int(cfg["stall_min"]))
+        if "stock_stall_min" in cfg: auto_engine.STALL_MINUTES = max(5, int(cfg["stock_stall_min"]))
+        if "opt_stall_min"   in cfg: screener_executor.OPT_STALL_MINUTES = max(5, int(cfg["opt_stall_min"]))
         if "time_cap_days" in cfg: auto_engine.TIME_CAP_DAYS = max(1, int(cfg["time_cap_days"]))
     except Exception as e:
         log.warning(f"apply exit config: {e}")
@@ -2033,6 +2035,41 @@ def _annotate_liquidity(data: dict) -> None:
                                + o.get("confidence", ""))[:200]
 
 
+_SCREENED_TODAY: set = set()   # (date, sym, kind) dedup so each name logs once/day
+
+
+def _log_screened(data: dict) -> None:
+    """Track every ✅ BUY-rated screener item to a daily file for EOD analysis —
+    so we can review what we screened-as-buyable but DIDN'T buy (operator). One row
+    per (symbol, kind) per day, with KB%, action, and whether we held it."""
+    import datetime as _dt, json as _j
+    today = _dt.date.today().isoformat()
+    path = os.path.expanduser(f"~/.spy_trader/screened_{today}.jsonl")
+    rows = ([("option", o) for o in data.get("options", [])]
+            + [("stock", r) for r in data.get("dt", [])])
+    new = []
+    for kind, r in rows:
+        if r.get("action") != "✅ BUY":
+            continue
+        sym = (r.get("sym") or "").upper()
+        keyd = (today, sym, kind)
+        if not sym or keyd in _SCREENED_TODAY:
+            continue
+        _SCREENED_TODAY.add(keyd)
+        new.append({"ts": _dt.datetime.now().isoformat(), "sym": sym, "kind": kind,
+                    "kb_match": r.get("kb_match"), "held": bool(r.get("held")),
+                    "structure": r.get("structure"), "dir_pct": r.get("dir_pct"),
+                    "pf": r.get("pf"), "kb100": bool(r.get("kb100_upgrade"))})
+    if new:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a") as fh:
+                for n in new:
+                    fh.write(_j.dumps(n) + "\n")
+        except Exception as e:
+            log.debug(f"log_screened: {e}")
+
+
 def _sort_screener_by_kb(data: dict) -> None:
     """Sort screener rows by KB-match desc (operator). BUY rows first, then by KB%,
     then held rows after (already owned). In place."""
@@ -2524,6 +2561,7 @@ def _refresh_screener_bg():
         _annotate_liquidity(data)
         _annotate_held_exits(data, positions)
         _sort_screener_by_kb(data)
+        _log_screened(data)          # EOD analysis: what we screened-as-buyable
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")

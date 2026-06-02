@@ -360,9 +360,9 @@ function updateUI(s) {
   if (s.exit_config) {
     const ec = s.exit_config;
     const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v; };
-    set("ex-stock-tp", ec.stock_tp_pct); set("ex-stock-sl", ec.stock_sl_pct);
-    set("ex-opt-tp", ec.opt_tp_pct);     set("ex-opt-sl", ec.opt_sl_pct);
-    set("ex-stall", ec.stall_min);       set("ex-cap", ec.time_cap_days);
+    set("ex-stock-tp", ec.stock_tp_pct); set("ex-stock-sl", ec.stock_sl_pct); set("ex-stock-stall", ec.stock_stall_min);
+    set("ex-opt-tp", ec.opt_tp_pct);     set("ex-opt-sl", ec.opt_sl_pct);     set("ex-opt-stall", ec.opt_stall_min);
+    set("ex-cap", ec.time_cap_days);
   }
   // Notes / journal of closed trades
   if (s.journal) renderJournal(s.journal);
@@ -2099,9 +2099,9 @@ function refreshPositions() {
 function saveExitConfig() {
   const v = id => parseFloat(document.getElementById(id).value);
   socket.emit("set_exit_config", {
-    stock_tp_pct: v("ex-stock-tp"), stock_sl_pct: v("ex-stock-sl"),
-    opt_tp_pct:   v("ex-opt-tp"),   opt_sl_pct:   v("ex-opt-sl"),
-    stall_min:    v("ex-stall"),    time_cap_days: v("ex-cap"),
+    stock_tp_pct: v("ex-stock-tp"), stock_sl_pct: v("ex-stock-sl"), stock_stall_min: v("ex-stock-stall"),
+    opt_tp_pct:   v("ex-opt-tp"),   opt_sl_pct:   v("ex-opt-sl"),   opt_stall_min:   v("ex-opt-stall"),
+    time_cap_days: v("ex-cap"),
   });
 }
 
