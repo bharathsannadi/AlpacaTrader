@@ -44,6 +44,23 @@ OPTIONS_ENGINE_ENABLED = False
 # auto-buy lane rotates capital into the next eligible screener pick.
 STOCK_TAKE_PROFIT_PCT = 0.02
 STOCK_STOP_PCT        = 0.02
+# Time-stop on stall (#33): if green but no new high for STALL_MINUTES, lock the gain.
+STALL_MINUTES         = 60
+STALL_MIN_PROFIT_PCT  = 0.01
+_JOURNAL_FILE = os.path.expanduser("~/.spy_trader/journal.jsonl")
+
+
+def _journal_add(sym: str, kind: str, reason: str, pnl_pct: float, pnl_usd: float = 0.0) -> None:
+    """Append a closed-trade event to the shared notes/journal (#34)."""
+    try:
+        import json as _j, datetime as _dt
+        os.makedirs(os.path.dirname(_JOURNAL_FILE), exist_ok=True)
+        with open(_JOURNAL_FILE, "a") as fh:
+            fh.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "sym": sym,
+                               "kind": kind, "reason": reason,
+                               "pnl_pct": round(pnl_pct, 2), "pnl_usd": round(pnl_usd, 2)}) + "\n")
+    except Exception:
+        pass
 
 # entry constants (match the validated backtests)
 RSI_LO = 10.0
@@ -522,12 +539,25 @@ def manage_exits(dry_run: bool = False) -> None:
             still_open.append(p); continue
         entry = p.get("entry_price", px)
         chg = (px - entry) / entry if entry else 0.0
-        # PRIMARY: fixed ±2% bands (operator). If not hit, fall through to the
+        # Stall tracking (#33): remember the peak gain + when it was last set.
+        import datetime as _dt2
+        _nowiso = _dt2.datetime.now().isoformat()
+        if "peak_pct" not in p or chg > p.get("peak_pct", -9.9):
+            p["peak_pct"] = chg
+            p["peak_ts"]  = _nowiso
+        try:
+            stall_min = (_dt2.datetime.now() - _dt2.datetime.fromisoformat(p.get("peak_ts", _nowiso))).total_seconds() / 60
+        except Exception:
+            stall_min = 0.0
+        stalled = chg >= STALL_MIN_PROFIT_PCT and stall_min >= STALL_MINUTES
+        # PRIMARY: fixed ±2% bands. Then a time-stop if green-but-stalled. Else the
         # dynamic trailing ladder as the SIDEWAYS backstop; 21d cap is max-time.
         if chg >= STOCK_TAKE_PROFIT_PCT:
             action, why = "exit", f"take-profit +{STOCK_TAKE_PROFIT_PCT*100:.0f}%"
         elif chg <= -STOCK_STOP_PCT:
             action, why = "exit", f"stop -{STOCK_STOP_PCT*100:.0f}%"
+        elif stalled:
+            action, why = "exit", f"time-stop {int(stall_min)}min stalled +{chg*100:.1f}%"
         else:
             st = ExitState(**p["exit_state"])
             action, why, st = eng.update(st, high=px, low=px, last=px)
@@ -548,6 +578,7 @@ def manage_exits(dry_run: bool = False) -> None:
                 "reason": reason, "entry_slippage_bps": p.get("entry_slippage_bps", 0),
                 "dry_run": p.get("dry_run", dry_run),
             })
+            _journal_add(p["sym"], "stock", reason, pnl_pct, realized)
             log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  "
                      f"P&L ${realized:+.0f} ({pnl_pct:+.1f}%)")
         else:

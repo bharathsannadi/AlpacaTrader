@@ -1619,12 +1619,25 @@
         </div>
       </div>
 
-      <!-- Exit Strategy -->
+      <!-- Exit Strategy (editable) -->
       <div class="card" data-card-id="exit-strategy">
-        <div class="card-title">Exit Strategy</div>
-        <div style="font-size:var(--fs-xs);color:var(--text);line-height:1.7">
-          <div>📈 <b>Stocks / ETFs:</b> ±2% · trail · 21d</div>
-          <div>🎯 <b>Options:</b> ±20% on net debit · ladder backstop</div>
+        <div class="card-title">Exit Strategy <span style="font-size:9px;color:var(--muted)">(editable)</span></div>
+        <div style="display:grid;grid-template-columns:auto auto;gap:6px 10px;font-size:var(--fs-xs);align-items:center">
+          <span>📈 Stock TP +%</span><input class="risk-input" type="number" id="ex-stock-tp" min="0.1" step="0.1" style="width:64px">
+          <span>📈 Stock SL −%</span><input class="risk-input" type="number" id="ex-stock-sl" min="0.1" step="0.1" style="width:64px">
+          <span>🎯 Option TP +%</span><input class="risk-input" type="number" id="ex-opt-tp" min="1" step="1" style="width:64px">
+          <span>🎯 Option SL −%</span><input class="risk-input" type="number" id="ex-opt-sl" min="1" step="1" style="width:64px">
+          <span>⏱ Stall (min)</span><input class="risk-input" type="number" id="ex-stall" min="5" step="5" style="width:64px">
+          <span>📅 Time cap (d)</span><input class="risk-input" type="number" id="ex-cap" min="1" step="1" style="width:64px">
+        </div>
+        <button class="btn-run" style="margin-top:8px;width:100%" onclick="saveExitConfig()">Save Exit Settings</button>
+      </div>
+
+      <!-- Notes / Journal (closed-trade events) -->
+      <div class="card" data-card-id="journal">
+        <div class="card-title">Notes — Closed Trades</div>
+        <div id="journal-body" style="font-size:var(--fs-xs);font-family:var(--mono);max-height:160px;overflow-y:auto">
+          <span style="color:var(--muted)">No closed trades yet.</span>
         </div>
       </div>
 

@@ -356,6 +356,17 @@ function updateUI(s) {
     if (document.body.classList.contains("view-positions")) _renderPositionsTable();
   }
 
+  // Exit config inputs (don't clobber while the user is editing)
+  if (s.exit_config) {
+    const ec = s.exit_config;
+    const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v; };
+    set("ex-stock-tp", ec.stock_tp_pct); set("ex-stock-sl", ec.stock_sl_pct);
+    set("ex-opt-tp", ec.opt_tp_pct);     set("ex-opt-sl", ec.opt_sl_pct);
+    set("ex-stall", ec.stall_min);       set("ex-cap", ec.time_cap_days);
+  }
+  // Notes / journal of closed trades
+  if (s.journal) renderJournal(s.journal);
+
   // Refresh exec brief when trade count changes
   const newCount = (s.trades_today || []).length;
   if (newCount !== (updateUI._lastTradeCount ?? -1)) {
@@ -2083,6 +2094,32 @@ function showPositions() {
 function refreshPositions() {
   socket.emit("refresh_positions");   // server invalidates cache + re-pushes state
   _renderPositionsTable();            // immediate re-render from current cache
+}
+
+function saveExitConfig() {
+  const v = id => parseFloat(document.getElementById(id).value);
+  socket.emit("set_exit_config", {
+    stock_tp_pct: v("ex-stock-tp"), stock_sl_pct: v("ex-stock-sl"),
+    opt_tp_pct:   v("ex-opt-tp"),   opt_sl_pct:   v("ex-opt-sl"),
+    stall_min:    v("ex-stall"),    time_cap_days: v("ex-cap"),
+  });
+}
+
+function renderJournal(items) {
+  const el = document.getElementById("journal-body");
+  if (!el) return;
+  if (!items || !items.length) {
+    el.innerHTML = `<span style="color:var(--muted)">No closed trades yet.</span>`;
+    return;
+  }
+  el.innerHTML = items.map(j => {
+    const up = (j.pnl_pct || 0) >= 0;
+    const cls = up ? "postab-pnl-up" : "postab-pnl-down";
+    const t = (j.ts || "").slice(11, 16);
+    return `<div>${up ? "▲" : "▼"} <b>${j.sym}</b> <span style="color:var(--muted)">${j.kind || ""}</span> ${j.reason || ""}
+      <span class="${cls}">${up ? "+" : ""}${(j.pnl_pct || 0).toFixed(1)}%</span>
+      <span style="color:var(--muted);font-size:9px">${t}</span></div>`;
+  }).join("");
 }
 
 function _posPnl(usd, pct) {

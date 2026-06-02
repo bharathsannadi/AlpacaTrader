@@ -578,6 +578,26 @@ _acct_pos_cache = {"equity": [], "options": [], "ts": 0.0}
 _ACCT_POS_TTL   = 8.0   # cache Alpaca positions ~8s (state snapshot runs often)
 
 
+_opt_peak: dict = {}   # per-underlying option {peak P&L, ts} for the stall time-stop
+
+
+def _journal_recent(n: int = 25) -> list:
+    """Last n closed-trade events from the shared journal (#34)."""
+    try:
+        import json as _j
+        with open(auto_engine._JOURNAL_FILE) as fh:
+            lines = fh.readlines()[-n:]
+        out = []
+        for ln in lines:
+            try:
+                out.append(_j.loads(ln))
+            except Exception:
+                continue
+        return list(reversed(out))   # newest first
+    except Exception:
+        return []
+
+
 def _manage_option_positions() -> None:
     """±20% exit on option positions (operator 2026-06-02): close an underlying's
     option legs when the net position is +20% (take profit) or −20% (stop) on the
@@ -597,6 +617,8 @@ def _manage_option_positions() -> None:
         m = re.match(r"^([A-Z]+)\d", p.symbol)
         groups.setdefault(m.group(1) if m else p.symbol, []).append(p)
     tp, sl = screener_executor.OPT_TAKE_PROFIT_PCT, screener_executor.OPT_STOP_LOSS_PCT
+    import datetime as _dt
+    now = _dt.datetime.now()
     for u, legs in groups.items():
         try:
             net_pl   = sum(float(l.unrealized_pl) for l in legs)
@@ -604,13 +626,28 @@ def _manage_option_positions() -> None:
             if net_cost <= 0:
                 continue
             pct = net_pl / net_cost
-            if pct >= tp or pct <= -sl:
-                reason = f"take-profit +{tp*100:.0f}%" if pct > 0 else f"stop -{sl*100:.0f}%"
+            # stall tracking (#33): peak gain + when it was last set, per underlying
+            pk = _opt_peak.get(u)
+            if pk is None or pct > pk["peak"]:
+                _opt_peak[u] = {"peak": pct, "ts": now}
+            stall_min = (now - _opt_peak.get(u, {"ts": now})["ts"]).total_seconds() / 60
+            stalled = (pct >= auto_engine.STALL_MIN_PROFIT_PCT
+                       and stall_min >= auto_engine.STALL_MINUTES)
+            reason = None
+            if pct >= tp:
+                reason = f"take-profit +{tp*100:.0f}%"
+            elif pct <= -sl:
+                reason = f"stop -{sl*100:.0f}%"
+            elif stalled:
+                reason = f"time-stop {int(stall_min)}min stalled +{pct*100:.1f}%"
+            if reason:
                 for l in legs:
                     try:
                         c.close_position(l.symbol)
                     except Exception as e:
                         log.warning(f"  option close {l.symbol}: {e}")
+                auto_engine._journal_add(u, "option", reason, pct * 100, net_pl)
+                _opt_peak.pop(u, None)
                 _emit_log(f"OPTION EXIT {u}: {reason} (net {pct*100:+.0f}% on ${net_cost:.0f})",
                           level="INFO")
         except Exception as e:
@@ -733,6 +770,15 @@ def _state_snapshot() -> dict:
     # ETFs + stock auto-buys + manual buys + OPTION positions — not just the stores.
     snap["account_positions"]      = _account_equity_positions()
     snap["account_options"]        = _account_option_positions()
+    snap["journal"]                = _journal_recent(25)     # closed-trade notes (#34)
+    snap["exit_config"] = {                                  # operator-editable exits
+        "stock_tp_pct":  round(auto_engine.STOCK_TAKE_PROFIT_PCT * 100, 2),
+        "stock_sl_pct":  round(auto_engine.STOCK_STOP_PCT * 100, 2),
+        "opt_tp_pct":    round(screener_executor.OPT_TAKE_PROFIT_PCT * 100, 2),
+        "opt_sl_pct":    round(screener_executor.OPT_STOP_LOSS_PCT * 100, 2),
+        "stall_min":     auto_engine.STALL_MINUTES,
+        "time_cap_days": auto_engine.TIME_CAP_DAYS,
+    }
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
     snap["max_portfolio_risk_pct"] = round(trader.eff_max_portfolio_risk() * 100, 2)
     snap["pdt_remaining"]          = trader.pdt_day_trades_remaining()
@@ -1173,6 +1219,52 @@ def on_connect():
     snapshot = _state_snapshot()
     snapshot["logged_in"] = request.sid in authenticated_sids
     socketio.emit("state", snapshot, to=request.sid)
+
+
+_EXIT_CFG_FILE = os.path.expanduser("~/.spy_trader/exit_config.json")
+
+
+def _apply_exit_config(cfg: dict) -> None:
+    """Set the live exit thresholds from a config dict (% values → fractions)."""
+    try:
+        if "stock_tp_pct" in cfg: auto_engine.STOCK_TAKE_PROFIT_PCT = max(0.1, float(cfg["stock_tp_pct"])) / 100
+        if "stock_sl_pct" in cfg: auto_engine.STOCK_STOP_PCT        = max(0.1, float(cfg["stock_sl_pct"])) / 100
+        if "opt_tp_pct"   in cfg: screener_executor.OPT_TAKE_PROFIT_PCT = max(1.0, float(cfg["opt_tp_pct"])) / 100
+        if "opt_sl_pct"   in cfg: screener_executor.OPT_STOP_LOSS_PCT   = max(1.0, float(cfg["opt_sl_pct"])) / 100
+        if "stall_min"    in cfg: auto_engine.STALL_MINUTES = max(5, int(cfg["stall_min"]))
+        if "time_cap_days" in cfg: auto_engine.TIME_CAP_DAYS = max(1, int(cfg["time_cap_days"]))
+    except Exception as e:
+        log.warning(f"apply exit config: {e}")
+
+
+def _load_exit_config() -> None:
+    try:
+        import json as _j
+        with open(_EXIT_CFG_FILE) as fh:
+            _apply_exit_config(_j.load(fh))
+        log.info("[exit-config] restored saved exit thresholds")
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+
+@socketio.on("set_exit_config")
+@require_auth
+def on_set_exit_config(data):
+    """Operator-editable exit thresholds (±% stocks/options, stall, time cap)."""
+    if not isinstance(data, dict):
+        return
+    _apply_exit_config(data)
+    try:
+        import json as _j
+        os.makedirs(os.path.dirname(_EXIT_CFG_FILE), exist_ok=True)
+        with open(_EXIT_CFG_FILE, "w") as fh:
+            _j.dump(data, fh)
+    except Exception as e:
+        log.warning(f"persist exit config: {e}")
+    _emit_log(f"Exit thresholds updated: stocks ±{auto_engine.STOCK_TAKE_PROFIT_PCT*100:.1f}% · "
+              f"options ±{screener_executor.OPT_TAKE_PROFIT_PCT*100:.0f}% · "
+              f"stall {auto_engine.STALL_MINUTES}min", level="INFO")
+    emit_state()
 
 
 @socketio.on("refresh_positions")
@@ -3289,6 +3381,7 @@ if __name__ == "__main__":
     _single_instance_guard(5000)   # never run two instances on the same port
     _load_auto_exec_state()   # restore today's dedup set if mid-day restart
     _load_trades_today()      # restore today's closed trades (#17)
+    _load_exit_config()       # restore operator-edited exit thresholds
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
     socketio.start_background_task(_scheduler_supervisor)   # respawn scheduler if it dies
