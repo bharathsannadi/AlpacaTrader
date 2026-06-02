@@ -420,6 +420,11 @@ _auto_exec_lock = threading.Lock()   # guards file + in-memory set
 _auto_exec_today:  set = set()   # dedup — symbols ATTEMPTED today (prevents re-attempt)
 _auto_exec_filled: set = set()   # symbols that actually FILLED today — the N/3 cap counter
 _auto_exec_date:   str = ""
+# Stock auto-exec lane (mirrors the options lane) — its own dedup/fill/cap so
+# stocks and options don't share the daily budget. Gated by the same Armed toggle.
+_auto_exec_stock_today:  set = set()
+_auto_exec_stock_filled: set = set()
+STOCK_MAX_AUTO_EXEC_PER_DAY = 3
 
 # ── Daily P&L circuit breaker ────────────────────────────────────────────────
 # Snapshot equity at start-of-day; halt auto-execute if drawdown exceeds limit.
@@ -433,6 +438,7 @@ _loss_breach_count:    int   = 0     # consecutive readings under the loss limit
 def _load_auto_exec_state() -> None:
     """Restore today's dedup set from disk on startup. Discards yesterday's data."""
     global _auto_exec_today, _auto_exec_filled, _auto_exec_date
+    global _auto_exec_stock_today, _auto_exec_stock_filled
     today = datetime.now(ET).strftime("%Y-%m-%d")
     try:
         with open(_AUTO_EXEC_STATE_FILE) as fh:
@@ -440,6 +446,8 @@ def _load_auto_exec_state() -> None:
         if data.get("date") == today:
             _auto_exec_today  = set(data.get("executed", []))
             _auto_exec_filled = set(data.get("filled", []))
+            _auto_exec_stock_today  = set(data.get("stock_executed", []))
+            _auto_exec_stock_filled = set(data.get("stock_filled", []))
             _auto_exec_date   = today
             if _auto_exec_today:
                 log.info(f"[auto-exec] Restored {today}: attempted="
@@ -456,7 +464,9 @@ def _save_auto_exec_state() -> None:
         with open(tmp, "w") as fh:
             _json_dedup.dump(
                 {"date": _auto_exec_date, "executed": sorted(_auto_exec_today),
-                 "filled": sorted(_auto_exec_filled)},
+                 "filled": sorted(_auto_exec_filled),
+                 "stock_executed": sorted(_auto_exec_stock_today),
+                 "stock_filled": sorted(_auto_exec_stock_filled)},
                 fh,
             )
         os.replace(tmp, _AUTO_EXEC_STATE_FILE)
@@ -1900,6 +1910,7 @@ def _auto_exec_options(data: dict) -> None:
       · dry_run flag is honoured — if True, no real order is placed
     """
     global _auto_exec_today, _auto_exec_filled, _auto_exec_date
+    global _auto_exec_stock_today, _auto_exec_stock_filled
     global _session_start_equity, _session_start_date
 
     with _state_lock:
@@ -1918,6 +1929,8 @@ def _auto_exec_options(data: dict) -> None:
         if _auto_exec_date != today:
             _auto_exec_today  = set()
             _auto_exec_filled = set()
+            _auto_exec_stock_today  = set()   # stock lane shares the date key
+            _auto_exec_stock_filled = set()
             _auto_exec_date   = today
             _save_auto_exec_state()
 
@@ -2055,6 +2068,83 @@ def _auto_exec_options(data: dict) -> None:
                 _save_auto_exec_state()
 
 
+def _auto_exec_stocks(data: dict) -> None:
+    """Auto-buy 10 shares of strong screener STOCK rows — the shares analogue of
+    _auto_exec_options (operator request). Same rails: armed toggle, market-open,
+    KB-match gate, dedup (no re-attempt), and an N/3 cap that counts FILLED orders.
+    Stocks are liquid, so there's no §9 option-liquidity gate here."""
+    global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_date
+
+    with _state_lock:
+        armed  = state.get("auto_execute_options", False)   # same Armed toggle
+        logged = state["logged_in"]
+        dry    = state["dry_run"]
+        vix    = state.get("vix")
+    if not armed or not logged:
+        return
+    if not screener._is_market_open():
+        return
+
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    with _auto_exec_lock:
+        if _auto_exec_date != today:
+            # daily rollover is owned by _auto_exec_options; mirror for stocks
+            _auto_exec_stock_today  = set()
+            _auto_exec_stock_filled = set()
+
+    import shares_executor
+    for r in data.get("dt", []):
+        with _auto_exec_lock:
+            if len(_auto_exec_stock_filled) >= STOCK_MAX_AUTO_EXEC_PER_DAY:
+                break
+        # Only strong, validated, top-ranked rows (the ⭐ + ✅ BUY ones).
+        strong = (r.get("action") == "✅ BUY") or (r.get("valid") and r.get("is_top"))
+        if not strong:
+            continue
+        sym = str(r.get("sym", "")).upper().strip()
+        if not sym or not sym.replace(".", "").isalpha():
+            continue
+        with _auto_exec_lock:
+            if sym in _auto_exec_stock_today:
+                continue
+        # KB-principles gate (REQ-004) — same floor the manual click enforces
+        try:
+            sc = kb_principles.score_stock_candidate(r, vix=vix)
+        except Exception:
+            continue
+        if sc["pct"] < kb_principles.KB_MATCH_MIN:
+            _emit_log(f"AUTO-BUY ⛔ {sym} blocked — KB match {sc['pct']}% "
+                      f"< {kb_principles.KB_MATCH_MIN}%", level="INFO")
+            continue
+        with _auto_exec_lock:
+            _auto_exec_stock_today.add(sym)      # mark before the call (dedup)
+            _save_auto_exec_state()
+        try:
+            res = shares_executor.buy(sym, 10, dry_run=dry)
+            res["sym"] = sym
+            res["message"] = (f"AUTO-BUY 10 {sym}" if res.get("success")
+                              else res.get("message", "stock order failed")) + (" [dry]" if dry else "")
+            socketio.emit("screener_order_result", res)
+            _emit_log(f"AUTO-BUY {'✅' if res.get('success') else '⚠️'}  {res['message']}",
+                      level="INFO" if res.get("success") else "WARNING")
+            # count toward the cap only on a real fill (matches the options lane)
+            if res.get("success") and not res.get("dry_run") and res.get("fill_price"):
+                with _auto_exec_lock:
+                    _auto_exec_stock_filled.add(sym)
+                    _save_auto_exec_state()
+                log.info(f"[auto-buy] {sym} FILLED — {len(_auto_exec_stock_filled)}/"
+                         f"{STOCK_MAX_AUTO_EXEC_PER_DAY}")
+            elif not res.get("success"):
+                with _auto_exec_lock:
+                    _auto_exec_stock_today.discard(sym)   # no order — allow retry
+                    _save_auto_exec_state()
+        except Exception as e:
+            log.warning(f"[auto-buy] {sym} failed: {e}")
+            with _auto_exec_lock:
+                _auto_exec_stock_today.discard(sym)
+                _save_auto_exec_state()
+
+
 # Autonomous shadow-engine throttle (module-level; scheduler uses `global`)
 _shadow_last_run = 0.0
 _SHADOW_ETF_SET = set(ETFS_TRADE) | set(ETFS_HEDGE)
@@ -2132,7 +2222,8 @@ def _refresh_screener_bg():
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
-        _auto_exec_options(data)   # auto-place if armed
+        _auto_exec_options(data)   # auto-place options if armed
+        _auto_exec_stocks(data)    # auto-buy strong stock rows if armed
     except Exception as e:
         log.warning(f"Screener refresh failed: {e}")
     finally:
