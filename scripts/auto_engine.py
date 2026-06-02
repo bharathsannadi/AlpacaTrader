@@ -15,6 +15,7 @@ Connors incubation and lets us validate the pipeline end-to-end first.
 does the data fetch. `run_cycle()` ties them and logs.
 """
 from __future__ import annotations
+import os
 import logging
 from dataclasses import dataclass
 from typing import Optional
