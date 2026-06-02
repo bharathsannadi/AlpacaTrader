@@ -417,8 +417,9 @@ _AUTO_EXEC_STATE_FILE = os.path.join(
     os.path.dirname(__file__), "..", "data", "auto_exec_state.json"
 )
 _auto_exec_lock = threading.Lock()   # guards file + in-memory set
-_auto_exec_today: set  = set()
-_auto_exec_date:  str  = ""
+_auto_exec_today:  set = set()   # dedup — symbols ATTEMPTED today (prevents re-attempt)
+_auto_exec_filled: set = set()   # symbols that actually FILLED today — the N/3 cap counter
+_auto_exec_date:   str = ""
 
 # ── Daily P&L circuit breaker ────────────────────────────────────────────────
 # Snapshot equity at start-of-day; halt auto-execute if drawdown exceeds limit.
@@ -431,17 +432,18 @@ _loss_breach_count:    int   = 0     # consecutive readings under the loss limit
 
 def _load_auto_exec_state() -> None:
     """Restore today's dedup set from disk on startup. Discards yesterday's data."""
-    global _auto_exec_today, _auto_exec_date
+    global _auto_exec_today, _auto_exec_filled, _auto_exec_date
     today = datetime.now(ET).strftime("%Y-%m-%d")
     try:
         with open(_AUTO_EXEC_STATE_FILE) as fh:
             data = _json_dedup.load(fh)
         if data.get("date") == today:
-            _auto_exec_today = set(data.get("executed", []))
-            _auto_exec_date  = today
+            _auto_exec_today  = set(data.get("executed", []))
+            _auto_exec_filled = set(data.get("filled", []))
+            _auto_exec_date   = today
             if _auto_exec_today:
-                log.info(f"[auto-exec] Restored dedup set for {today}: "
-                         f"{sorted(_auto_exec_today)}")
+                log.info(f"[auto-exec] Restored {today}: attempted="
+                         f"{sorted(_auto_exec_today)} filled={sorted(_auto_exec_filled)}")
     except (FileNotFoundError, _json_dedup.JSONDecodeError, OSError):
         pass
 
@@ -453,7 +455,8 @@ def _save_auto_exec_state() -> None:
     try:
         with open(tmp, "w") as fh:
             _json_dedup.dump(
-                {"date": _auto_exec_date, "executed": sorted(_auto_exec_today)},
+                {"date": _auto_exec_date, "executed": sorted(_auto_exec_today),
+                 "filled": sorted(_auto_exec_filled)},
                 fh,
             )
         os.replace(tmp, _AUTO_EXEC_STATE_FILE)
@@ -597,7 +600,7 @@ def _state_snapshot() -> dict:
             "debate_enabled":       state["debate_enabled"],
             "auto_trade":           state["auto_trade"],
             "auto_execute_options": state["auto_execute_options"],
-            "auto_exec_today":      list(_auto_exec_today),
+            "auto_exec_today":      list(_auto_exec_filled),   # the N/3 cap counts FILLED trades
             "timestamp":            datetime.now(ET).strftime("%H:%M:%S ET"),
         }
     # Trader calls outside the lock — these may do file I/O or iterate lists
@@ -998,7 +1001,7 @@ def health():
         screener_options_count = 0
 
     with _auto_exec_lock:
-        auto_exec_today_count = len(_auto_exec_today)
+        auto_exec_today_count = len(_auto_exec_filled)   # filled trades, not attempts
 
     degraded = pm_stale or sc_stale
     body = {
@@ -1896,7 +1899,7 @@ def _auto_exec_options(data: dict) -> None:
       · Each order respects the existing KB §4 $400 max-risk budget
       · dry_run flag is honoured — if True, no real order is placed
     """
-    global _auto_exec_today, _auto_exec_date
+    global _auto_exec_today, _auto_exec_filled, _auto_exec_date
     global _session_start_equity, _session_start_date
 
     with _state_lock:
@@ -1913,8 +1916,9 @@ def _auto_exec_options(data: dict) -> None:
     # ── Daily-rollover housekeeping (dedup + circuit-breaker baseline) ──
     with _auto_exec_lock:
         if _auto_exec_date != today:
-            _auto_exec_today = set()
-            _auto_exec_date  = today
+            _auto_exec_today  = set()
+            _auto_exec_filled = set()
+            _auto_exec_date   = today
             _save_auto_exec_state()
 
     if _session_start_date != today:
@@ -1968,9 +1972,9 @@ def _auto_exec_options(data: dict) -> None:
     rows = data.get("options", [])
     for o in rows:
         with _auto_exec_lock:
-            count_today = len(_auto_exec_today)
+            count_today = len(_auto_exec_filled)   # cap counts FILLED trades, not attempts
         if count_today >= MAX_AUTO_EXEC_PER_DAY:
-            log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY}) reached "
+            log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY} filled) reached "
                      f"— skipping remaining signals")
             break
         if o.get("action") != "✅ BUY":
@@ -2011,6 +2015,19 @@ def _auto_exec_options(data: dict) -> None:
                 f"{sym}  {payload['structure']}  {result.get('message', '')}",
                 level=level
             )
+            # ── Count toward the N/3 daily cap ONLY on an actual fill ──────────
+            # (operator: "until it is filled we don't want this to change"). A
+            # placed-but-canceled/rejected/unfilled order leaves the cap counter
+            # untouched. Dedup (_auto_exec_today) still prevents re-attempting the
+            # symbol today; this only governs what the N/3 counter reflects.
+            _filled = (result.get("long_fill_status") in ("filled", "partial")
+                       or int(result.get("long_filled_qty", 0) or 0) > 0)
+            if _filled:
+                with _auto_exec_lock:
+                    _auto_exec_filled.add(sym)
+                    _save_auto_exec_state()
+                log.info(f"[auto-exec] {sym} FILLED — counts toward daily cap "
+                         f"({len(_auto_exec_filled)}/{MAX_AUTO_EXEC_PER_DAY})")
             # ── Dedup-on-reject release ──────────────────────────────────────
             # If the executor returned failure AND no order was actually
             # submitted (no long_order_id), the trade took zero capital and

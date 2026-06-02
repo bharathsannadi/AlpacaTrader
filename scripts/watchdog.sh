@@ -67,8 +67,12 @@ if curl -s -o /dev/null --max-time 5 "$URL" 2>/dev/null; then
 fi
 
 # Not back (manual / .app launch — no launchd). Relaunch ourselves.
+# Must mirror the known-good invocation: the venv site-packages on PYTHONPATH
+# (Homebrew vs venv split) and --paper. The single-instance guard in app.py
+# makes a relaunch safe even if something else also brings one up.
 note "no auto-restart detected — relaunching app directly"
 cd "$REPO" || { note "cd $REPO failed"; exit 1; }
-nohup "$PY" "$REPO/scripts/app.py" > /dev/null 2>&1 &
+PYTHONPATH="$REPO/venv/lib/python3.11/site-packages" \
+    nohup "$PY" "$REPO/scripts/app.py" --paper >> "$LOG" 2>&1 &
 note "relaunched app pid=$!"
 exit 0
