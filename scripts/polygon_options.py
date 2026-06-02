@@ -38,9 +38,24 @@ EXP_LO   = "2021-01-01"
 EXP_HI   = "2026-12-31"
 
 
+# Resilient HTTP session: retry on 429/5xx with backoff, pooled connections, and a
+# (connect, read) timeout tuple so a stuck request can't wedge the whole pull.
+_SESSION = requests.Session()
+try:
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    _retry = Retry(total=4, connect=4, read=4, backoff_factor=1.5,
+                   status_forcelist=(429, 500, 502, 503, 504),
+                   allowed_methods=frozenset(["GET"]), raise_on_status=False)
+    _SESSION.mount("https://", HTTPAdapter(max_retries=_retry, pool_maxsize=8))
+except Exception:
+    pass
+
+
 def _poly_get(url: str) -> dict:
     sep = "&" if "?" in url else "?"
-    r = requests.get(f"{url}{sep}apiKey={POLY_KEY}", timeout=30)
+    # (connect=10s, read=30s); the Retry adapter handles 429/5xx + transient drops.
+    r = _SESSION.get(f"{url}{sep}apiKey={POLY_KEY}", timeout=(10, 30))
     r.raise_for_status()
     return r.json()
 
