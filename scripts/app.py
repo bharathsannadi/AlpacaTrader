@@ -2127,12 +2127,14 @@ def _auto_exec_stocks(data: dict) -> None:
             socketio.emit("screener_order_result", res)
             _emit_log(f"AUTO-BUY {'✅' if res.get('success') else '⚠️'}  {res['message']}",
                       level="INFO" if res.get("success") else "WARNING")
-            # count toward the cap only on a real fill (matches the options lane)
-            if res.get("success") and not res.get("dry_run") and res.get("fill_price"):
+            # Count toward the cap on a successful placement. A stock MARKET order
+            # on paper fills reliably (the fill_price may just confirm a beat later),
+            # so unlike a cancelable option spread, "accepted" == effectively filled.
+            if res.get("success") and not res.get("dry_run"):
                 with _auto_exec_lock:
                     _auto_exec_stock_filled.add(sym)
                     _save_auto_exec_state()
-                log.info(f"[auto-buy] {sym} FILLED — {len(_auto_exec_stock_filled)}/"
+                log.info(f"[auto-buy] {sym} bought — {len(_auto_exec_stock_filled)}/"
                          f"{STOCK_MAX_AUTO_EXEC_PER_DAY}")
             elif not res.get("success"):
                 with _auto_exec_lock:
