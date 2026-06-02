@@ -2096,10 +2096,13 @@ function _renderPositionsTable() {
   // Stocks & ETFs — every equity position in the account, enriched with the
   // engine's strategy/stop/exit when the symbol came from the autonomous engine.
   if (acct.length) {
-    html += `<div class="postab-section-title">📈 Stocks &amp; ETFs (${acct.length})</div>`;
+    const totPnl = acct.reduce((s, p) => s + (p.pnl_usd || 0), 0);
+    const totDay = acct.reduce((s, p) => s + (p.day_pnl_usd || 0), 0);
+    html += `<div class="postab-section-title">📈 Stocks &amp; ETFs (${acct.length}) ·
+      Total ${_posPnl(totPnl)} · Today ${_posPnl(totDay)}</div>`;
     html += `<table class="postab-table"><thead><tr>
       <th>Symbol</th><th>Qty</th><th>Source</th><th>Entry</th><th>Now</th>
-      <th>Stop / Floor</th><th>Exit</th><th>P&L</th></tr></thead><tbody>`;
+      <th>Stop / Floor</th><th>Exit</th><th>Day P&L</th><th>Total P&L</th></tr></thead><tbody>`;
     html += acct.map(p => {
       const e = autoBy[p.sym];                       // engine metadata if present
       const src = e ? `🤖 ${e.strategy || "engine"}` : "manual / auto-buy";
@@ -2112,7 +2115,9 @@ function _renderPositionsTable() {
       return `<tr>
         <td><b>${p.sym}</b></td><td>${p.qty}</td><td>${src}</td>
         <td>$${(p.entry || 0).toFixed(2)}</td><td>$${(p.last || p.entry || 0).toFixed(2)}</td>
-        <td>${stopCell}</td><td>${exitCell}</td><td>${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
+        <td>${stopCell}</td><td>${exitCell}</td>
+        <td>${_posPnl(p.day_pnl_usd, p.day_pnl_pct)}</td>
+        <td>${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
     }).join("");
     html += `</tbody></table>`;
   }

@@ -614,8 +614,11 @@ def _account_equity_positions() -> list:
                 out.append({
                     "sym": p.symbol, "qty": int(float(p.qty)),
                     "entry": float(p.avg_entry_price), "last": float(p.current_price),
-                    "pnl_usd": float(p.unrealized_pl),
+                    "mkt_value": float(p.market_value),
+                    "pnl_usd": float(p.unrealized_pl),          # total since entry
                     "pnl_pct": float(p.unrealized_plpc) * 100,
+                    "day_pnl_usd": float(getattr(p, "unrealized_intraday_pl", 0) or 0),
+                    "day_pnl_pct": float(getattr(p, "unrealized_intraday_plpc", 0) or 0) * 100,
                 })
             except Exception:
                 continue
@@ -1898,6 +1901,24 @@ def _annotate_held_exits(data: dict, positions: list) -> None:
     for p in positions or []:
         if p.get("status") in ("open", "pending", "signal"):
             held[str(p.get("sym", "")).upper()] = _position_exit_plan(p)
+    # Also mark every equity position actually in the account (engine ETFs, stock
+    # auto-buys, manual buys) so the screener shows what we already own + its stop.
+    try:
+        eng_by = {p["sym"]: p for p in auto_engine.positions_snapshot()}
+        for ap in _account_equity_positions():
+            sym = ap["sym"]
+            if sym in held:
+                continue
+            e = eng_by.get(sym) or {}
+            held[sym] = {
+                "instrument": "shares", "qty": ap.get("qty"), "entry": ap.get("entry"),
+                "stop": e.get("stop"),
+                "target": None,
+                "trigger": "dynamic trail · 21d cap" if e else "held",
+                "unit": "$ price", "status": "open",
+            }
+    except Exception as _e:
+        log.debug(f"held-from-account: {_e}")
     for row in data.get("options", []) + data.get("dt", []):
         sym = str(row.get("sym", "")).upper()
         if sym in held:
