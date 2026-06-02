@@ -2096,8 +2096,10 @@ function _renderPositionsTable() {
   const el = document.getElementById("positions-tab-body");
   if (!el) return;
   try {
-  // ALL positions from the account (the truth): equity + options.
-  const acct     = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0);
+  // ALL positions from the account (the truth): equity + options — sorted by
+  // Total P&L desc (operator).
+  const acct     = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0)
+                     .sort((a,b) => (b.pnl_usd||0) - (a.pnl_usd||0));
   const acctOpts = (_lastPositions.options || []).filter(p => (p.qty || 0) !== 0);
   const autoBy = {};
   (_lastPositions.auto || []).forEach(p => { autoBy[p.sym] = p; });

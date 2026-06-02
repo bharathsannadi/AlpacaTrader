@@ -65,6 +65,13 @@ OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss SOFT cap
 OPT_HARD_MAX_USD     = 600.0   # operator 2026-06-02: HARD ceiling — max $600 per
                                # option trade, ALWAYS enforced even in relaxed mode
                                # (stops a garbage quote, e.g. the $11k MU glitch).
+OPT_HARD_MAX_USD_ETF = 1500.0  # ETFs get a higher ceiling (operator) — liquid index
+                               # options (SPY/QQQ ATM) legitimately cost > $600.
+try:
+    from universe import ETFS_TRADE as _ETFS_T, ETFS_HEDGE as _ETFS_H
+    _ETF_SET = set(_ETFS_T) | set(_ETFS_H)
+except Exception:
+    _ETF_SET = set()
 OPT_TAKE_PROFIT_PCT  = 0.20    # sell an option position at +20% (net debit)
 OPT_STOP_LOSS_PCT    = 0.20    # sell an option position at -20% (net debit)
 OPT_MAX_OPEN         = 3       # max concurrent option positions (by underlying)
@@ -478,9 +485,10 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # HARD sanity ceiling first — ALWAYS blocks, even in relaxed mode, so a
         # single mispriced/garbage contract can't blow a huge position (the MU
         # $11k glitch). This is NOT relaxable.
-        if net_debit * 100 > OPT_HARD_MAX_USD:
+        _ceiling = OPT_HARD_MAX_USD_ETF if sym.upper() in _ETF_SET else OPT_HARD_MAX_USD
+        if net_debit * 100 > _ceiling:
             raise ValueError(f"{sym}: HARD ceiling — debit ${net_debit*100:.0f} "
-                             f"> ${OPT_HARD_MAX_USD:.0f} (sanity guard; likely a bad quote)")
+                             f"> ${_ceiling:.0f} (sanity guard; likely a bad quote)")
         if net_debit * 100 > max_risk:
             if OPT_ENFORCE_MAX_RISK:
                 raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "

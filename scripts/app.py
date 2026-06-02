@@ -1941,6 +1941,18 @@ def _annotate_liquidity(data: dict) -> None:
                                + o.get("confidence", ""))[:200]
 
 
+def _sort_screener_by_kb(data: dict) -> None:
+    """Sort screener rows by KB-match desc (operator). BUY rows first, then by KB%,
+    then held rows after (already owned). In place."""
+    def key(r):
+        act_rank = 0 if r.get("action") == "✅ BUY" else 1
+        held_rank = 1 if r.get("held") else 0
+        return (held_rank, act_rank, -(r.get("kb_match") or 0))
+    for k in ("options", "dt"):
+        if isinstance(data.get(k), list):
+            data[k] = sorted(data[k], key=key)
+
+
 def _position_exit_plan(pos: dict) -> dict:
     """Compute the exit plan for a held daily position, for UI display.
     Returns {stop, target, trigger, instrument, entry, status}."""
@@ -2419,6 +2431,7 @@ def _refresh_screener_bg():
         _annotate_kb(data)
         _annotate_liquidity(data)
         _annotate_held_exits(data, positions)
+        _sort_screener_by_kb(data)
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
                  f"{len(data.get('options',[]))} options")
@@ -2445,6 +2458,7 @@ def on_get_screener(data=None):
             _annotate_held_exits(cached, dtrad._load_positions())
         except Exception:
             pass
+        _sort_screener_by_kb(cached)
         socketio.emit("screener_data", cached, to=request.sid)
     if force or not cached.get("dt"):
         socketio.start_background_task(_refresh_screener_bg)
