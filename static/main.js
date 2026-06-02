@@ -356,11 +356,13 @@ function updateUI(s) {
     if (document.body.classList.contains("view-positions")) _renderPositionsTable();
   }
 
-  // Exit config inputs (don't clobber while the user is editing)
-  if (s.exit_config) {
+  // Exit config inputs — only sync when there are NO pending edits (Save disabled),
+  // so a state push can't clobber what the user is typing.
+  const _saveBtn = document.getElementById("btn-save-exit");
+  if (s.exit_config && (!_saveBtn || _saveBtn.disabled)) {
     const ec = s.exit_config;
-    const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v; };
-    set("ex-stock-tp", ec.stock_tp_pct); set("ex-stock-sl", ec.stock_sl_pct); set("ex-stock-stall", ec.stock_stall_min);
+    const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el && v != null) el.value = v; };
+    set("ex-stock-tp", ec.stock_tp_pct); set("ex-stock-sl", ec.stock_sl_pct); set("ex-stock-stall", ec.stock_stall_days);
     set("ex-opt-tp", ec.opt_tp_pct);     set("ex-opt-sl", ec.opt_sl_pct);     set("ex-opt-stall", ec.opt_stall_min);
     set("ex-cap", ec.time_cap_days);
   }
@@ -2099,10 +2101,20 @@ function refreshPositions() {
 function saveExitConfig() {
   const v = id => parseFloat(document.getElementById(id).value);
   socket.emit("set_exit_config", {
-    stock_tp_pct: v("ex-stock-tp"), stock_sl_pct: v("ex-stock-sl"), stock_stall_min: v("ex-stock-stall"),
+    stock_tp_pct: v("ex-stock-tp"), stock_sl_pct: v("ex-stock-sl"), stock_stall_days: v("ex-stock-stall"),
     opt_tp_pct:   v("ex-opt-tp"),   opt_sl_pct:   v("ex-opt-sl"),   opt_stall_min:   v("ex-opt-stall"),
     time_cap_days: v("ex-cap"),
   });
+  _exitSaved();
+}
+
+function _exitChanged() {   // enable Save on any edit
+  const b = document.getElementById("btn-save-exit");
+  if (b) { b.disabled = false; b.textContent = "Save Exit Settings"; b.style.opacity = "1"; b.style.cursor = "pointer"; }
+}
+function _exitSaved() {      // back to disabled "✓ Saved"
+  const b = document.getElementById("btn-save-exit");
+  if (b) { b.disabled = true; b.textContent = "✓ Saved"; b.style.opacity = ".45"; b.style.cursor = "not-allowed"; }
 }
 
 function renderJournal(items) {

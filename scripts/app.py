@@ -776,8 +776,8 @@ def _state_snapshot() -> dict:
         "stock_sl_pct":  round(auto_engine.STOCK_STOP_PCT * 100, 2),
         "opt_tp_pct":    round(screener_executor.OPT_TAKE_PROFIT_PCT * 100, 2),
         "opt_sl_pct":    round(screener_executor.OPT_STOP_LOSS_PCT * 100, 2),
-        "stock_stall_min": auto_engine.STALL_MINUTES,
-        "opt_stall_min":   screener_executor.OPT_STALL_MINUTES,
+        "stock_stall_days": round(auto_engine.STALL_MINUTES / 1440, 1),   # stocks: days
+        "opt_stall_min":    screener_executor.OPT_STALL_MINUTES,          # options: minutes
         "time_cap_days": auto_engine.TIME_CAP_DAYS,
     }
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
@@ -1232,8 +1232,8 @@ def _apply_exit_config(cfg: dict) -> None:
         if "stock_sl_pct" in cfg: auto_engine.STOCK_STOP_PCT        = max(0.1, float(cfg["stock_sl_pct"])) / 100
         if "opt_tp_pct"   in cfg: screener_executor.OPT_TAKE_PROFIT_PCT = max(1.0, float(cfg["opt_tp_pct"])) / 100
         if "opt_sl_pct"   in cfg: screener_executor.OPT_STOP_LOSS_PCT   = max(1.0, float(cfg["opt_sl_pct"])) / 100
-        if "stock_stall_min" in cfg: auto_engine.STALL_MINUTES = max(5, int(cfg["stock_stall_min"]))
-        if "opt_stall_min"   in cfg: screener_executor.OPT_STALL_MINUTES = max(5, int(cfg["opt_stall_min"]))
+        if "stock_stall_days" in cfg: auto_engine.STALL_MINUTES = max(60, int(float(cfg["stock_stall_days"]) * 1440))
+        if "opt_stall_min"    in cfg: screener_executor.OPT_STALL_MINUTES = max(5, int(cfg["opt_stall_min"]))
         if "time_cap_days" in cfg: auto_engine.TIME_CAP_DAYS = max(1, int(cfg["time_cap_days"]))
     except Exception as e:
         log.warning(f"apply exit config: {e}")

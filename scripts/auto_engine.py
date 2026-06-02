@@ -46,7 +46,8 @@ OPTIONS_ENGINE_ENABLED = False
 STOCK_TAKE_PROFIT_PCT = 0.02
 STOCK_STOP_PCT        = 0.02
 # Time-stop on stall (#33): if green but no new high for STALL_MINUTES, lock the gain.
-STALL_MINUTES         = 60
+# Stocks are held over DAYS, so the UI edits this in days (here stored as minutes).
+STALL_MINUTES         = 3 * 1440   # 3 days
 STALL_MIN_PROFIT_PCT  = 0.01
 _JOURNAL_FILE = os.path.expanduser("~/.spy_trader/journal.jsonl")
 

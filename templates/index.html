@@ -1600,16 +1600,17 @@
       <!-- Exit Strategy (editable) -->
       <div class="card" data-card-id="exit-strategy">
         <div class="card-title">Exit Strategy <span style="font-size:9px;color:var(--muted)">(editable)</span></div>
-        <div style="display:grid;grid-template-columns:auto auto;gap:6px 10px;font-size:var(--fs-xs);align-items:center">
-          <span>📈 Stock TP +%</span><input class="risk-input" type="number" id="ex-stock-tp" min="0.1" step="0.1" style="width:60px">
-          <span>📈 Stock SL −%</span><input class="risk-input" type="number" id="ex-stock-sl" min="0.1" step="0.1" style="width:60px">
-          <span>📈 Stock stall (min)</span><input class="risk-input" type="number" id="ex-stock-stall" min="5" step="5" style="width:60px">
-          <span>🎯 Option TP +%</span><input class="risk-input" type="number" id="ex-opt-tp" min="1" step="1" style="width:60px">
-          <span>🎯 Option SL −%</span><input class="risk-input" type="number" id="ex-opt-sl" min="1" step="1" style="width:60px">
+        <div style="display:grid;grid-template-columns:auto auto;gap:6px 10px;font-size:var(--fs-xs);align-items:center"
+             oninput="_exitChanged()">
+          <span style="color:#22c55e">📈 Stock TP +%</span><input class="risk-input" type="number" id="ex-stock-tp" min="0.1" step="0.1" style="width:60px">
+          <span style="color:#f43f5e">📈 Stock SL −%</span><input class="risk-input" type="number" id="ex-stock-sl" min="0.1" step="0.1" style="width:60px">
+          <span>📈 Stock stall (days)</span><input class="risk-input" type="number" id="ex-stock-stall" min="0.5" step="0.5" style="width:60px">
+          <span style="color:#22c55e">🎯 Option TP +%</span><input class="risk-input" type="number" id="ex-opt-tp" min="1" step="1" style="width:60px">
+          <span style="color:#f43f5e">🎯 Option SL −%</span><input class="risk-input" type="number" id="ex-opt-sl" min="1" step="1" style="width:60px">
           <span>🎯 Option stall (min)</span><input class="risk-input" type="number" id="ex-opt-stall" min="5" step="5" style="width:60px">
-          <span>📅 Time cap (d)</span><input class="risk-input" type="number" id="ex-cap" min="1" step="1" style="width:60px">
+          <span>📅 Time cap (days)</span><input class="risk-input" type="number" id="ex-cap" min="1" step="1" style="width:60px">
         </div>
-        <button class="btn-run" style="margin-top:8px;width:100%" onclick="saveExitConfig()">Save Exit Settings</button>
+        <button class="btn-run" id="btn-save-exit" style="margin-top:10px;width:100%;background:#22c55e;color:#04210f;font-weight:700;opacity:.45;cursor:not-allowed" disabled onclick="saveExitConfig()">✓ Saved</button>
       </div>
 
     </div><!-- /s-col-left -->
