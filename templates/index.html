@@ -1498,10 +1498,8 @@
       <span class="label">Buying Power</span>
       <span class="value" id="hdr-bp">—</span>
     </div>
-    <div class="header-stat">
-      <span class="label">Max Risk</span>
-      <span class="value" id="hdr-risk">—</span>
-    </div>
+    <!-- Max Risk header stat removed (risk-per-trade control gone; fixed sizing now) -->
+
   </div>
 
   <div class="header-right">
@@ -1530,7 +1528,7 @@
   <div class="tab-divider" data-charts-only></div>
   <button class="symbol-tab screener-tab" id="tab-screener" onclick="showScreener()">🔍 Screener</button>
   <button class="symbol-tab positions-tab" id="tab-positions" onclick="showPositions()">📊 Positions</button>
-  <button class="symbol-tab log-tab" id="tab-log" onclick="showLog()">📋 Log</button>
+  <!-- Log moved into the Settings tab (2026-06-02) -->
 </div>
 
 <!-- ── Exec Brief ─────────────────────────────────────────────────────────── -->
@@ -1621,11 +1619,32 @@
         </div>
       </div>
 
-      <!-- Paper Incubation tracker removed (2026-06-02) -->
+      <!-- Exit Strategy -->
+      <div class="card" data-card-id="exit-strategy">
+        <div class="card-title">Exit Strategy</div>
+        <div style="font-size:var(--fs-xs);color:var(--text);line-height:1.7">
+          <div>📈 <b>Stocks / ETFs:</b> ±2% · trail · 21d</div>
+          <div>🎯 <b>Options:</b> ±20% on net debit · ladder backstop</div>
+        </div>
+      </div>
 
-      <!-- Daily Positions + Open Positions moved to the dedicated 📊 Positions tab (#24) -->
-
-      <!-- Fill Slippage card removed (2026-06-02) -->
+      <!-- Log (moved from the Log tab, 2026-06-02) -->
+      <div class="card terminal-card" data-card-id="log" style="display:flex;flex-direction:column;height:320px">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
+          </div>
+          <span class="terminal-title">auto_trader.log</span>
+          <div class="stream-controls">
+            <span class="stream-dot live" id="dot-stream"></span>
+            <button class="copy-btn-sm" id="btn-copy-log" onclick="copyLog()">Copy</button>
+            <button class="clear-btn" onclick="clearLog()">Clear</button>
+          </div>
+        </div>
+        <div id="log-output" style="flex:1;min-height:0;overflow-y:auto;">
+          <span class="log-line log-INFO" style="color:#334155">Waiting for session to start...</span>
+        </div>
+      </div>
 
     </div><!-- /s-col-mid -->
 
@@ -2034,28 +2053,7 @@
 </div><!-- /screener-panel -->
 
 <!-- ── Log panel (shown when Log tab is active) ──────────────────────────── -->
-<div class="log-panel" id="log-panel">
-  <div class="card terminal-card" style="flex:1;min-height:0;display:flex;flex-direction:column;">
-    <div class="terminal-header">
-      <div class="terminal-dots">
-        <div class="dot dot-red"></div>
-        <div class="dot dot-yellow"></div>
-        <div class="dot dot-green"></div>
-      </div>
-      <span class="terminal-title">auto_trader.log</span>
-      <div class="stream-controls">
-        <span class="stream-dot live" id="dot-stream"></span>
-        <button class="stream-btn start" id="btn-start-stream" onclick="startStream()" disabled>▶</button>
-        <button class="stream-btn stop"  id="btn-stop-stream"  onclick="stopStream()">■</button>
-        <button class="copy-btn-sm" id="btn-copy-log" onclick="copyLog()">Copy</button>
-        <button class="clear-btn" onclick="clearLog()">Clear</button>
-      </div>
-    </div>
-    <div id="log-output" style="flex:1;min-height:0;overflow-y:auto;">
-      <span class="log-line log-INFO" style="color:#334155">Waiting for session to start...</span>
-    </div>
-  </div>
-</div>
+<!-- Log panel moved into the Settings dashboard (2026-06-02) -->
 
 <!-- ── Positions tab (#24 — dedicated open-positions table) ─────────────────── -->
 <div class="positions-panel" id="positions-panel">

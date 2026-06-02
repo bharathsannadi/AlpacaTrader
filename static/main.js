@@ -545,10 +545,9 @@ function setStreamButtons(streaming) {
   const dot   = document.getElementById("dot-stream");
   const start = document.getElementById("btn-start-stream");
   const stop  = document.getElementById("btn-stop-stream");
-  if (!dot) return;
-  dot.className  = `stream-dot ${streaming ? "live" : ""}`;
-  start.disabled = !!streaming;
-  stop.disabled  = !streaming;
+  if (dot)   dot.className  = `stream-dot ${streaming ? "live" : ""}`;
+  if (start) start.disabled = !!streaming;
+  if (stop)  stop.disabled  = !streaming;
 }
 
 // ── Log terminal ──────────────────────────────────────────────────────────────
