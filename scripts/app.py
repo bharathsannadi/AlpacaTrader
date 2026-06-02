@@ -578,6 +578,23 @@ _acct_pos_cache = {"data": [], "ts": 0.0}
 _ACCT_POS_TTL   = 8.0   # cache Alpaca positions ~8s (state snapshot runs often)
 
 
+def _protect_untracked_stocks() -> None:
+    """Any account equity position not yet in the engine's managed store gets brought
+    under dynamic exit management — so stock auto-buys + manual buys get a trailing
+    stop / profit floor / time cap, not just the engine's own ETF entries."""
+    try:
+        acct = _account_equity_positions()
+        if not acct:
+            return
+        tracked = {p.get("sym") for p in auto_engine._load_positions()}
+        for p in acct:
+            if p["sym"] not in tracked:
+                auto_engine.record_stock_position(
+                    p["sym"], p["qty"], p["entry"], strategy="screener/manual")
+    except Exception as e:
+        log.debug(f"protect untracked stocks: {e}")
+
+
 def _account_equity_positions() -> list:
     """All equity (stock/ETF) positions straight from Alpaca — the source of truth
     for the Positions tab (engine ETFs + stock auto-buys + manual buys). Cached to
@@ -926,6 +943,7 @@ def position_monitor() -> None:
             # own paper positions). Cheap; runs every tick when execute mode is on.
             if auto_engine.DUAL_ENGINE_ENABLED and auto_engine.DUAL_ENGINE_MODE == "execute":
                 try:
+                    _protect_untracked_stocks()        # give stock buys a stop too
                     auto_engine.manage_exits(dry_run=False)
                 except Exception as e:
                     log.warning(f"[auto-engine] manage_exits error: {e}")

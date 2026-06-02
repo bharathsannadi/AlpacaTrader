@@ -393,6 +393,38 @@ def execute_plan(plan: dict, dry_run: bool = False,
     return positions
 
 
+def record_stock_position(sym: str, qty: int, entry: float, strategy: str = "external",
+                          atr: float = 0.0, dry_run: bool = False,
+                          stop_pct: float = 0.08) -> bool:
+    """Bring an externally-bought stock (screener auto-buy, manual, or any account
+    position opened outside the engine) under dynamic exit management (REQ-608/609):
+    append it to the managed store with an exit_state so manage_exits trails a stop,
+    locks a profit floor, and enforces the time cap. No-op if already tracked.
+    Stop = entry − 2×ATR when ATR is known, else an 8% initial stop. Returns True
+    if newly added."""
+    from dataclasses import asdict as _asdict
+    from datetime import date as _date
+    sym = sym.upper()
+    entry = float(entry or 0.0)
+    if entry <= 0 or qty <= 0:
+        return False
+    positions = _load_positions()
+    if any(p.get("sym") == sym for p in positions):
+        return False
+    init_stop = (entry - 2.0 * atr) if (atr and atr > 0) else entry * (1.0 - stop_pct)
+    st = ExitEngine().init_position(entry=entry, init_stop=init_stop)
+    positions.append({
+        "sym": sym, "strategy": strategy, "route": "stocks",
+        "qty": int(qty), "entry_price": entry, "signal_price": entry,
+        "entry_slippage_bps": 0.0, "entry_date": _date.today().isoformat(),
+        "order_id": None, "exit_state": _asdict(st), "dry_run": dry_run,
+    })
+    _save_positions(positions)
+    log.info(f"[auto-engine] now managing {sym} {qty}sh @ ${entry:.2f} "
+             f"(stop ${init_stop:.2f}) — {strategy}")
+    return True
+
+
 def _execute_option(signal, decision, dry_run: bool = False) -> Optional[dict]:
     """Place a PAPER option order for an options-routed signal (#20) and return the
     position record, or None if it didn't fill / failed a gate. Reuses the
