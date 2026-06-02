@@ -27,6 +27,17 @@ function _loadCreds() {
 // Refresh is auth-required, so calling it before login causes a disconnect.
 socket.on("state", updateUI);
 
+// EOD analysis + learning report
+socket.on("eod_report", (r) => {
+  const st = document.getElementById("eod-stats");
+  const nv = document.getElementById("eod-narrative");
+  const s = r.stats || {};
+  if (st) st.innerHTML = `${s.date} · closed ${s.closed} (${s.wins}W/${s.losses}L · ${s.win_rate}%) · ` +
+    `realized <b>$${(s.realized_pnl||0).toFixed(0)}</b> · open ${s.open} ($${(s.unrealized_pnl||0).toFixed(0)}) · ` +
+    `missed ${s.missed_count} · KB-relaxed ${s.relaxations}`;
+  if (nv) nv.textContent = r.narrative || "—";
+});
+
 // Server tells us we need to re-authenticate (e.g. after a reconnect).
 // Try silent re-auth first using sessionStorage credentials.
 socket.on("login_required", () => {

@@ -1643,6 +1643,18 @@
         </div>
       </div>
 
+      <!-- EOD Analysis + Learning -->
+      <div class="card" data-card-id="eod">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="card-title">EOD Analysis &amp; Learning</div>
+          <button class="btn-run" style="font-size:10px;padding:3px 10px" onclick="socket.emit('run_eod_analysis')">▶ Run Now</button>
+        </div>
+        <div id="eod-stats" style="font-size:var(--fs-xs);font-family:var(--mono);color:var(--muted);margin:4px 0"></div>
+        <div id="eod-narrative" style="font-size:var(--fs-xs);line-height:1.5;color:var(--text)">
+          <span style="color:var(--muted)">Runs automatically at 4:10 PM ET — or click Run Now. Reviews closes, missed buys, KB relaxations &amp; P&L, with recommendations.</span>
+        </div>
+      </div>
+
       <!-- Log (moved from the Log tab, 2026-06-02) -->
       <div class="card terminal-card" data-card-id="log" style="display:flex;flex-direction:column;height:320px">
         <div class="terminal-header">

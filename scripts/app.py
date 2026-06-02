@@ -582,6 +582,114 @@ _opt_peak: dict = {}   # per-underlying option {peak P&L, ts} for the stall time
 _exit_mgmt_state = {"last": 0.0}   # throttle the heavy exit-management block (~30s)
 
 
+def _read_jsonl_today(path: str, today: str) -> list:
+    out = []
+    try:
+        import json as _j
+        with open(os.path.expanduser(path)) as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    o = _j.loads(ln)
+                except Exception:
+                    continue
+                if str(o.get("ts", ""))[:10] == today:
+                    out.append(o)
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def _run_eod_analysis(emit: bool = True) -> dict:
+    """EOD analysis + learning: compile today's closes, missed buys, relaxations and
+    P&L, then ask Claude for insights + recommendations (REQ-610 self-learn). Saves a
+    report to ~/.spy_trader/eod_<date>.json and emits it to the UI."""
+    import datetime as _dt, json as _j
+    today = _dt.date.today().isoformat()
+    closed   = _read_jsonl_today(auto_engine._JOURNAL_FILE, today)
+    relaxed  = _read_jsonl_today("~/.spy_trader/kb_relaxed.jsonl", today)
+    screened = _read_jsonl_today(f"~/.spy_trader/screened_{today}.jsonl", today)
+    eq, op = _account_equity_positions(), _account_option_positions()
+    held_syms   = {p["sym"] for p in eq} | {o["sym"] for o in op}
+    closed_syms = {c.get("sym") for c in closed}
+    # "missed" = screened-as-BUY, never entered (not held, not closed today)
+    missed = sorted({s.get("sym") for s in screened
+                     if s.get("sym") not in held_syms and s.get("sym") not in closed_syms})
+    wins   = [c for c in closed if (c.get("pnl_pct") or 0) > 0]
+    losses = [c for c in closed if (c.get("pnl_pct") or 0) < 0]
+    realized = sum(float(c.get("pnl_usd") or 0) for c in closed)
+    unreal   = sum(float(p.get("pnl_usd") or 0) for p in eq) + sum(float(o.get("pnl_usd") or 0) for o in op)
+    # exit-reason breakdown
+    reasons: dict = {}
+    for c in closed:
+        r = (c.get("reason") or "?").split(" ")[0]
+        reasons[r] = reasons.get(r, 0) + 1
+    stats = {
+        "date": today, "closed": len(closed), "wins": len(wins), "losses": len(losses),
+        "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else 0,
+        "realized_pnl": round(realized, 2), "unrealized_pnl": round(unreal, 2),
+        "open": len(eq) + len(op), "screened_buy": len(screened),
+        "missed_count": len(missed), "missed_names": missed[:25],
+        "relaxations": len(relaxed),
+        "exit_reasons": reasons,
+    }
+    narrative = _eod_llm(stats, closed, relaxed)
+    report = {"ts": _dt.datetime.now().isoformat(), "stats": stats, "narrative": narrative}
+    try:
+        with open(os.path.expanduser(f"~/.spy_trader/eod_{today}.json"), "w") as fh:
+            _j.dump(report, fh, indent=2)
+    except Exception as e:
+        log.warning(f"save eod report: {e}")
+    if emit:
+        socketio.emit("eod_report", report)
+        _emit_log(f"EOD ANALYSIS {today}: {len(closed)} closed ({len(wins)}W/{len(losses)}L) "
+                  f"realized ${realized:+.0f} · {len(missed)} missed · {len(relaxed)} KB-relaxed",
+                  level="INFO")
+    return report
+
+
+def _eod_llm(stats: dict, closed: list, relaxed: list) -> str:
+    """Ask Claude for an EOD review + 2-3 concrete recommendations. Deterministic
+    fallback if no API key."""
+    plain = (f"Date {stats['date']} · closed {stats['closed']} "
+             f"({stats['wins']}W/{stats['losses']}L, win-rate {stats['win_rate']}%) · "
+             f"realized ${stats['realized_pnl']:+.0f} · unrealized ${stats['unrealized_pnl']:+.0f} · "
+             f"open {stats['open']} · screened-BUY {stats['screened_buy']} · "
+             f"missed {stats['missed_count']} ({', '.join(stats['missed_names'][:12])}) · "
+             f"KB-relaxed {stats['relaxations']} · exit-reasons {stats['exit_reasons']}")
+    try:
+        if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+            import debate as _d
+            client = _d.get_anthropic_client()
+            if client is not None:
+                resp = client.messages.create(
+                    model="claude-haiku-4-5-20251001", max_tokens=320,
+                    messages=[{"role": "user", "content":
+                        "You are the EOD coach for an automated PAPER trading system "
+                        "(stocks/ETFs ±2% exits, options ±20%, KB-gated, some gates relaxed "
+                        "to fill). Review today's data and give: (1) a 2-sentence summary, "
+                        "(2) 2-3 SPECIFIC, actionable recommendations to improve tomorrow "
+                        "(e.g. tighten/loosen a threshold, stop relaxing a gate, missed names "
+                        "worth pre-staging). Be concrete and brief.\n\n" + plain}],
+                )
+                return resp.content[0].text.strip()
+    except Exception as e:
+        log.warning(f"eod llm: {e}")
+    # fallback
+    rec = []
+    if stats["relaxations"] > 3:
+        rec.append(f"Relaxed KB gates {stats['relaxations']}× — review whether those fills helped.")
+    if stats["missed_count"] > 0:
+        rec.append(f"{stats['missed_count']} buyable names not taken: {', '.join(stats['missed_names'][:8])}.")
+    if stats["losses"] > stats["wins"]:
+        rec.append("More losses than wins — consider tightening entries or the stop.")
+    return (f"Closed {stats['closed']} ({stats['wins']}W/{stats['losses']}L), realized "
+            f"${stats['realized_pnl']:+.0f}, {stats['open']} still open (${stats['unrealized_pnl']:+.0f}). "
+            + " ".join(rec or ["Steady day."]))
+
+
 def _journal_recent(n: int = 25) -> list:
     """Last n closed-trade events from the shared journal (#34)."""
     try:
@@ -1274,6 +1382,13 @@ def on_set_exit_config(data):
     emit_state()
 
 
+@socketio.on("run_eod_analysis")
+@require_auth
+def on_run_eod_analysis():
+    """Trigger EOD analysis + learning on demand."""
+    socketio.start_background_task(_run_eod_analysis)
+
+
 @socketio.on("refresh_positions")
 def on_refresh_positions():
     """Force a FRESH pull of account positions and push state to the caller (used by
@@ -1917,6 +2032,7 @@ def scheduler():
                     and daily_eod_fired_on != today:
                 daily_eod_fired_on = today
                 socketio.start_background_task(_run_daily_eod)
+                socketio.start_background_task(_run_eod_analysis)   # EOD analysis + learning
 
             # Screener auto-refresh — every 90s during market hours
             _screener_age = _time.time() - _screener_last_refresh
