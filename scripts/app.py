@@ -2002,6 +2002,20 @@ def _annotate_held_exits(data: dict, positions: list) -> None:
     except Exception as _e:
         log.debug(f"held-from-account: {_e}")
 
+    # account OPTION positions → mark the option screener row for that underlying as
+    # held (we already own the option), so it shows 🔵 HELD instead of a BUY button.
+    try:
+        for op in _account_option_positions():
+            u = (op.get("sym") or "").upper()
+            if u and u not in held_opt:
+                held_opt[u] = {
+                    "instrument": "options", "qty": op.get("qty"),
+                    "entry": op.get("entry"), "stop": None, "target": None,
+                    "trigger": "±20% take-profit / stop", "unit": "$ debit", "status": "open",
+                }
+    except Exception as _e:
+        log.debug(f"held-from-account-options: {_e}")
+
     for row in data.get("options", []):
         plan = held_opt.get(str(row.get("sym", "")).upper())
         row["held"] = plan is not None
