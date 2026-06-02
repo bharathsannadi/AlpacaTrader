@@ -275,8 +275,7 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
         if wide or thinOI:
             why = (f"bid-ask {ba*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}%" if wide
                    else f"ATM OI {oi} < {OPT_MIN_OI} and spread {ba*100:.1f}% not tight")
-            if OPT_RELAX_LIQUIDITY:        # operator: fill anyway — keep it tradable, just audit
-                _log_kb_relaxed(sym, "§9 liquidity (rank)", why)
+            if OPT_RELAX_LIQUIDITY:        # operator: fill anyway — advisory only, NOT audited
                 return {"ok": True, "reason": f"§9 relaxed: {why}", "atm_oi": oi, "ba_pct": ba,
                         "relaxed": True}
             return {"ok": False, "reason": why, "atm_oi": oi, "ba_pct": ba}
@@ -428,9 +427,10 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         if _wide or _thinOI:
             _why = (f"bid-ask spread {ba_pct*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}% max"
                     if _wide else f"ATM OI {atm_oi} < {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight")
-            if OPT_RELAX_LIQUIDITY:        # operator relaxed-fill: allow it, audit it
-                _log_kb_relaxed(sym, "§9 liquidity (exec)",
-                                f"{_why} — filling at market, expect to pay the spread")
+            if OPT_RELAX_LIQUIDITY:        # operator relaxed-fill: allow it
+                if not dry_run:            # audit ONLY real orders (not dry-run sims)
+                    _log_kb_relaxed(sym, "§9 liquidity",
+                                    f"{_why} — filled at market, paid the spread")
             else:
                 raise ValueError(f"{sym}: KB §9 Liquidity — {_why} — illiquid, would not fill")
 
@@ -494,8 +494,9 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
             if OPT_ENFORCE_MAX_RISK:
                 raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
                                  f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
-            _log_kb_relaxed(sym, "§4 max-risk",
-                            f"debit ${net_debit*100:.0f} > ${max_risk:.0f} soft cap (relaxed)")
+            if not dry_run:                # audit ONLY real orders
+                _log_kb_relaxed(sym, "§4 max-risk",
+                                f"debit ${net_debit*100:.0f} > ${max_risk:.0f} soft cap (relaxed)")
 
         # ── 5. Dry run ───────────────────────────────────────────────────────
         if dry_run:
