@@ -574,7 +574,7 @@ def require_auth(fn):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-_acct_pos_cache = {"data": [], "ts": 0.0}
+_acct_pos_cache = {"equity": [], "options": [], "ts": 0.0}
 _ACCT_POS_TTL   = 8.0   # cache Alpaca positions ~8s (state snapshot runs often)
 
 
@@ -634,38 +634,52 @@ def _protect_untracked_stocks() -> None:
         log.debug(f"protect untracked stocks: {e}")
 
 
-def _account_equity_positions() -> list:
-    """All equity (stock/ETF) positions straight from Alpaca — the source of truth
-    for the Positions tab (engine ETFs + stock auto-buys + manual buys). Cached to
-    avoid an API call on every state snapshot."""
+def _refresh_account_positions() -> None:
+    """Fetch all Alpaca positions once, split into equity + options, cache ~8s — the
+    source of truth for the Positions tab + P&L (engine ETFs, stock auto-buys, manual,
+    and option positions)."""
     now = time.monotonic()
     if now - _acct_pos_cache["ts"] < _ACCT_POS_TTL:
-        return _acct_pos_cache["data"]
+        return
     c = getattr(trader, "TRADING_CLIENT", None)
     if c is None:
-        return _acct_pos_cache["data"]
-    out = []
+        return
+    import re as _re
+    eq, op = [], []
     try:
         for p in c.get_all_positions():
-            if getattr(getattr(p, "asset_class", None), "value", "") != "us_equity":
-                continue
+            ac = getattr(getattr(p, "asset_class", None), "value", "")
             try:
-                out.append({
-                    "sym": p.symbol, "qty": int(float(p.qty)),
+                base = {
+                    "qty": int(float(p.qty)),
                     "entry": float(p.avg_entry_price), "last": float(p.current_price),
                     "mkt_value": float(p.market_value),
-                    "pnl_usd": float(p.unrealized_pl),          # total since entry
+                    "pnl_usd": float(p.unrealized_pl),
                     "pnl_pct": float(p.unrealized_plpc) * 100,
                     "day_pnl_usd": float(getattr(p, "unrealized_intraday_pl", 0) or 0),
                     "day_pnl_pct": float(getattr(p, "unrealized_intraday_plpc", 0) or 0) * 100,
-                })
+                }
             except Exception:
                 continue
+            if ac == "us_equity":
+                eq.append({"sym": p.symbol, **base})
+            elif ac == "us_option":
+                m = _re.match(r"^([A-Z]+)\d", p.symbol)
+                op.append({"occ": p.symbol, "sym": (m.group(1) if m else p.symbol), **base})
     except Exception as e:
         log.debug(f"account positions fetch: {e}")
-        return _acct_pos_cache["data"]   # keep last good on a transient error
-    _acct_pos_cache.update(data=out, ts=now)
-    return out
+        return   # keep last good on a transient error
+    _acct_pos_cache.update(equity=eq, options=op, ts=now)
+
+
+def _account_equity_positions() -> list:
+    _refresh_account_positions()
+    return _acct_pos_cache.get("equity", [])
+
+
+def _account_option_positions() -> list:
+    _refresh_account_positions()
+    return _acct_pos_cache.get("options", [])
 
 
 def _state_snapshot() -> dict:
@@ -715,9 +729,10 @@ def _state_snapshot() -> dict:
         snap["auto_positions"]     = auto_engine.positions_snapshot()
     except Exception:
         snap["auto_positions"]     = []
-    # ALL Alpaca equity positions (truth) so the Positions tab shows everything —
-    # engine ETFs + stock auto-buys + manual buys, not just the tracked stores.
+    # ALL Alpaca positions (truth) so the Positions tab shows everything — engine
+    # ETFs + stock auto-buys + manual buys + OPTION positions — not just the stores.
     snap["account_positions"]      = _account_equity_positions()
+    snap["account_options"]        = _account_option_positions()
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
     snap["max_portfolio_risk_pct"] = round(trader.eff_max_portfolio_risk() * 100, 2)
     snap["pdt_remaining"]          = trader.pdt_day_trades_remaining()

@@ -347,10 +347,12 @@ function updateUI(s) {
   if (s.open_positions !== undefined) renderPositions(s.open_positions, s.auto_positions);
 
   // Positions tab (#24): cache + re-render if it's the active view
-  if (s.open_positions !== undefined || s.auto_positions !== undefined || s.account_positions !== undefined) {
+  if (s.open_positions !== undefined || s.auto_positions !== undefined ||
+      s.account_positions !== undefined || s.account_options !== undefined) {
     _lastPositions = { open:    s.open_positions    || _lastPositions.open,
                        auto:    s.auto_positions    || _lastPositions.auto,
-                       account: s.account_positions || _lastPositions.account };
+                       account: s.account_positions || _lastPositions.account,
+                       options: s.account_options   || _lastPositions.options };
     if (document.body.classList.contains("view-positions")) _renderPositionsTable();
   }
 
@@ -2067,7 +2069,7 @@ function showLog() {
 }
 
 // ── Positions tab (#24) ───────────────────────────────────────────────────────
-let _lastPositions = { open: [], auto: [], account: [] };
+let _lastPositions = { open: [], auto: [], account: [], options: [] };
 
 function showPositions() {
   _setViewMode("positions");
@@ -2089,16 +2091,21 @@ function _renderPositionsTable() {
   const el = document.getElementById("positions-tab-body");
   if (!el) return;
   try {
-  const open = (_lastPositions.open || []).filter(p => (p.remaining ?? p.contracts ?? 0) > 0);
-  // ALL equity positions (the truth) — engine ETFs + stock auto-buys + manual.
-  const acct = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0);
+  // ALL positions from the account (the truth): equity + options.
+  const acct     = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0);
+  const acctOpts = (_lastPositions.options || []).filter(p => (p.qty || 0) !== 0);
   const autoBy = {};
   (_lastPositions.auto || []).forEach(p => { autoBy[p.sym] = p; });
-  if (!open.length && !acct.length) {
+  if (!acct.length && !acctOpts.length) {
     el.innerHTML = `<div class="postab-empty">No open positions.</div>`;
     return;
   }
   let html = "";
+  // Portfolio grand total — equity + options together (operator: options in P&L)
+  const gTot = acct.reduce((s,p)=>s+(p.pnl_usd||0),0) + acctOpts.reduce((s,p)=>s+(p.pnl_usd||0),0);
+  const gDay = acct.reduce((s,p)=>s+(p.day_pnl_usd||0),0) + acctOpts.reduce((s,p)=>s+(p.day_pnl_usd||0),0);
+  html += `<div class="postab-section-title" style="font-size:12px">💰 Portfolio (${acct.length + acctOpts.length}) ·
+    Total ${_posPnl(gTot)} · Today ${_posPnl(gDay)}</div>`;
   // Stocks & ETFs — every equity position in the account, enriched with the
   // engine's strategy/stop/exit when the symbol came from the autonomous engine.
   if (acct.length) {
@@ -2127,23 +2134,31 @@ function _renderPositionsTable() {
     }).join("");
     html += `</tbody></table>`;
   }
-  // Intraday options
-  if (open.length) {
-    html += `<div class="postab-section-title">🎯 Options (${open.length})</div>`;
+  // Options — actual account option positions, grouped by underlying so spreads
+  // show as one line with their net P&L. ±20% take-profit / stop applies.
+  if (acctOpts.length) {
+    const byU = {};
+    acctOpts.forEach(p => { (byU[p.sym] = byU[p.sym] || []).push(p); });
+    const groups = Object.entries(byU);
+    const oTot = acctOpts.reduce((s,p)=>s+(p.pnl_usd||0),0);
+    const oDay = acctOpts.reduce((s,p)=>s+(p.day_pnl_usd||0),0);
+    html += `<div class="postab-section-title">🎯 Options (${groups.length}) ·
+      Total ${_posPnl(oTot)} · Today ${_posPnl(oDay)}</div>`;
     html += `<table class="postab-table"><thead><tr>
-      <th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Stop</th>
-      <th>T1</th><th>T2</th><th>P&L %</th></tr></thead><tbody>`;
-    html += open.map(p => {
-      const dir = (p.direction || "bull").toLowerCase();
-      const qty = p.remaining ?? p.contracts ?? 0;
-      const unreal = p.unrealized_pct;
-      const pcls = unreal == null ? "" : unreal >= 0 ? "postab-pnl-up" : "postab-pnl-down";
+      <th>Underlying</th><th>Legs</th><th>Net cost</th><th>Mkt value</th>
+      <th>Exit</th><th>Day P&L</th><th>Total P&L</th></tr></thead><tbody>`;
+    html += groups.map(([u, legs]) => {
+      const netCost = Math.abs(legs.reduce((s,l)=>s+((l.entry||0)*100*(l.qty||0)),0));
+      const mktVal  = legs.reduce((s,l)=>s+(l.mkt_value||0),0);
+      const netPnl  = legs.reduce((s,l)=>s+(l.pnl_usd||0),0);
+      const netDay  = legs.reduce((s,l)=>s+(l.day_pnl_usd||0),0);
+      const pct     = netCost > 0 ? (netPnl/netCost*100) : null;
+      const legList = legs.map(l=>`${l.qty>0?"+":""}${l.qty} ${l.occ}`).join("<br>");
       return `<tr>
-        <td><b>${p.symbol || p.sym || "—"}</b></td>
-        <td>${dir === "bull" ? "CALL" : "PUT"}</td><td>${qty}</td>
-        <td>$${(p.entry_price ?? 0).toFixed(2)}</td><td>$${(p.stop_price ?? 0).toFixed(2)}</td>
-        <td>$${(p.target_50 ?? 0).toFixed(2)}</td><td>$${(p.target_75 ?? 0).toFixed(2)}</td>
-        <td><span class="${pcls}">${unreal == null ? "—" : (unreal >= 0 ? "+" : "") + unreal.toFixed(1) + "%"}</span></td></tr>`;
+        <td><b>${u}</b></td><td style="font-size:9px;color:var(--muted)">${legList}</td>
+        <td>$${netCost.toFixed(0)}</td><td>$${mktVal.toFixed(0)}</td>
+        <td title="take-profit +20% / stop -20% on net debit">±20%</td>
+        <td>${_posPnl(netDay)}</td><td>${_posPnl(netPnl, pct)}</td></tr>`;
     }).join("");
     html += `</tbody></table>`;
   }
