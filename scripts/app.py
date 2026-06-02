@@ -578,6 +578,45 @@ _acct_pos_cache = {"data": [], "ts": 0.0}
 _ACCT_POS_TTL   = 8.0   # cache Alpaca positions ~8s (state snapshot runs often)
 
 
+def _manage_option_positions() -> None:
+    """±20% exit on option positions (operator 2026-06-02): close an underlying's
+    option legs when the net position is +20% (take profit) or −20% (stop) on the
+    net debit. Groups legs by underlying so spreads exit as a unit."""
+    import re
+    c = getattr(trader, "TRADING_CLIENT", None)
+    if c is None:
+        return
+    try:
+        opts = [p for p in c.get_all_positions()
+                if getattr(getattr(p, "asset_class", None), "value", "") == "us_option"]
+    except Exception as e:
+        log.debug(f"option-exit fetch: {e}")
+        return
+    groups: dict[str, list] = {}
+    for p in opts:
+        m = re.match(r"^([A-Z]+)\d", p.symbol)
+        groups.setdefault(m.group(1) if m else p.symbol, []).append(p)
+    tp, sl = screener_executor.OPT_TAKE_PROFIT_PCT, screener_executor.OPT_STOP_LOSS_PCT
+    for u, legs in groups.items():
+        try:
+            net_pl   = sum(float(l.unrealized_pl) for l in legs)
+            net_cost = abs(sum(float(l.cost_basis) for l in legs))   # net debit paid
+            if net_cost <= 0:
+                continue
+            pct = net_pl / net_cost
+            if pct >= tp or pct <= -sl:
+                reason = f"take-profit +{tp*100:.0f}%" if pct > 0 else f"stop -{sl*100:.0f}%"
+                for l in legs:
+                    try:
+                        c.close_position(l.symbol)
+                    except Exception as e:
+                        log.warning(f"  option close {l.symbol}: {e}")
+                _emit_log(f"OPTION EXIT {u}: {reason} (net {pct*100:+.0f}% on ${net_cost:.0f})",
+                          level="INFO")
+        except Exception as e:
+            log.debug(f"option-exit {u}: {e}")
+
+
 def _protect_untracked_stocks() -> None:
     """Any account equity position not yet in the engine's managed store gets brought
     under dynamic exit management — so stock auto-buys + manual buys get a trailing
@@ -947,6 +986,7 @@ def position_monitor() -> None:
             if auto_engine.DUAL_ENGINE_ENABLED and auto_engine.DUAL_ENGINE_MODE == "execute":
                 try:
                     _protect_untracked_stocks()        # give stock buys a stop too
+                    _manage_option_positions()         # ±20% exit on options
                     auto_engine.manage_exits(dry_run=False)
                 except Exception as e:
                     log.warning(f"[auto-engine] manage_exits error: {e}")
@@ -2076,6 +2116,20 @@ def _auto_exec_options(data: dict) -> None:
         except Exception as e:
             log.warning(f"[auto-exec] equity check failed: {e}")
 
+    # Boundaries (operator 2026-06-02): max 3 concurrent option positions, and only
+    # ONE option per underlying (no doubling up). Counted from the live account.
+    import re as _re
+    held_opt_underlyings = set()
+    try:
+        _c = getattr(trader, "TRADING_CLIENT", None)
+        if _c is not None:
+            for _p in _c.get_all_positions():
+                if getattr(getattr(_p, "asset_class", None), "value", "") == "us_option":
+                    _m = _re.match(r"^([A-Z]+)\d", _p.symbol)
+                    held_opt_underlyings.add(_m.group(1) if _m else _p.symbol)
+    except Exception as _e:
+        log.debug(f"option-cap fetch: {_e}")
+
     rows = data.get("options", [])
     for o in rows:
         with _auto_exec_lock:
@@ -2084,10 +2138,16 @@ def _auto_exec_options(data: dict) -> None:
             log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY} filled) reached "
                      f"— skipping remaining signals")
             break
+        if len(held_opt_underlyings) >= screener_executor.OPT_MAX_OPEN:
+            log.info(f"[auto-exec] max {screener_executor.OPT_MAX_OPEN} option positions "
+                     f"open — skipping remaining")
+            break
         if o.get("action") != "✅ BUY":
             continue
         sym = o.get("sym", "").upper()
         if not sym:
+            continue
+        if sym in held_opt_underlyings:        # one option per underlying max
             continue
 
         # ── KB-principles + debate gate (operator directive) ──────────────────

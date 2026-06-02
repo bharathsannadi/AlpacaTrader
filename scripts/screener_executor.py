@@ -61,7 +61,13 @@ RISK_BUDGET          = 400.0  # KB §4: $400 max loss per trade
 # file so it can be analysed later. (Paper; dry-run on by default.)
 OPT_RELAX_LIQUIDITY  = True    # §9 liquidity gate advisory, not blocking
 OPT_MARKET_ORDERS    = True    # place option legs at market so they fill
-OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss cap
+OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss SOFT cap
+OPT_HARD_MAX_USD     = 600.0   # operator 2026-06-02: HARD ceiling — max $600 per
+                               # option trade, ALWAYS enforced even in relaxed mode
+                               # (stops a garbage quote, e.g. the $11k MU glitch).
+OPT_TAKE_PROFIT_PCT  = 0.20    # sell an option position at +20% (net debit)
+OPT_STOP_LOSS_PCT    = 0.20    # sell an option position at -20% (net debit)
+OPT_MAX_OPEN         = 3       # max concurrent option positions (by underlying)
 _KB_RELAXED_LOG = os.path.expanduser("~/.spy_trader/kb_relaxed.jsonl")
 
 
@@ -469,12 +475,18 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                 net_debit  = atm_mid
 
         # ── Risk gate ────────────────────────────────────────────────────────
+        # HARD sanity ceiling first — ALWAYS blocks, even in relaxed mode, so a
+        # single mispriced/garbage contract can't blow a huge position (the MU
+        # $11k glitch). This is NOT relaxable.
+        if net_debit * 100 > OPT_HARD_MAX_USD:
+            raise ValueError(f"{sym}: HARD ceiling — debit ${net_debit*100:.0f} "
+                             f"> ${OPT_HARD_MAX_USD:.0f} (sanity guard; likely a bad quote)")
         if net_debit * 100 > max_risk:
             if OPT_ENFORCE_MAX_RISK:
                 raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
                                  f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
             _log_kb_relaxed(sym, "§4 max-risk",
-                            f"debit ${net_debit*100:.0f} > ${max_risk:.0f} cap (cap removed)")
+                            f"debit ${net_debit*100:.0f} > ${max_risk:.0f} soft cap (relaxed)")
 
         # ── 5. Dry run ───────────────────────────────────────────────────────
         if dry_run:
