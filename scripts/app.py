@@ -2093,10 +2093,10 @@ def _auto_exec_stocks(data: dict) -> None:
             _auto_exec_stock_filled = set()
 
     import shares_executor
+    # NOTE: the 3/day cap is OPTIONS-ONLY (operator). Stocks are not capped by a
+    # daily count — the per-symbol dedup is the only limiter, so each strong name
+    # is bought at most once/day, bounded by how many strong rows the screener has.
     for r in data.get("dt", []):
-        with _auto_exec_lock:
-            if len(_auto_exec_stock_filled) >= STOCK_MAX_AUTO_EXEC_PER_DAY:
-                break
         # Only strong, validated, top-ranked rows (the ⭐ + ✅ BUY ones).
         strong = (r.get("action") == "✅ BUY") or (r.get("valid") and r.get("is_top"))
         if not strong:
@@ -2134,8 +2134,8 @@ def _auto_exec_stocks(data: dict) -> None:
                 with _auto_exec_lock:
                     _auto_exec_stock_filled.add(sym)
                     _save_auto_exec_state()
-                log.info(f"[auto-buy] {sym} bought — {len(_auto_exec_stock_filled)}/"
-                         f"{STOCK_MAX_AUTO_EXEC_PER_DAY}")
+                log.info(f"[auto-buy] {sym} bought (10 sh) — "
+                         f"{len(_auto_exec_stock_filled)} stock(s) today (uncapped)")
             elif not res.get("success"):
                 with _auto_exec_lock:
                     _auto_exec_stock_today.discard(sym)   # no order — allow retry
