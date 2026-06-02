@@ -1580,7 +1580,7 @@
         <div class="auto-schedule-row">
           <span class="auto-schedule-label" style="color:var(--yellow)">Auto-Execute</span>
           <span class="auto-schedule-hint">KB-matched ✅ BUY @ market · options ≤3/day ≤$600 · stocks uncapped · exits ±2% / ±20%</span>
-          <button class="auto-schedule-btn armed" id="btn-auto-exec" onclick="scrToggleAutoExec()">🔴 Armed (0/3 today)</button>
+          <button class="auto-schedule-btn armed" id="btn-auto-exec" onclick="scrToggleAutoExec()">🟢 ON</button>
         </div>
         <div class="auto-schedule-row" style="margin-top:6px">
           <span class="auto-schedule-label">Debate gate</span>
@@ -1646,22 +1646,7 @@
 
       <!-- Daily Positions + Open Positions moved to the dedicated 📊 Positions tab (#24) -->
 
-      <!-- Fill Slippage -->
-      <div class="card" data-card-id="slippage">
-        <div class="card-title">Fill Slippage (entry, vs mid)</div>
-        <div id="slip-empty" style="color:var(--muted);font-size:var(--fs-xs);padding:4px 0;">No fills recorded yet.</div>
-        <div id="slip-body" style="display:none;font-size:var(--fs-xs);font-family:var(--mono)">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
-            <div>Avg (30) <span id="slip-avg" style="font-weight:700"></span></div>
-            <div>Trend <span id="slip-trend" style="font-weight:700"></span></div>
-            <div>Last <span id="slip-last"></span></div>
-            <div>Worst <span id="slip-worst"></span></div>
-            <div>Δ vs model <span id="slip-delta" style="font-weight:700"></span></div>
-            <div id="slip-alert" style="color:var(--red);display:none">⚠ >2× modeled</div>
-          </div>
-          <div style="margin-top:4px;color:var(--muted);font-size:10px">+bps = paid up vs mid. Δ vs model = deviation from 3bp backtest assumption.</div>
-        </div>
-      </div>
+      <!-- Fill Slippage card removed (2026-06-02) -->
 
     </div><!-- /s-col-mid -->
 

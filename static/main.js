@@ -2226,9 +2226,7 @@ function _updateAutoExecBtn(armed, execToday) {
   if (btn) {
     btn.classList.toggle("armed", !!armed);
     btn.classList.toggle("off",  !armed);
-    btn.textContent = armed
-      ? `🔴 Armed (${execToday.length}/3 today)`
-      : "⬛ Disarmed";
+    btn.textContent = armed ? "🟢 ON" : "⬛ OFF";
   }
   // (screener-topbar mirror removed per operator request 2026-06-01 — the
   //  armed control + counter live in Settings → Automation)
