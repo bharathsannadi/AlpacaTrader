@@ -39,6 +39,11 @@ MAX_NEW_PER_CYCLE   = 3        # hard cap on new entries per cycle
 # signals route to shares; the separate screener auto-exec lane covers live
 # autonomous options in the meantime.
 OPTIONS_ENGINE_ENABLED = False
+# Operator 2026-06-02: stocks exit on PRIMARY ±2% bands; the dynamic trailing
+# ladder + 21d time cap remain as the SIDEWAYS backstop. On a close, the stock
+# auto-buy lane rotates capital into the next eligible screener pick.
+STOCK_TAKE_PROFIT_PCT = 0.02
+STOCK_STOP_PCT        = 0.02
 
 # entry constants (match the validated backtests)
 RSI_LO = 10.0
@@ -515,9 +520,18 @@ def manage_exits(dry_run: bool = False) -> None:
         px = shares_executor.current_price(p["sym"])
         if px is None:
             still_open.append(p); continue
-        st = ExitState(**p["exit_state"])
-        action, why, st = eng.update(st, high=px, low=px, last=px)
-        p["exit_state"] = _asdict(st)
+        entry = p.get("entry_price", px)
+        chg = (px - entry) / entry if entry else 0.0
+        # PRIMARY: fixed ±2% bands (operator). If not hit, fall through to the
+        # dynamic trailing ladder as the SIDEWAYS backstop; 21d cap is max-time.
+        if chg >= STOCK_TAKE_PROFIT_PCT:
+            action, why = "exit", f"take-profit +{STOCK_TAKE_PROFIT_PCT*100:.0f}%"
+        elif chg <= -STOCK_STOP_PCT:
+            action, why = "exit", f"stop -{STOCK_STOP_PCT*100:.0f}%"
+        else:
+            st = ExitState(**p["exit_state"])
+            action, why, st = eng.update(st, high=px, low=px, last=px)
+            p["exit_state"] = _asdict(st)
         held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
         if action == "exit" or held_days >= TIME_CAP_DAYS:
             reason = why if action == "exit" else f"time cap {held_days}d"
