@@ -43,8 +43,8 @@ OPTIONS_ENGINE_ENABLED = False
 # Operator 2026-06-02: stocks exit on PRIMARY ±2% bands; the dynamic trailing
 # ladder + 21d time cap remain as the SIDEWAYS backstop. On a close, the stock
 # auto-buy lane rotates capital into the next eligible screener pick.
-STOCK_TAKE_PROFIT_PCT = 0.02
-STOCK_STOP_PCT        = 0.02
+STOCK_TAKE_PROFIT_PCT = 0.06
+STOCK_STOP_PCT        = 0.03
 # Time-stop on stall (#33): if green but no new high for STALL_MINUTES, lock the gain.
 # Stocks are held over DAYS, so the UI edits this in days (here stored as minutes).
 STALL_MINUTES         = 3 * 1440   # 3 days
