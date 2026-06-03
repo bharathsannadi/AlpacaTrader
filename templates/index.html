@@ -33,6 +33,10 @@
     --yellow-dim: #f5a62322;
     --purple:     #a78bfa;   /* violet — after-hours */
     --purple-dim: #a78bfa22;
+    /* semantic aliases (used by Positions/Screener redesign + legacy tables) */
+    --up:     var(--green);
+    --down:   var(--red);
+    --accent: var(--blue);
 
     /* ── Text ── */
     --text:    #dde8fa;
@@ -656,6 +660,81 @@
   .postab-pnl-up { color: var(--up); } .postab-pnl-down { color: var(--down); }
   .postab-floor  { color: var(--up); font-weight: 600; }
 
+  /* ════ Redesigned Positions page ════════════════════════════════════════ */
+  .pos-wrap { max-width: 1180px; margin: 0 auto; width: 100%; }
+
+  /* Hero stat strip */
+  .pos-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  @media (max-width: 820px) { .pos-hero { grid-template-columns: repeat(2, 1fr); } }
+  .pos-hero-card {
+    position: relative; overflow: hidden;
+    background: linear-gradient(160deg, var(--card2) 0%, var(--card) 100%);
+    border: 1px solid var(--border-strong); border-radius: 14px;
+    padding: 16px 18px; min-height: 92px;
+  }
+  .pos-hero-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--accent); opacity: .9; }
+  .pos-hero-card::after { content: ""; position: absolute; right: -30px; top: -30px; width: 90px; height: 90px;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 70%); opacity: .10; }
+  .pos-hero-label { font-size: 11px; text-transform: uppercase; letter-spacing: .9px; color: var(--muted); font-weight: 600; }
+  .pos-hero-val { font-family: var(--mono); font-size: 27px; font-weight: 700; line-height: 1.15; margin-top: 6px; letter-spacing: -.5px; }
+  .pos-hero-val .ph-up { color: var(--up); } .pos-hero-val .ph-down { color: var(--down); }
+  .pos-hero-val .ph-frac { color: var(--muted-2); font-size: 17px; }
+  .pos-hero-sub { font-size: 11px; color: var(--muted-2); margin-top: 4px; }
+
+  /* Toolbar */
+  .pos-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .pos-toolbar-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: .3px; }
+  .pos-refresh { background: var(--card2); border: 1px solid var(--border-strong); color: var(--muted);
+    font-size: 11px; padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: all .15s; }
+  .pos-refresh:hover { border-color: var(--accent); color: var(--text); }
+
+  /* Section cards */
+  .pos-sec { background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    overflow: hidden; margin-bottom: 16px; }
+  .pos-sec-head { display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; background: linear-gradient(180deg, var(--card2) 0%, var(--card) 100%);
+    border-bottom: 1px solid var(--border); }
+  .pos-sec-name { font-size: 13px; font-weight: 700; color: var(--text); }
+  .pos-sec-name em { font-style: normal; color: var(--muted); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 20px; padding: 1px 9px; font-size: 11px; margin-left: 4px; }
+  .pos-sec-tot { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+  /* Table */
+  .pos-tbl-wrap { overflow-x: auto; }
+  .pos-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .pos-tbl th { text-align: left; padding: 9px 16px; color: var(--muted-2); font-weight: 600;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .pos-tbl th.num, .pos-tbl td.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+  .pos-tbl td { padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .pos-tbl tbody tr:last-child td, .pos-tbl tr:last-child td { border-bottom: none; }
+  .pos-row { position: relative; transition: background .12s; }
+  .pos-row td:first-child { box-shadow: inset 3px 0 0 transparent; }
+  .pos-row.row-up   td:first-child { box-shadow: inset 3px 0 0 rgba(34,197,94,.55); }
+  .pos-row.row-down td:first-child { box-shadow: inset 3px 0 0 rgba(244,63,94,.55); }
+  .pos-row:hover td { background: rgba(148,163,184,0.05); }
+  .pos-sym { display: flex; flex-direction: column; gap: 2px; }
+  .pos-sym b { font-size: 14px; letter-spacing: .3px; }
+  .pos-src { font-size: 10px; color: var(--muted-2); }
+  .pos-legs { display: flex; flex-direction: column; gap: 2px; }
+  .pos-leg { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+  /* Exit-plan cell */
+  .exit-td { min-width: 170px; }
+  .pos-exit { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
+  .pos-exit-bar { height: 5px; border-radius: 4px; background: linear-gradient(90deg, rgba(244,63,94,.30), rgba(148,163,184,.18), rgba(34,197,94,.30)); position: relative; overflow: hidden; }
+  .pos-exit-bar span { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #f59e0b, #22c55e); border-radius: 4px; box-shadow: 0 0 6px rgba(34,197,94,.4); }
+  .pos-exit-row { display: flex; align-items: center; justify-content: space-between; font-family: var(--mono); font-size: 11px; }
+  .pos-exit-row .pe-sl { color: var(--down); } .pos-exit-row .pe-tp { color: var(--up); }
+  .pos-exit-meta { font-size: 10px; color: var(--muted-2); }
+
+  /* Empty state */
+  .pos-empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 70px 20px; text-align: center; }
+  .pos-empty-ico { font-size: 44px; opacity: .8; }
+  .pos-empty-title { font-size: 16px; font-weight: 700; color: var(--text); }
+  .pos-empty-sub { font-size: 12.5px; color: var(--muted); max-width: 360px; }
+
   /* Screener tab */
   .screener-tab { color: #f59e0b !important; }
   .screener-tab.active { background: rgba(245,158,11,0.08) !important; border-bottom-color: #f59e0b !important; text-shadow: 0 0 16px rgba(245,158,11,0.5) !important; }
@@ -767,8 +846,19 @@
     border-bottom: 1px solid var(--border); white-space: nowrap;
     background: rgba(255,255,255,0.02); cursor: default;
   }
-  .scr-table td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; white-space: nowrap; }
+  .scr-table td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; white-space: nowrap; }
+  .scr-table th.num, .scr-table td.num { text-align: right; }
   .scr-row:hover td { background: rgba(255,255,255,0.028); cursor: default; }
+
+  /* Trimmed-table compound cells (Setup+PF, Edge, Expiry+DTE) */
+  .scr-setup-cell { display: flex; flex-direction: column; gap: 1px; }
+  .scr-setup-pf   { font-size: 9px; color: var(--muted); }
+  .scr-edge-cell  { display: inline-flex; flex-direction: column; gap: 1px; align-items: flex-end; }
+  .scr-edge-pf    { font-size: 9px; color: var(--muted); }
+  .scr-exp-cell   { display: flex; flex-direction: column; gap: 1px; color: var(--muted); }
+  .scr-exp-dte    { font-size: 9px; color: var(--muted-2); }
+  .scr-src-tag    { margin-left: 6px; font-weight: 400; }
+  .scr-detail-meta { margin-top: 6px; font-size: 10px; color: var(--muted-2); font-family: var(--mono); }
 
   /* Cell types */
   .scr-rank   { color: var(--muted); font-size: 10px; width: 26px; text-align: right; padding-right: 6px !important; }
@@ -1577,7 +1667,7 @@
         <div class="card-title">Automation</div>
         <div class="auto-schedule-row">
           <span class="auto-schedule-label" style="color:var(--yellow)">Auto-Execute</span>
-          <span class="auto-schedule-hint">KB-matched ✅ BUY @ market · options ≤3/day ≤$600 · stocks uncapped · exits ±2% / ±20%</span>
+          <span class="auto-schedule-hint">KB-matched ✅ BUY @ market · options ≤3/day ≤$600 · stocks uncapped · exits stocks +6/−3% · options +80/−50%</span>
           <button class="auto-schedule-btn armed" id="btn-auto-exec" onclick="scrToggleAutoExec()">🟢 ON</button>
         </div>
         <div class="auto-schedule-row" style="margin-top:6px">
@@ -2019,22 +2109,17 @@
           <tr>
             <th>#</th>
             <th>Symbol</th>
-            <th>Price</th>
-            <th title="Day change % vs prior close">Day%</th>
-            <th title="Today vol ÷ 30d avg vol (Aziz p.31 — ≥1.5× = Stock in Play)">Rel Vol</th>
-            <th title="5-min RSI(14) intraday">RSI14</th>
-            <th title="Price vs VWAP — institutional benchmark (Elder p.212)">vs VWAP</th>
-            <th title="Elder Impulse System: 🟢 EMA13↑+MACDH↑=Buy · 🔵 Mixed=Neutral · 🔴 Both↓=No longs (Elder p.47) — exception: RSI Dip Red PF 1.82">Impulse</th>
-            <th title="Backtested setup: Breakout PF 1.88 · Bull Flag PF 1.44 · RSI Dip PF 1.41 · Gap+Vol PF 1.37">Setup</th>
-            <th title="Backtested profit factor — 2yr, next-day open→close">PF</th>
-            <th title="Backtested avg next-day return per signal">Ret%</th>
-            <th title="KB-principles match: % of codified knowledge-base rules this setup satisfies (validity, PF, rel-vol, Impulse, RSI, VIX)">KB%</th>
-            <th title="⭐ top-5 backtested · 📌 O'Neill Pocket Pivot (up-day vol > any down-day in prior 10)">Pick</th>
+            <th class="num">Price</th>
+            <th class="num" title="Day change % vs prior close">Day</th>
+            <th class="num" title="Today vol ÷ 30d avg vol (Aziz p.31 — ≥1.5× = Stock in Play)">Rel Vol</th>
+            <th title="Backtested setup + profit factor: Breakout 1.88 · Bull Flag 1.44 · RSI Dip 1.41 · Gap+Vol 1.37">Setup</th>
+            <th title="KB-principles match: % of codified knowledge-base rules this setup satisfies. Below 60% is gate-blocked.">KB Match</th>
+            <th title="⭐ top-5 backtested · 📌 O'Neill Pocket Pivot">Pick</th>
             <th title="Buy 10 shares (paper)">Execute</th>
           </tr>
         </thead>
         <tbody id="scr-dt-tbody">
-          <tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+          <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
             Click <b>↻ Refresh</b> to load live data
           </td></tr>
         </tbody>
@@ -2053,23 +2138,19 @@
       <table class="scr-table" id="scr-opt-table">
         <thead>
           <tr>
-            <th title="Signal quality tier">Source</th>
             <th>Symbol</th>
             <th title="Direction and trigger signal">Direction / Signal</th>
-            <th title="Backtested directional hit rate">Dir%</th>
-            <th title="Backtested profit factor for this setup">PF</th>
+            <th class="num" title="Backtested directional hit rate · profit factor">Edge</th>
             <th title="ATM Call if HV≤45% · Debit Spread if HV>45% (Volatile Markets p.104)">Structure</th>
-            <th title="Target expiry — prefer DTE 21-28 (Saliba)">Expiry</th>
-            <th title="Days to expiration">DTE</th>
-            <th title="IV Rank — naked if IVR<30, spread if IVR≥30 (KB §2)">IVR</th>
-            <th title="KB-principles match: % of codified knowledge-base rules this trade satisfies (dir-edge, PF, IVR routing, DTE, risk budget, VIX). Trades below 60% are gate-blocked.">KB%</th>
-            <th title="Hard ceiling: $600 max per option trade (always enforced). Fills at market; trades over $600 are blocked.">Max $</th>
+            <th title="Target expiry (prefer DTE 21-28, Saliba) · days to expiry">Expiry</th>
+            <th title="KB-principles match: % of codified knowledge-base rules this trade satisfies. Below 60% is gate-blocked.">KB Match</th>
+            <th class="num" title="Hard ceiling: $600 max per option trade (always enforced). Fills at market; trades over $600 are blocked.">Max $</th>
             <th title="Action: ✅ BUY (incl. 100%-KB ⭐100 upgrades) / ⚠ WATCH. §9 liquidity is advisory in relaxed-fill mode.">Action</th>
-            <th title="Place MARKET order via Alpaca (paper · relaxed-fill). ±20% take-profit / stop.">Execute</th>
+            <th title="Place MARKET order via Alpaca (paper · relaxed-fill). +80% take-profit / −50% stop.">Execute</th>
           </tr>
         </thead>
         <tbody id="scr-opt-tbody">
-          <tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+          <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
             No active signals — Connors RSI(2)&lt;10 triggers after market close · intraday setups populate once market opens
           </td></tr>
         </tbody>
@@ -2082,12 +2163,8 @@
 <!-- ── Log panel (shown when Log tab is active) ──────────────────────────── -->
 <!-- Log panel moved into the Settings dashboard (2026-06-02) -->
 
-<!-- ── Positions tab (#24 — dedicated open-positions table) ─────────────────── -->
+<!-- ── Positions tab (#24 — redesigned open-positions page) ─────────────────── -->
 <div class="positions-panel" id="positions-panel">
-  <div style="display:flex;align-items:center;justify-content:space-between;">
-    <div class="card-title">📊 Open Positions</div>
-    <button class="scr-refresh-btn" onclick="refreshPositions()">↻ Refresh</button>
-  </div>
   <div id="positions-tab-body"><div class="postab-empty">Loading…</div></div>
 </div>
 

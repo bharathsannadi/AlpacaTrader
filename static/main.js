@@ -369,6 +369,7 @@ function updateUI(s) {
 
   // Exit config inputs — only sync when there are NO pending edits (Save disabled),
   // so a state push can't clobber what the user is typing.
+  if (s.exit_config) _lastExitCfg = s.exit_config;   // live exit settings for the Positions exit column
   const _saveBtn = document.getElementById("btn-save-exit");
   if (s.exit_config && (!_saveBtn || _saveBtn.disabled)) {
     const ec = s.exit_config;
@@ -2093,6 +2094,8 @@ function showLog() {
 
 // ── Positions tab (#24) ───────────────────────────────────────────────────────
 let _lastPositions = { open: [], auto: [], account: [], options: [] };
+let _lastExitCfg = { stock_tp_pct: 6, stock_sl_pct: 3, stock_stall_days: 3,
+                     opt_tp_pct: 80, opt_sl_pct: 50, opt_stall_min: 90, time_cap_days: 21 };
 
 function showPositions() {
   _setViewMode("positions");
@@ -2148,90 +2151,181 @@ function renderJournal(items) {
 function _posPnl(usd, pct) {
   if (usd == null) return "—";
   const cls = usd >= 0 ? "postab-pnl-up" : "postab-pnl-down";
-  return `<span class="${cls}">${usd >= 0 ? "+" : ""}$${usd.toFixed(0)}${pct != null ? ` (${pct.toFixed(1)}%)` : ""}</span>`;
+  return `<span class="${cls}">${usd >= 0 ? "+" : ""}$${usd.toFixed(0)}${pct != null ? ` (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)` : ""}</span>`;
+}
+
+// Money with sign, for the hero numbers.
+function _money(n) {
+  const v = n || 0;
+  return `${v >= 0 ? "+" : "−"}$${Math.abs(v).toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+}
+
+// A compact "exit plan" pill: take-profit (green) and stop (red) target prices,
+// with the live exit-config % and any trailing/floor/time-cap context. This is
+// the redesigned Exit column — it shows the ACTUAL targets, not a stale label.
+function _exitPlanStock(p, e) {
+  const cfg = _lastExitCfg || {};
+  const tp = +cfg.stock_tp_pct || 6, sl = +cfg.stock_sl_pct || 3;
+  const entry = p.entry || 0, last = p.last || entry;
+  const tpPx = entry * (1 + tp / 100);
+  // Stop is the tighter of the configured % and the engine's trailing/floor stop.
+  const cfgStop = entry * (1 - sl / 100);
+  const engStop = e && e.stop ? e.stop : 0;
+  const stopPx = engStop ? Math.max(engStop, cfgStop) : cfgStop;
+  const isFloor = e && e.profit_floor;
+  // progress toward TP (how far price has travelled from stop→TP)
+  const span = Math.max(tpPx - stopPx, 0.0001);
+  const prog = Math.min(100, Math.max(0, (last - stopPx) / span * 100));
+  const days = e && e.days_to_cap != null ? `${e.days_to_cap}d` : `${cfg.time_cap_days || 21}d`;
+  const tierTxt = e && e.tier >= 1 ? ` ·T${e.tier}` : "";
+  const stopLbl = isFloor ? "Floor" : "Stop";
+  return `<div class="pos-exit">
+    <div class="pos-exit-bar"><span style="width:${prog}%"></span></div>
+    <div class="pos-exit-row">
+      <span class="pe-sl">${stopLbl} $${stopPx.toFixed(2)}${tierTxt}</span>
+      <span class="pe-tp">TP $${tpPx.toFixed(2)}</span>
+    </div>
+    <div class="pos-exit-meta">+${tp}% / −${sl}% · trail · ${days}</div>
+  </div>`;
+}
+
+function _exitPlanOption(netCost, mktVal) {
+  const cfg = _lastExitCfg || {};
+  const tp = +cfg.opt_tp_pct || 80, sl = +cfg.opt_sl_pct || 50;
+  const tpVal = netCost * (1 + tp / 100);
+  const slVal = netCost * (1 - sl / 100);
+  const span = Math.max(tpVal - slVal, 0.0001);
+  const prog = Math.min(100, Math.max(0, (mktVal - slVal) / span * 100));
+  return `<div class="pos-exit">
+    <div class="pos-exit-bar"><span style="width:${prog}%"></span></div>
+    <div class="pos-exit-row">
+      <span class="pe-sl">SL $${slVal.toFixed(0)}</span>
+      <span class="pe-tp">TP $${tpVal.toFixed(0)}</span>
+    </div>
+    <div class="pos-exit-meta">+${tp}% / −${sl}% · stall ${cfg.opt_stall_min || 90}m</div>
+  </div>`;
+}
+
+function _heroCard(label, valHtml, sub, accent) {
+  return `<div class="pos-hero-card" style="--accent:${accent || "var(--accent)"}">
+    <div class="pos-hero-label">${label}</div>
+    <div class="pos-hero-val">${valHtml}</div>
+    <div class="pos-hero-sub">${sub || ""}</div>
+  </div>`;
 }
 
 function _renderPositionsTable() {
   const el = document.getElementById("positions-tab-body");
   if (!el) return;
   try {
-  // ALL positions from the account (the truth): equity + options — sorted by
-  // Total P&L desc (operator).
   const acct     = (_lastPositions.account || []).filter(p => (p.qty || 0) !== 0)
                      .sort((a,b) => (b.pnl_usd||0) - (a.pnl_usd||0));
   const acctOpts = (_lastPositions.options || []).filter(p => (p.qty || 0) !== 0);
   const autoBy = {};
   (_lastPositions.auto || []).forEach(p => { autoBy[p.sym] = p; });
   if (!acct.length && !acctOpts.length) {
-    el.innerHTML = `<div class="postab-empty">No open positions.</div>`;
+    el.innerHTML = `<div class="pos-empty">
+      <div class="pos-empty-ico">📭</div>
+      <div class="pos-empty-title">No open positions</div>
+      <div class="pos-empty-sub">Positions you hold will appear here with live P&L and their exit plan.</div>
+    </div>`;
     return;
   }
-  let html = "";
-  // Portfolio grand total — equity + options together (operator: options in P&L)
+
+  // ── Aggregates for the hero row ──
   const gTot = acct.reduce((s,p)=>s+(p.pnl_usd||0),0) + acctOpts.reduce((s,p)=>s+(p.pnl_usd||0),0);
   const gDay = acct.reduce((s,p)=>s+(p.day_pnl_usd||0),0) + acctOpts.reduce((s,p)=>s+(p.day_pnl_usd||0),0);
-  html += `<div class="postab-section-title" style="font-size:12px;display:flex;align-items:center;gap:10px">
-    <span>💰 Portfolio (${acct.length + acctOpts.length}) · Total ${_posPnl(gTot)} · Today ${_posPnl(gDay)}</span>
-    <button class="scr-refresh-btn" style="font-size:10px;padding:2px 8px" onclick="refreshPositions()">↻ Refresh</button></div>`;
-  // Stocks & ETFs — every equity position in the account, enriched with the
-  // engine's strategy/stop/exit when the symbol came from the autonomous engine.
+  const mktTotal = acct.reduce((s,p)=>s+((p.last||p.entry||0)*(p.qty||0)),0)
+                 + acctOpts.reduce((s,p)=>s+(p.mkt_value||0),0);
+  const nPos = acct.length + acctOpts.length;
+  const winners = [...acct, ...acctOpts].filter(p => (p.pnl_usd||0) > 0).length;
+  const totCls = gTot >= 0 ? "up" : "down";
+  const dayCls = gDay >= 0 ? "up" : "down";
+
+  let html = `<div class="pos-wrap">`;
+
+  // Hero strip
+  html += `<div class="pos-hero">
+    ${_heroCard("Total P&amp;L", `<span class="ph-${totCls}">${_money(gTot)}</span>`,
+                `across ${nPos} position${nPos!==1?"s":""}`, gTot>=0?"#22c55e":"#f43f5e")}
+    ${_heroCard("Today", `<span class="ph-${dayCls}">${_money(gDay)}</span>`,
+                "session change", gDay>=0?"#22c55e":"#f43f5e")}
+    ${_heroCard("Market Value", `$${mktTotal.toLocaleString(undefined,{maximumFractionDigits:0})}`,
+                "open exposure", "#3b82f6")}
+    ${_heroCard("Winners", `${winners}<span class="ph-frac">/${nPos}</span>`,
+                `${nPos?Math.round(winners/nPos*100):0}% in profit`, "#8b5cf6")}
+  </div>`;
+
+  html += `<div class="pos-toolbar">
+    <span class="pos-toolbar-title">Open Positions</span>
+    <button class="pos-refresh" onclick="refreshPositions()">↻ Refresh</button>
+  </div>`;
+
+  // ── Stocks & ETFs ──
   if (acct.length) {
     const totPnl = acct.reduce((s, p) => s + (p.pnl_usd || 0), 0);
     const totDay = acct.reduce((s, p) => s + (p.day_pnl_usd || 0), 0);
-    html += `<div class="postab-section-title">📈 Stocks &amp; ETFs (${acct.length}) ·
-      Total ${_posPnl(totPnl)} · Today ${_posPnl(totDay)}</div>`;
-    html += `<table class="postab-table"><thead><tr>
-      <th>Symbol</th><th>Qty</th><th>Source</th><th>Entry</th><th>Now</th>
-      <th>Stop / Floor</th><th>Exit</th><th>Day P&L</th><th>Total P&L</th></tr></thead><tbody>`;
+    html += `<div class="pos-sec">
+      <div class="pos-sec-head"><span class="pos-sec-name">📈 Stocks &amp; ETFs <em>${acct.length}</em></span>
+        <span class="pos-sec-tot">Today ${_posPnl(totDay)} · Total ${_posPnl(totPnl)}</span></div>`;
+    html += `<div class="pos-tbl-wrap"><table class="pos-tbl"><thead><tr>
+      <th>Symbol</th><th>Qty</th><th class="num">Entry</th><th class="num">Now</th>
+      <th>Exit plan</th><th class="num">Day</th><th class="num">Total P&amp;L</th></tr></thead><tbody>`;
     html += acct.map(p => {
-      const e = autoBy[p.sym];                       // engine metadata if present
-      const src = e ? `🤖 ${e.strategy || "engine"}` : "manual / auto-buy";
-      let stopCell = "—", exitCell = "—";
-      if (e) {
-        const isFloor = e.profit_floor;
-        stopCell = `<span class="${isFloor ? "postab-floor" : ""}">${isFloor ? "Floor" : "Stop"} $${(e.stop || 0).toFixed(2)}${e.tier >= 1 ? ` ·T${e.tier}` : ""}</span>`;
-        exitCell = `±2% · trail · ${e.days_to_cap != null ? `${e.days_to_cap}d` : "21d"}`;
-      }
-      return `<tr>
-        <td><b>${p.sym}</b></td><td>${p.qty}</td><td>${src}</td>
-        <td>$${(p.entry || 0).toFixed(2)}</td><td>$${(p.last || p.entry || 0).toFixed(2)}</td>
-        <td>${stopCell}</td><td>${exitCell}</td>
-        <td>${_posPnl(p.day_pnl_usd, p.day_pnl_pct)}</td>
-        <td>${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
+      const e = autoBy[p.sym];
+      const src = e ? `🤖 ${e.strategy || "engine"}` : "manual";
+      const last = p.last || p.entry || 0;
+      const up = (p.pnl_usd || 0) >= 0;
+      return `<tr class="pos-row ${up ? "row-up" : "row-down"}">
+        <td><div class="pos-sym"><b>${p.sym}</b><span class="pos-src">${src}</span></div></td>
+        <td>${p.qty}</td>
+        <td class="num">$${(p.entry || 0).toFixed(2)}</td>
+        <td class="num"><b>$${last.toFixed(2)}</b></td>
+        <td class="exit-td">${_exitPlanStock(p, e)}</td>
+        <td class="num">${_posPnl(p.day_pnl_usd, p.day_pnl_pct)}</td>
+        <td class="num">${_posPnl(p.pnl_usd, p.pnl_pct)}</td></tr>`;
     }).join("");
-    html += `</tbody></table>`;
+    html += `</tbody></table></div></div>`;
   }
-  // Options — actual account option positions, grouped by underlying so spreads
-  // show as one line with their net P&L. ±20% take-profit / stop applies.
+
+  // ── Options (grouped by underlying) ──
   if (acctOpts.length) {
     const byU = {};
     acctOpts.forEach(p => { (byU[p.sym] = byU[p.sym] || []).push(p); });
     const groups = Object.entries(byU);
     const oTot = acctOpts.reduce((s,p)=>s+(p.pnl_usd||0),0);
     const oDay = acctOpts.reduce((s,p)=>s+(p.day_pnl_usd||0),0);
-    html += `<div class="postab-section-title">🎯 Options (${groups.length}) ·
-      Total ${_posPnl(oTot)} · Today ${_posPnl(oDay)}</div>`;
-    html += `<table class="postab-table"><thead><tr>
-      <th>Underlying</th><th>Legs</th><th>Net cost</th><th>Mkt value</th>
-      <th>Exit</th><th>Day P&L</th><th>Total P&L</th></tr></thead><tbody>`;
+    html += `<div class="pos-sec">
+      <div class="pos-sec-head"><span class="pos-sec-name">🎯 Options <em>${groups.length}</em></span>
+        <span class="pos-sec-tot">Today ${_posPnl(oDay)} · Total ${_posPnl(oTot)}</span></div>`;
+    html += `<div class="pos-tbl-wrap"><table class="pos-tbl"><thead><tr>
+      <th>Underlying</th><th>Legs</th><th class="num">Net cost</th><th class="num">Mkt value</th>
+      <th>Exit plan</th><th class="num">Day</th><th class="num">Total P&amp;L</th></tr></thead><tbody>`;
     html += groups.map(([u, legs]) => {
       const netCost = Math.abs(legs.reduce((s,l)=>s+((l.entry||0)*100*(l.qty||0)),0));
       const mktVal  = legs.reduce((s,l)=>s+(l.mkt_value||0),0);
       const netPnl  = legs.reduce((s,l)=>s+(l.pnl_usd||0),0);
       const netDay  = legs.reduce((s,l)=>s+(l.day_pnl_usd||0),0);
       const pct     = netCost > 0 ? (netPnl/netCost*100) : null;
-      const legList = legs.map(l=>`${l.qty>0?"+":""}${l.qty} ${l.occ}`).join("<br>");
-      return `<tr>
-        <td><b>${u}</b></td><td style="font-size:9px;color:var(--muted)">${legList}</td>
-        <td>$${netCost.toFixed(0)}</td><td>$${mktVal.toFixed(0)}</td>
-        <td title="take-profit +20% / stop -20% on net debit">±20%</td>
-        <td>${_posPnl(netDay)}</td><td>${_posPnl(netPnl, pct)}</td></tr>`;
+      const legList = legs.map(l=>`<span class="pos-leg">${l.qty>0?"+":""}${l.qty} ${l.occ}</span>`).join("");
+      const up = netPnl >= 0;
+      return `<tr class="pos-row ${up ? "row-up" : "row-down"}">
+        <td><b>${u}</b></td>
+        <td class="pos-legs">${legList}</td>
+        <td class="num">$${netCost.toFixed(0)}</td>
+        <td class="num"><b>$${mktVal.toFixed(0)}</b></td>
+        <td class="exit-td">${_exitPlanOption(netCost, mktVal)}</td>
+        <td class="num">${_posPnl(netDay)}</td>
+        <td class="num">${_posPnl(netPnl, pct)}</td></tr>`;
     }).join("");
-    html += `</tbody></table>`;
+    html += `</tbody></table></div></div>`;
   }
+
+  html += `</div>`;
   el.innerHTML = html;
   } catch (err) {
-    el.innerHTML = `<div class="postab-empty">Positions render error: ${err.message}</div>`;
+    el.innerHTML = `<div class="pos-empty"><div class="pos-empty-title">Positions render error</div>
+      <div class="pos-empty-sub">${err.message}</div></div>`;
     console.error("renderPositionsTable", err);
   }
 }
@@ -2364,7 +2458,7 @@ function _renderDtTable(rows) {
   if (countEl) countEl.textContent = all.length || "—";
 
   if (!all.length) {
-    tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
       Loading live data… (takes ~60 s for 25 symbols)</td></tr>`;
     return;
   }
@@ -2420,20 +2514,19 @@ function _renderDtTable(rows) {
 
     // Tooltip shows the columns we removed from the table (Range%, HV20, RSI2-D, raw values)
     const rowTip = `Range ${r.day_range.toFixed(1)}%  HV20 ${r.hv20.toFixed(0)}%  RSI2-D ${r.rsi2_d.toFixed(1)}  EMA20 $${r.ema20_d}  EMA13 $${(r.ema13_d||0).toFixed(2)}  FI2d ${(r.fi2d||0).toFixed(0)}  ADV ${r.adv30m}M`;
+    // Setup cell folds in the profit factor (removed the standalone PF/Ret% cols)
+    const setupCell = isValid
+      ? `<div class="scr-setup-cell">${setupBadge}<span class="scr-setup-pf" style="color:${cfg.color}">PF ${r.bt_pf.toFixed(2)} · +${r.bt_ret.toFixed(2)}%</span></div>`
+      : `<span style="color:#475569">—</span>`;
     return `<tr class="${rowCls} scr-expandable" ${impStyle}
         title="${rowTip}"
         onclick="_toggleScrDetail(this)">
       <td class="scr-rank">${rankDisp}</td>
-      <td><span class="scr-sym">${r.sym}</span><br><span class="scr-sector">${r.sector}${detailHint}</span></td>
-      <td class="scr-price">$${r.price.toFixed(2)}</td>
-      <td class="${_clsDir(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
-      <td class="${rvCls}">${r.rel_vol.toFixed(2)}×</td>
-      <td class="${rsiCls}">${r.rsi14.toFixed(0)}</td>
-      <td class="${vwapCls}">${vwapArrow}${Math.abs(r.vwap_diff).toFixed(1)}%</td>
-      <td title="${impTitle}">${impDisp}</td>
-      <td>${setupBadge}</td>
-      <td>${pfDisp}</td>
-      <td>${retDisp}</td>
+      <td><span class="scr-sym">${r.sym} <span title="${impTitle}" style="font-size:10px">${impEmoji}</span></span><br><span class="scr-sector">${r.sector}${detailHint}</span></td>
+      <td class="scr-price num">$${r.price.toFixed(2)}</td>
+      <td class="num ${_clsDir(r.chg_pct)}">${chgSign}${r.chg_pct.toFixed(1)}%</td>
+      <td class="num ${rvCls}">${r.rel_vol.toFixed(2)}×</td>
+      <td>${setupCell}</td>
       ${_scrConfCell(r.kb_match, r.kb_principles)}
       <td>${r.held ? _scrExitInline(r.exit_plan) : pickDisp}</td>
       <td>${(isValid && !r.held)
@@ -2441,10 +2534,11 @@ function _renderDtTable(rows) {
         : `<span style="color:var(--muted);font-size:10px">—</span>`}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
-      <td colspan="14">
+      <td colspan="9">
         <div class="scr-detail-panel">
           ${reason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${reason}</div>` : ""}
           ${strategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${strategy}</div>` : ""}
+          <div class="scr-detail-meta">RSI14 ${r.rsi14.toFixed(0)} · vs VWAP ${vwapArrow}${Math.abs(r.vwap_diff).toFixed(1)}% · Impulse ${imp} · Range ${r.day_range.toFixed(1)}% · HV20 ${r.hv20.toFixed(0)}%</div>
         </div>
       </td>
     </tr>`;
@@ -2463,7 +2557,7 @@ function _renderOptTable(rows) {
   if (optCountEl) optCountEl.textContent = display.length || "—";
 
   if (!display.length) {
-    tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;color:var(--muted);padding:24px">
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">
       No active signals today — Connors RSI(2) &lt; 10 triggers after market close ·
       intraday setups populate once market opens</td></tr>`;
     return;
@@ -2518,7 +2612,7 @@ function _renderOptTable(rows) {
       ? _scrExitInline(o.exit_plan)
       : (canExec
         ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execScreenerOption(${idx})'
-             title="Place MARKET order via Alpaca (paper · relaxed-fill, §9 advisory)\n${o.sym} ${o.structure} ${o.expiry}\nHard ceiling: $600 · ±20% exit"
+             title="Place MARKET order via Alpaca (paper · relaxed-fill, §9 advisory)\n${o.sym} ${o.structure} ${o.expiry}\nHard ceiling: $600 · +80%/−50% exit"
              data-payload="${execPayload}">⚡ Buy @ Mkt</button>`
         : `<span style="color:var(--muted);font-size:10px">—</span>`);
 
@@ -2528,24 +2622,25 @@ function _renderOptTable(rows) {
     const oHint = oHasDetail
       ? ` <span class="scr-expand-hint">▸ click row for strategy</span>` : "";
 
+    // Edge cell merges directional hit-rate + profit factor (dropped 2 columns)
+    const edgeCell = `<div class="scr-edge-cell">${dirDisp}<span class="scr-edge-pf">PF ${pfDisp}</span></div>`;
+    // Expiry cell folds in DTE + IVR detail (dropped those columns)
+    const ivrInline = (o.ivr && o.ivr !== "—") ? ` · IVR ${o.ivr}` : "";
+    const expiryCell = `<div class="scr-exp-cell"><span>${o.expiry}</span><span class="scr-exp-dte">${o.dte}d${ivrInline}</span></div>`;
     return `<tr class="scr-row scr-expandable" title="${(o.confidence||'').replace(/"/g,"'")}"
         onclick="_toggleScrDetail(this)">
-      <td>${badge}</td>
-      <td class="scr-sym"><b>${o.sym}</b><br><span style="font-size:9px;color:var(--muted)">${oHint}</span></td>
+      <td><div class="scr-sym"><b>${o.sym}</b><span class="scr-src-tag">${badge}</span></div><span style="font-size:9px;color:var(--muted)">${oHint}</span></td>
       <td>${dirBadge}<br><span class="scr-sector" style="font-size:10px">${o.signal}</span></td>
-      <td>${dirDisp}</td>
-      <td>${pfDisp}</td>
+      <td class="num">${edgeCell}</td>
       <td>${structBadge}</td>
-      <td style="color:var(--muted)">${o.expiry}</td>
-      <td><b>${o.dte}</b>d</td>
-      <td>${ivrDisp}</td>
+      <td>${expiryCell}</td>
       ${_scrConfCell(o.kb_match, o.kb_principles)}
-      <td style="color:#f59e0b" title="Hard ceiling $600/trade — fills at market, ±20% exit"><b>≤$600</b></td>
+      <td class="num" style="color:#f59e0b" title="Hard ceiling $600/trade — fills at market, +80%/−50% exit"><b>≤$600</b></td>
       <td>${action}</td>
       <td>${execBtn}</td>
     </tr>
     <tr class="scr-detail-row" style="display:none">
-      <td colspan="13">
+      <td colspan="9">
         <div class="scr-detail-panel">
           ${oReason   ? `<div class="scr-detail-reason"><span class="scr-detail-label">📊 Why rated:</span> ${oReason}</div>` : ""}
           ${oStrategy ? `<div class="scr-detail-strategy"><span class="scr-detail-label">🎯 Strategy:</span> ${oStrategy}</div>` : ""}
