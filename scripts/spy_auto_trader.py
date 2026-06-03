@@ -517,6 +517,10 @@ logging.getLogger("peewee").setLevel(logging.CRITICAL)   # yfinance cache backen
 
 
 # ── Client init ───────────────────────────────────────────────────────────────
+LOGIN_VERIFY_TIMEOUT_SEC = 8   # cap the Alpaca account-verify so failed/hung
+                               # logins surface fast instead of freezing the UI
+
+
 def init_clients(api_key: str, api_secret: str, paper: bool = True):
     """
     Initialize Alpaca clients. Called by app.py after the user enters credentials.
@@ -541,8 +545,24 @@ def init_clients(api_key: str, api_secret: str, paper: bool = True):
         TRADING_CLIENT  = TradingClient(api_key, api_secret, paper=paper)
         DATA_CLIENT     = StockHistoricalDataClient(api_key, api_secret)
         OPTION_CLIENT   = OptionHistoricalDataClient(api_key, api_secret)
-        # Verify by fetching account
-        account = TRADING_CLIENT.get_account()
+        # Verify by fetching the account — BOUNDED so a bad credential or an
+        # unreachable Alpaca fails FAST instead of hanging on the socket default
+        # (which stalls the eventlet hub and makes the whole login feel frozen).
+        try:
+            import eventlet as _ev
+        except ImportError:
+            _ev = None
+        if _ev is not None:
+            try:
+                with _ev.Timeout(LOGIN_VERIFY_TIMEOUT_SEC):
+                    account = TRADING_CLIENT.get_account()
+            except _ev.Timeout:
+                TRADING_CLIENT = DATA_CLIENT = OPTION_CLIENT = None
+                return None, False, (
+                    f"Alpaca did not respond within {LOGIN_VERIFY_TIMEOUT_SEC}s — "
+                    "check connectivity or credentials")
+        else:
+            account = TRADING_CLIENT.get_account()
         return account, True, None
     except Exception as e:
         TRADING_CLIENT = DATA_CLIENT = OPTION_CLIENT = None

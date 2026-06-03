@@ -1478,6 +1478,7 @@ def on_login(data):
     # call for no real benefit — eventlet hub stalls during it block other
     # greenlets including subsequent UI events. Skip when we can verify
     # the requested key matches the active one.
+    import eventlet as _ev
     fast_path_taken = False
     try:
         with _state_lock:
@@ -1486,11 +1487,14 @@ def on_login(data):
         if (already_logged_in and same_paper_mode
                 and getattr(trader, "TRADING_CLIENT", None) is not None
                 and getattr(trader, "ACTIVE_KEY_PREFIX", "") == api_key[:6]):
-            # Cheap call — already-cached client, no fresh handshake
-            account = trader.TRADING_CLIENT.get_account()
+            # Cheap call — already-cached client, no fresh handshake. Still
+            # bounded: if the cached client has gone stale and hangs, fall back
+            # fast rather than freezing the login.
+            with _ev.Timeout(trader.LOGIN_VERIFY_TIMEOUT_SEC):
+                account = trader.TRADING_CLIENT.get_account()
             ok, err = True, None
             fast_path_taken = True
-    except Exception as e:
+    except (Exception, _ev.Timeout) as e:
         log.info(f"Login fast-path probe failed ({e}); falling back to full init")
         fast_path_taken = False
 
