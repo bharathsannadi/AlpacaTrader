@@ -72,8 +72,8 @@ try:
     _ETF_SET = set(_ETFS_T) | set(_ETFS_H)
 except Exception:
     _ETF_SET = set()
-OPT_TAKE_PROFIT_PCT  = 0.50    # sell an option position at +20% (net debit)
-OPT_STOP_LOSS_PCT    = 0.50    # sell an option position at -20% (net debit)
+OPT_TAKE_PROFIT_PCT  = 0.80    # KB §24 / _position_exit_plan: take +80% of premium
+OPT_STOP_LOSS_PCT    = 0.50    # KB §9: stop at 50% of premium paid
 OPT_STALL_MINUTES    = 90      # time-stop: close a green-but-stalled option after N min
 OPT_MAX_OPEN         = 3       # max concurrent option positions (by underlying)
 _KB_RELAXED_LOG = os.path.expanduser("~/.spy_trader/kb_relaxed.jsonl")
