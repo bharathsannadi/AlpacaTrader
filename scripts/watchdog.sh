@@ -73,6 +73,6 @@ fi
 note "no auto-restart detected — relaunching app directly"
 cd "$REPO" || { note "cd $REPO failed"; exit 1; }
 PYTHONPATH="$REPO/venv/lib/python3.11/site-packages" \
-    nohup "$PY" "$REPO/scripts/app.py" --paper >> "$LOG" 2>&1 &
+    nohup "$PY" -u "$REPO/scripts/app.py" --paper >> "$REPO/logs/app.log" 2>&1 &
 note "relaunched app pid=$!"
 exit 0
