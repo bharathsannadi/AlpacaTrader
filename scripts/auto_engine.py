@@ -34,6 +34,10 @@ DUAL_ENGINE_ENABLED = True    # master on/off for the autonomous loop
 DUAL_ENGINE_MODE    = "execute"  # "shadow" (log only) | "execute" (place PAPER orders)
 MAX_CONCURRENT      = 8        # hard cap on open autonomous positions
 MAX_NEW_PER_CYCLE   = 3        # hard cap on new entries per cycle
+MAX_NEW_PER_DAY     = 10       # #38: hard cap on TOTAL new entries per day. The
+                               # ±% exit + re-entry loop produced 180 round-trips
+                               # in a day (churn, not edge) — this bounds how much
+                               # the engine can deploy/rotate in a single session.
 # #20: the engine can also place OPTIONS for vol-edge signals (ETFs + stocks).
 # Defaults OFF (project safety rule #1 for new order paths) — wired + ready; flip
 # on after a validation pass and the §9-OI fix (#28). Until then directional
@@ -67,20 +71,51 @@ def _journal_add(sym: str, kind: str, reason: str, pnl_pct: float, pnl_usd: floa
 # entry constants (match the validated backtests)
 RSI_LO = 10.0
 
-import os, json as _json
+import json as _json   # os already imported at top of module
 from pathlib import Path as _Path
 POSITIONS_FILE = _Path.home() / ".spy_trader" / "auto_engine_positions.json"
 MONTH_PNL_FILE = _Path.home() / ".spy_trader" / "auto_engine_month_pnl.json"
 TRADES_LOG_FILE = _Path.home() / ".spy_trader" / "auto_engine_trades.json"
+DAILY_ENTRIES_FILE = _Path.home() / ".spy_trader" / "auto_engine_daily_entries.json"
+
+
+def _entries_today() -> int:
+    """How many NEW positions the engine has opened today (#38 daily cap)."""
+    from datetime import date as _date
+    try:
+        d = _json.loads(DAILY_ENTRIES_FILE.read_text())
+        return int(d.get("count", 0)) if d.get("date") == _date.today().isoformat() else 0
+    except Exception:
+        return 0
+
+
+def _record_entry(n: int = 1) -> int:
+    """Increment today's new-entry counter (resets on date change). Returns new total."""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    cur = _entries_today() + n
+    try:
+        DAILY_ENTRIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DAILY_ENTRIES_FILE.write_text(_json.dumps({"date": today, "count": cur}))
+    except Exception as e:
+        log.warning(f"[auto-engine] record entry failed: {e}")
+    return cur
+
+
+TRADES_LOG_MAX = 2000   # #39: keep only the most recent N closed trades so the
+                        # full-rewrite-on-append stays cheap and the file bounded
 
 
 def _log_closed_trade(rec: dict) -> None:
-    """Append a closed-trade record (append-only) for post-day review."""
+    """Append a closed-trade record for post-day review. Bounded to the last
+    TRADES_LOG_MAX entries (#39) so the on-every-close rewrite stays O(cap)."""
     try:
         hist = []
         if TRADES_LOG_FILE.exists():
             hist = _json.loads(TRADES_LOG_FILE.read_text())
         hist.append(rec)
+        if len(hist) > TRADES_LOG_MAX:
+            hist = hist[-TRADES_LOG_MAX:]
         TRADES_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         TRADES_LOG_FILE.write_text(_json.dumps(hist, indent=2))
     except Exception as e:
@@ -366,10 +401,16 @@ def execute_plan(plan: dict, dry_run: bool = False,
     rb = RiskBrain(total_equity=equity) if equity > 0 else None
     open_risk = _open_risk(positions)
     month_loss = _month_loss()
+    entries_today = _entries_today()
     for pt in plan["planned"]:
         s, d = pt.signal, pt.decision
         if s.symbol in held:
             continue
+        # ── #38: daily new-entry cap — stop the churn after MAX_NEW_PER_DAY ──
+        if entries_today >= MAX_NEW_PER_DAY:
+            log.info(f"[auto-engine] daily entry cap reached "
+                     f"({entries_today}/{MAX_NEW_PER_DAY}) — no more new positions today")
+            break
         # ── per-trade KB-principles + debate gate ──
         ok, why = _signal_gate(s, d.route, vix, risk_on)
         if not ok:
@@ -391,6 +432,7 @@ def execute_plan(plan: dict, dry_run: bool = False,
                 positions.append(opos)
                 held.add(s.symbol)
                 open_risk += float(opos.get("entry_debit") or 0.0) * 100
+                entries_today = _record_entry()   # #38
             continue
         if d.route != "stocks":
             continue
@@ -411,6 +453,7 @@ def execute_plan(plan: dict, dry_run: bool = False,
         })
         held.add(s.symbol)
         open_risk += max(0.0, (s.price - init_stop)) * d.qty   # for the 6% rule
+        entries_today = _record_entry()   # #38 daily new-entry cap
         log.info(f"[auto-engine] OPENED {s.symbol} {d.qty}sh @ ~{s.price:.2f} ({s.strategy})"
                  f"{' [dry]' if dry_run else ''}")
     _save_positions(positions)

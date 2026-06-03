@@ -31,11 +31,20 @@ log = logging.getLogger("screener_executor")
 _TRAIL_PATH = Path(__file__).parent.parent / "logs" / "screener_executor.trail"
 
 
+_TRAIL_MAX_BYTES = 2_000_000   # #39: rotate the trail past ~2 MB so it can't grow unbounded
+
+
 def _trail(msg: str) -> None:
     """Write a single timestamped line to the executor trail file.
-    Never raises — log handler failures must not break order placement."""
+    Never raises — log handler failures must not break order placement.
+    Rotates to a single .1 backup once it passes _TRAIL_MAX_BYTES (#39)."""
     try:
         _TRAIL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if _TRAIL_PATH.exists() and _TRAIL_PATH.stat().st_size > _TRAIL_MAX_BYTES:
+                _TRAIL_PATH.replace(_TRAIL_PATH.with_suffix(_TRAIL_PATH.suffix + ".1"))
+        except Exception:
+            pass
         ts = _time.strftime("%Y-%m-%d %H:%M:%S")
         with open(_TRAIL_PATH, "a") as fh:
             fh.write(f"{ts}  {msg}\n")

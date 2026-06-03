@@ -356,13 +356,32 @@ def _classify_setup(daily: pd.DataFrame, price: float, rel_vol: float,
 
 
 # ── Per-symbol fetch ──────────────────────────────────────────────────────────
+_YF_TIMEOUT_SEC = 8   # cap each yfinance call so a hung Yahoo response can't
+                      # freeze the eventlet hub (was the #1 cause of scheduler stalls)
+
+
+def _yf_bounded(fn, *args, **kwargs):
+    """Run a (blocking) yfinance call under a hard timeout. On timeout/raise the
+    caller treats it as 'no data' and skips the symbol — never freezes the hub."""
+    try:
+        import eventlet as _ev
+    except ImportError:
+        return fn(*args, **kwargs)
+    try:
+        with _ev.Timeout(_YF_TIMEOUT_SEC):
+            return fn(*args, **kwargs)
+    except _ev.Timeout:
+        raise TimeoutError(f"yfinance call exceeded {_YF_TIMEOUT_SEC}s")
+
+
 def _fetch_symbol(sym: str) -> dict | None:
     try:
         import yfinance as yf
         t = yf.Ticker(sym)
 
         # 60-day daily for indicators + HV
-        daily = t.history(period="60d", interval="1d", auto_adjust=True, actions=False)
+        daily = _yf_bounded(t.history, period="60d", interval="1d",
+                            auto_adjust=True, actions=False)
         if daily is None or len(daily) < 20:
             return None
 
@@ -378,7 +397,8 @@ def _fetch_symbol(sym: str) -> dict | None:
         prev_close = float(daily["Close"].iloc[-2]) if len(daily) >= 2 else None
 
         # Intraday 5-min bars for VWAP + live price
-        intra = t.history(period="1d", interval="5m", auto_adjust=True, actions=False)
+        intra = _yf_bounded(t.history, period="1d", interval="5m",
+                            auto_adjust=True, actions=False)
         if intra is None or intra.empty:
             # Fall back to latest daily bar
             price     = float(daily["Close"].iloc[-1])
@@ -714,11 +734,22 @@ def refresh_screener(daily_positions: list[dict] | None = None) -> dict:
     if not _refresh_lock.acquire(blocking=False):
         return get_cached()
     try:
+        # Yield to the eventlet hub between symbols so the scheduler/ticker
+        # greenlets keep beating during the multi-second compute (prevents the
+        # "Scheduler stale" watchdog restarts). Combined with the per-call
+        # timeout in _fetch_symbol, the hub can never freeze for more than one
+        # bounded fetch at a time.
+        try:
+            import eventlet as _ev
+        except ImportError:
+            _ev = None
         dt_rows: list[dict] = []
         for sym in DAY_TRADING_UNIVERSE:
             row = _fetch_symbol(sym)
             if row:
                 dt_rows.append(row)
+            if _ev is not None:
+                _ev.sleep(0)   # cooperative yield — lets other greenlets run
 
         # Sort: validated setups first (by PF desc), then neutral
         # Breakout PF=1.88 > Bull Flag PF=1.44 > RSI Dip PF=1.41 > Gap+Vol PF=1.37

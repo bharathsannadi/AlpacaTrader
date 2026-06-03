@@ -425,6 +425,13 @@ _auto_exec_date:   str = ""
 _auto_exec_stock_today:  set = set()
 _auto_exec_stock_filled: set = set()
 STOCK_MAX_AUTO_EXEC_PER_DAY = 3
+# Per-symbol daily attempt cap (#36): a symbol that fails to fill (e.g. COHR
+# tripping the $600 hard ceiling, an illiquid name, a rejected order) is retried
+# at most this many times per day, then skipped — stops the retry storm where
+# the same name was re-fetched + re-failed 20-30× a session, hammering yfinance
+# and the eventlet hub for nothing. Keyed sym → attempts; persisted with state.
+_auto_exec_attempts: dict = {}
+MAX_SYMBOL_ATTEMPTS_PER_DAY = 2
 
 # ── Daily P&L circuit breaker ────────────────────────────────────────────────
 # Snapshot equity at start-of-day; halt auto-execute if drawdown exceeds limit.
@@ -438,7 +445,7 @@ _loss_breach_count:    int   = 0     # consecutive readings under the loss limit
 def _load_auto_exec_state() -> None:
     """Restore today's dedup set from disk on startup. Discards yesterday's data."""
     global _auto_exec_today, _auto_exec_filled, _auto_exec_date
-    global _auto_exec_stock_today, _auto_exec_stock_filled
+    global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_attempts
     today = datetime.now(ET).strftime("%Y-%m-%d")
     try:
         with open(_AUTO_EXEC_STATE_FILE) as fh:
@@ -448,6 +455,7 @@ def _load_auto_exec_state() -> None:
             _auto_exec_filled = set(data.get("filled", []))
             _auto_exec_stock_today  = set(data.get("stock_executed", []))
             _auto_exec_stock_filled = set(data.get("stock_filled", []))
+            _auto_exec_attempts = dict(data.get("attempts", {}))
             _auto_exec_date   = today
             if _auto_exec_today:
                 log.info(f"[auto-exec] Restored {today}: attempted="
@@ -466,7 +474,8 @@ def _save_auto_exec_state() -> None:
                 {"date": _auto_exec_date, "executed": sorted(_auto_exec_today),
                  "filled": sorted(_auto_exec_filled),
                  "stock_executed": sorted(_auto_exec_stock_today),
-                 "stock_filled": sorted(_auto_exec_stock_filled)},
+                 "stock_filled": sorted(_auto_exec_stock_filled),
+                 "attempts": _auto_exec_attempts},
                 fh,
             )
         os.replace(tmp, _AUTO_EXEC_STATE_FILE)
@@ -2354,7 +2363,7 @@ def _auto_exec_options(data: dict) -> None:
       · dry_run flag is honoured — if True, no real order is placed
     """
     global _auto_exec_today, _auto_exec_filled, _auto_exec_date
-    global _auto_exec_stock_today, _auto_exec_stock_filled
+    global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_attempts
     global _session_start_equity, _session_start_date
 
     with _state_lock:
@@ -2375,6 +2384,7 @@ def _auto_exec_options(data: dict) -> None:
             _auto_exec_filled = set()
             _auto_exec_stock_today  = set()   # stock lane shares the date key
             _auto_exec_stock_filled = set()
+            _auto_exec_attempts = {}          # reset per-symbol attempt counters
             _auto_exec_date   = today
             _save_auto_exec_state()
 
@@ -2459,6 +2469,10 @@ def _auto_exec_options(data: dict) -> None:
             continue
         if sym in held_opt_underlyings:        # one option per underlying max
             continue
+        # #36: stop retrying a symbol that already failed to fill twice today
+        with _auto_exec_lock:
+            if _auto_exec_attempts.get(sym, 0) >= MAX_SYMBOL_ATTEMPTS_PER_DAY:
+                continue
 
         # ── KB-principles + debate gate (operator directive) ──────────────────
         allowed, reason = _kb_and_debate_gate(o)
@@ -2502,9 +2516,19 @@ def _auto_exec_options(data: dict) -> None:
             if _filled:
                 with _auto_exec_lock:
                     _auto_exec_filled.add(sym)
+                    _auto_exec_attempts.pop(sym, None)   # success clears the counter
                     _save_auto_exec_state()
                 log.info(f"[auto-exec] {sym} FILLED — counts toward daily cap "
                          f"({len(_auto_exec_filled)}/{MAX_AUTO_EXEC_PER_DAY})")
+            else:
+                # #36: record the failed attempt so we stop retrying after the cap
+                with _auto_exec_lock:
+                    _auto_exec_attempts[sym] = _auto_exec_attempts.get(sym, 0) + 1
+                    _n = _auto_exec_attempts[sym]
+                    _save_auto_exec_state()
+                if _n >= MAX_SYMBOL_ATTEMPTS_PER_DAY:
+                    _emit_log(f"AUTO-EXEC ⏭ {sym} skipped for today "
+                              f"({_n} failed attempts)", level="INFO")
             # ── Dedup-on-reject release ──────────────────────────────────────
             # If the executor returned failure AND no order was actually
             # submitted (no long_order_id), the trade took zero capital and
@@ -2526,9 +2550,12 @@ def _auto_exec_options(data: dict) -> None:
                          f"(safety-gate rejection — no order placed)")
         except Exception as e:
             log.warning(f"[auto-exec] {sym} failed: {e}")
-            # Defensive: same release on raised exception (no order took risk)
+            # Defensive: same release on raised exception (no order took risk),
+            # but count the attempt so a hard-failing name (e.g. ceiling) stops
+            # being retried every cycle (#36).
             with _auto_exec_lock:
                 _auto_exec_today.discard(sym)
+                _auto_exec_attempts[sym] = _auto_exec_attempts.get(sym, 0) + 1
                 _save_auto_exec_state()
 
 
@@ -2538,6 +2565,7 @@ def _auto_exec_stocks(data: dict) -> None:
     KB-match gate, dedup (no re-attempt), and an N/3 cap that counts FILLED orders.
     Stocks are liquid, so there's no §9 option-liquidity gate here."""
     global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_date
+    global _auto_exec_attempts
 
     with _state_lock:
         armed  = state.get("auto_execute_options", False)   # same Armed toggle
@@ -2571,6 +2599,8 @@ def _auto_exec_stocks(data: dict) -> None:
         with _auto_exec_lock:
             if sym in _auto_exec_stock_today:
                 continue
+            if _auto_exec_attempts.get(sym, 0) >= MAX_SYMBOL_ATTEMPTS_PER_DAY:
+                continue   # #36: stop retrying a name that keeps failing to fill
         # KB-principles gate (REQ-004) — same floor the manual click enforces
         try:
             sc = kb_principles.score_stock_candidate(r, vix=vix)
@@ -2603,11 +2633,13 @@ def _auto_exec_stocks(data: dict) -> None:
             elif not res.get("success"):
                 with _auto_exec_lock:
                     _auto_exec_stock_today.discard(sym)   # no order — allow retry
+                    _auto_exec_attempts[sym] = _auto_exec_attempts.get(sym, 0) + 1
                     _save_auto_exec_state()
         except Exception as e:
             log.warning(f"[auto-buy] {sym} failed: {e}")
             with _auto_exec_lock:
                 _auto_exec_stock_today.discard(sym)
+                _auto_exec_attempts[sym] = _auto_exec_attempts.get(sym, 0) + 1
                 _save_auto_exec_state()
 
 
