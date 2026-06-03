@@ -377,11 +377,11 @@ state = {
     # Per-symbol running state (tabs are chart-only; any symbol can trade anytime)
     "sessions":        {s: False for s in _SYMBOLS_ORDERED},
     "streaming":       True,         # Live price + log streaming
-    "dry_run":         True,   # DEFAULT ON (operator directive 2026-06-02): SIMULATE by
+    "dry_run":         False,  # DEFAULT OFF (operator directive 2026-06-03): TRADE by
                                # default — the screener auto-exec, stock auto-buy, and
-                               # manual clicks place NO real order until the operator turns
-                               # Dry Run off in the UI. (The autonomous engine runs in its
-                               # own execute mode and is gated separately.)
+                               # manual clicks place REAL PAPER orders. Can ONLY ever be
+                               # paper (PAPER_MODE + non-paper hard guards + go-live gate).
+                               # Flip to simulation anytime via the UI Dry Run toggle.
     "paper_mode":      True,         # Alpaca paper vs live
     "active_symbol":   "SPY",        # currently selected chart tab
     "session_end":     "15:45",      # all-day session end time (HH:MM ET)
