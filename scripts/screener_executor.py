@@ -78,6 +78,39 @@ OPT_STALL_MINUTES    = 90      # time-stop: close a green-but-stalled option aft
 OPT_MAX_OPEN         = 3       # max concurrent option positions (by underlying)
 _KB_RELAXED_LOG = os.path.expanduser("~/.spy_trader/kb_relaxed.jsonl")
 
+# ── Operator directive 2026-06-03: LIVE NEVER RELAXES A KB ─────────────────────
+# The relaxed-fill overrides above (fill illiquid, market orders, no $400 cap) are
+# PAPER-ONLY. On a real-money account every KB rule — §9 liquidity, §4 risk cap,
+# limit-order discipline — is enforced exactly as written, no exceptions. These
+# accessors gate the relaxations on paper mode so live cannot relax even by
+# accident. Fails SAFE (strict) if the account type can't be resolved.
+_PAPER_CACHE = None
+
+
+def _is_paper() -> bool:
+    global _PAPER_CACHE
+    if _PAPER_CACHE is None:
+        try:
+            _PAPER_CACHE = bool(_load_env()[2])
+        except Exception:
+            _PAPER_CACHE = False   # unknown → treat as live → strict (never relax)
+    return _PAPER_CACHE
+
+
+def _relax_liquidity() -> bool:
+    """§9 liquidity may be relaxed only on paper."""
+    return OPT_RELAX_LIQUIDITY and _is_paper()
+
+
+def _market_orders() -> bool:
+    """Market orders only on paper; live uses limit-order discipline."""
+    return OPT_MARKET_ORDERS and _is_paper()
+
+
+def _enforce_max_risk() -> bool:
+    """The §4 $400 cap is ALWAYS enforced live; optional only on paper."""
+    return OPT_ENFORCE_MAX_RISK or (not _is_paper())
+
 
 def _log_kb_relaxed(sym: str, rule: str, detail: str) -> None:
     """Audit a KB rule that was relaxed to fill an order (operator override) — to
@@ -275,7 +308,7 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
         if wide or thinOI:
             why = (f"bid-ask {ba*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}%" if wide
                    else f"ATM OI {oi} < {OPT_MIN_OI} and spread {ba*100:.1f}% not tight")
-            if OPT_RELAX_LIQUIDITY:        # operator: fill anyway — advisory only, NOT audited
+            if _relax_liquidity():        # paper only: fill anyway — advisory, NOT audited
                 return {"ok": True, "reason": f"§9 relaxed: {why}", "atm_oi": oi, "ba_pct": ba,
                         "relaxed": True}
             return {"ok": False, "reason": why, "atm_oi": oi, "ba_pct": ba}
@@ -427,7 +460,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         if _wide or _thinOI:
             _why = (f"bid-ask spread {ba_pct*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}% max"
                     if _wide else f"ATM OI {atm_oi} < {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight")
-            if OPT_RELAX_LIQUIDITY:        # operator relaxed-fill: allow it
+            if _relax_liquidity():        # paper-only relaxed-fill: allow it
                 if not dry_run:            # audit ONLY real orders (not dry-run sims)
                     _log_kb_relaxed(sym, "§9 liquidity",
                                     f"{_why} — filled at market, paid the spread")
@@ -491,7 +524,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
             raise ValueError(f"{sym}: HARD ceiling — debit ${net_debit*100:.0f} "
                              f"> ${_ceiling:.0f} (sanity guard; likely a bad quote)")
         if net_debit * 100 > max_risk:
-            if OPT_ENFORCE_MAX_RISK:
+            if _enforce_max_risk():
                 raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
                                  f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
             if not dry_run:                # audit ONLY real orders
@@ -528,7 +561,8 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # ── BTO long leg ─────────────────────────────────────────────────────
         # operator relaxed-fill: market order so it fills even on a wide spread
         # (you pay the ask). Otherwise a limit slightly above mid.
-        if OPT_MARKET_ORDERS:
+        _use_mkt = _market_orders()    # paper-only; live forces limit-order discipline
+        if _use_mkt:
             req = MarketOrderRequest(symbol=atm_occ, qty=1, side=OrderSide.BUY,
                                      time_in_force=TimeInForce.DAY)
         else:
@@ -536,7 +570,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                                     time_in_force=TimeInForce.DAY, limit_price=long_limit)
         order         = tc.submit_order(req)
         long_order_id = str(order.id)
-        log.info(f"  BTO {atm_occ}  {'MKT' if OPT_MARKET_ORDERS else f'lmt=${long_limit:.2f}'}  "
+        log.info(f"  BTO {atm_occ}  {'MKT' if _use_mkt else f'lmt=${long_limit:.2f}'}  "
                  f"id={long_order_id}  paper={paper}")
         result["long_order_id"] = long_order_id
 
@@ -567,7 +601,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
             short_limit    = round(max(live_short_mid - 0.05,
                                        live_short_mid * 0.90, 0.01), 2)
             try:
-                if OPT_MARKET_ORDERS:
+                if _use_mkt:
                     req = MarketOrderRequest(symbol=short_occ, qty=1, side=OrderSide.SELL,
                                              time_in_force=TimeInForce.DAY)
                 else:
@@ -576,7 +610,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                 order          = tc.submit_order(req)
                 short_order_id = str(order.id)
                 actual_short_mid = live_short_mid
-                log.info(f"  STO {short_occ}  {'MKT' if OPT_MARKET_ORDERS else f'lmt=${short_limit:.2f}'}  id={short_order_id}")
+                log.info(f"  STO {short_occ}  {'MKT' if _use_mkt else f'lmt=${short_limit:.2f}'}  id={short_order_id}")
 
                 # Verify STO didn't get rejected downstream. If it did, we
                 # have an unhedged long — trigger the same rollback path as
