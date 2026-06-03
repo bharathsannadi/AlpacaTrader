@@ -1,6 +1,7 @@
 # Trading, Day Trading & Options Knowledge Base
 
-> **Last updated: 2026-05-25** — Added §T17-T27 and §DT14-DT17: Candlesticks, Weis/Wyckoff, Minervini SEPA, 25 Rules, Sinclair vol edge, Cooper intraday, Wyckoff intraday, Bulkowski/Bandy risk; Velez Pristine 4-Stage, 18 Champions cross-trader rules, Person Pivot P3T, Rhoads VIX derivatives, Heitkoetter/McDowell day trading, Murphy intermarket, McMillan covered calls & collars. 300 PDFs catalogued, ~50 books deeply read.
+> **Last updated: 2026-06-03** — Added §XM (Exit Management & Scaling-Out): deep-read of Elder "New Trading for a Living" Ch.53 (profit targets, ATR-channel ladder, move-stop-to-breakeven, "fast quarters beat slow dollars"), Schwab/OIC entry-exit transcript (scale-out, roll-up-winners), Cohen "Volatile Markets" — a KB-grounded two-step scale-out upgrade for the all-or-nothing exit engine.
+> **2026-05-25** — Added §T17-T27 and §DT14-DT17: Candlesticks, Weis/Wyckoff, Minervini SEPA, 25 Rules, Sinclair vol edge, Cooper intraday, Wyckoff intraday, Bulkowski/Bandy risk; Velez Pristine 4-Stage, 18 Champions cross-trader rules, Person Pivot P3T, Rhoads VIX derivatives, Heitkoetter/McDowell day trading, Murphy intermarket, McMillan covered calls & collars. 300 PDFs catalogued, ~50 books deeply read.
 >
 > Distilled from 300+ professional trading books in `/Users/bsannadi/Desktop/bharath/books/Trading/`:
 > **Foundations:** Natenberg (*Option Volatility and Pricing*), Passarelli (*Trading Option Greeks*), Saliba (*Option Spread Strategies*, *Option Strategies for Stock/Index/Commodity*), Hull (*Options, Futures and Other Derivatives*)
@@ -17,7 +18,7 @@
 >
 > **Purpose:** AI trading system reference for debate gate, signal evaluation, trade approval, and the live screener.
 > **System trades:** Day trading stocks (25 S&P 500 universe) + directional options on validated setups. 4 backtested setups: Breakout PF 1.88, Bull Flag PF 1.44, RSI Dip PF 1.41, Gap+Vol PF 1.37.
-> **Sections:** §1–25 = Options KB · §T1–T21 = Trading KB · §DT1–DT16 = Day Trading KB · §BT1 = Backtest results
+> **Sections:** §1–25 = Options KB · §T1–T27 = Trading KB · §DT1–DT17 = Day Trading KB · §BT1 = Backtest results · §RM = Portfolio Risk · §XM = Exit Management & Scaling-Out
 
 ---
 
@@ -3119,3 +3120,93 @@ USD (Dollar) → Commodities → Bonds → Stocks
 breaker + open-risk accounting to the risk brain (live); add Monte Carlo + Calmar
 to the validation harness; build a strategy pipeline + edge-decay monitor. All
 serve the conservative, capital-preserving objective (REQ-611).
+
+---
+
+## §XM — Exit Management & Scaling-Out (Elder, Schwab/OIC, Covel) — added 2026-06-03
+
+*From a deep-read of Elder, "The New Trading for a Living" (Ch. 53 "How to Set
+Profit Targets," Ch. on ATR channels & the Directional system) + the Schwab/OIC
+"Entry and Exit Strategy" options webinar transcript + Cohen, "Volatile Markets
+Made Easy." Purpose: our exit engine currently exits **all-or-nothing** at a
+single target (stocks +6% / options +80%, [[project-options-20pct]] backstop).
+These authors converge on **scaling out** as the better mechanic — it reconciles
+"let winners run" (Covel §8 fat-tail) with "lock the gain" (realism).*
+
+### 1. Plan the exit BEFORE the entry — reward ≥ 2× risk (Elder, Ch. 53)
+- **Write down entry, profit target, and stop for every trade, then compute
+  reward÷risk. Require ≥ 2:1, else skip.** *"It seldom pays to risk a dollar to
+  make a dollar — you might as well bet on color at a roulette table."* This is a
+  **go/no-go gate**, not an afterthought.
+- A trader without a pre-set target *"will feel increasingly happy as the stock
+  goes up and more despondent as it grinds down — his emotions prime him to act
+  at the worst possible times."* The target removes the emotion.
+
+### 2. "Enough" is the power word — modest, realistic targets (Elder, Ch. 53)
+- Set targets from three concrete references, in order of holding period:
+  **swing → moving-average/channel; day-trade → exit on the first oscillator
+  divergence; position → prior support/resistance.**
+- *"Fast quarters are better than slow dollars. Taking profits in the value zone
+  reduces uncertainty and cuts the time your trade remains at risk."* This is
+  **rabbit hunting, not elephant hunting** — by banking "enough" trade after
+  trade you compound to excellent results. (Directly supports our tight, fast
+  stock-rotation thesis — but see §XM-4 to avoid clipping the rare runner.)
+
+### 3. Scale OUT in pieces — don't go all-or-nothing (Schwab/OIC transcript; Elder)
+- *"Closing is easier when you have a larger position and get to scale out of it
+  rather than taking everything off the table."* Take some risk off at the first
+  target; **let a runner ride.**
+- Elder: on a large position you **"definitely want to take partial profits"**;
+  when trend strength wanes **"start taking profits, reducing positions, and
+  looking to get out"** — and **stop adding.**
+- You are simultaneously managing **three** things: (a) the market outlook,
+  (b) the account/money (a string of losers may justify banking a winner early),
+  and (c) your own emotions. A scale-out satisfies all three at once.
+
+### 4. Move the stop to BREAKEVEN once green (Elder)
+- *"Once you are long, place a protective stop below the latest minor low, and
+  move it to the break-even point as soon as prices close higher."*
+- Ties to [[project-confidence-calibration]]/§RM open-risk accounting: a position
+  stopped at breakeven has **ZERO open risk** → it stops consuming the 6% budget
+  and **frees capacity for a new entry.** Scaling + breakeven stop is how you let
+  a winner run *without* it counting as risk.
+
+### 5. ATR-channel profit ladder (Elder / Kerry Lovvorn)
+- Plot **1, 2, and 3 ATR** above/below an EMA. Normal pullbacks bottom near
+  **−1 ATR** (a value-zone entry). **Stops must be ≥ 1 ATR from entry** — closer
+  than that sits *inside normal market noise* and gets whipsawed.
+- A well-drawn channel contains **~95% of the last ~100 bars**; the upper channel
+  marks "overvalued." **Never buy above the upper channel line**; use it as the
+  profit-target zone. → gives an objective, volatility-scaled exit ladder
+  (+1/+2/+3 ATR) rather than a flat %.
+
+### 6. Roll a deep-ITM winning option up, don't give it back (Schwab transcript)
+- When a long call is **deep ITM with time left** and you're still bullish but
+  don't want to *"risk giving back all of that premium,"* **sell the ITM option
+  and buy a higher strike**: bank most of the gain, keep a (cheaper) bullish
+  position, take money off the table. Same idea down-strike for puts. (Rolling =
+  close one + open another.) Complements our exit ladder/§24 rolling discipline.
+
+### 7. Time-stop a stalled position (transcript; already live as §33/REQ-609)
+- A position that *"consolidates and goes nowhere"* bleeds theta (options) and
+  opportunity cost (shares). Close before it *"reaches a point where you don't
+  want to risk further losses."* Confirms our stall timer (60–90 min options /
+  3-day stocks).
+
+### How THIS system applies it (candidate upgrade to the exit engine)
+Today exits are single-shot: stock TP +6% / SL −3%, option TP +80% / SL −50%,
+stall, 21-day cap ([[project-stock-2pct-rotation]], [[project-options-20pct]]).
+The KB-grounded upgrade is a **two-step scale-out**, which is the synthesis of
+Covel "let the fat tail run" + Elder "bank enough" + the all-or-nothing problem:
+
+1. **First target → sell a fraction (½ stock / 1 of N option contracts)** at the
+   current TP (or +1 ATR). Bank "enough."
+2. **Move the stop on the remainder to breakeven** (Elder §XM-4) — the runner now
+   has zero open risk and frees 6%-budget capacity for the next screener pick.
+3. **Trail the remainder** (existing ladder / +2/+3 ATR) so a rare burst (Covel
+   §8) isn't clipped. Stall-timer + 21-day cap remain the backstops.
+
+Net effect: keeps the fast-rotation cadence the operator wants while stopping the
+edge-killing habit of clipping every winner at a flat target. **Gated** — propose
+as an exit-engine REQ, A/B it against the current single-shot exits on the
+Polygon backtest before defaulting it on.
