@@ -2423,10 +2423,17 @@ function _scrExitInline(ep) {
   const f = v => (v == null ? "—" : (typeof v === "number" ? v.toFixed(2) : v));
   const stop = ep.stop != null ? `stop ${f(ep.stop)}` : "";
   const tgt  = ep.target != null ? ` · tgt ${f(ep.target)}` : "";
-  const tip = `HELD ${ep.instrument} · entry ${f(ep.entry)} (${ep.unit||""})\n` +
+  // Honest badge per daily-position status: only an OPEN (filled) position is "HELD".
+  // A pending/unfilled order or a fresh signal is NOT held — it just suppresses a
+  // duplicate buy. (Bug: a never-filled pending order showed 🔵 HELD.)
+  const st = ep.status || "open";
+  const [badge, color] = st === "pending" ? ["⏳ PENDING", "#f59e0b"]
+                       : st === "signal"  ? ["📍 SIGNAL",  "#a78bfa"]
+                       : ["🔵 HELD", "var(--cyan)"];
+  const tip = `${st === "open" ? "HELD" : st.toUpperCase()} ${ep.instrument} · entry ${f(ep.entry)} (${ep.unit||""})\n` +
               `stop ${f(ep.stop)}${ep.target!=null?` · target ${f(ep.target)}`:""}\n` +
               `exit: ${ep.trigger||""}`;
-  return `<span title="${tip.replace(/"/g,"'")}" style="color:var(--cyan);font-weight:700">🔵 HELD</span>` +
+  return `<span title="${tip.replace(/"/g,"'")}" style="color:${color};font-weight:700">${badge}</span>` +
          `<br><span style="font-size:9px;color:var(--muted)">${stop}${tgt}</span>`;
 }
 
