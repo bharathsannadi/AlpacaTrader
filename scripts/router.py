@@ -110,14 +110,8 @@ def route_signal(sig: Signal, rb: RiskBrain,
     return RouteDecision("options", structure, why, opt_cost, opt_risk, 1)
 
 
-def _ivr_num(raw) -> Optional[float]:
-    """Numeric IVR from '22', 22, 'IVR 22', '—', None."""
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)):
-        return float(raw)
-    digits = "".join(c for c in str(raw) if (c.isdigit() or c == "."))
-    return float(digits) if digits else None
+# CR-5: reuse the canonical IVR parser instead of a byte-identical copy.
+from kb_principles import _parse_ivr as _ivr_num
 
 
 def route_for_pick(stock_row: Optional[dict], option_row: Optional[dict],

@@ -536,25 +536,31 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # single mispriced/garbage contract can't blow a huge position (the MU
         # $11k glitch). This is NOT relaxable.
         _ceiling = OPT_HARD_MAX_USD_ETF if sym.upper() in _ETF_SET else OPT_HARD_MAX_USD
-        per_contract = net_debit * 100
-        if per_contract > _ceiling:
-            raise ValueError(f"{sym}: HARD ceiling — 1 contract ${per_contract:.0f} "
+        # CR-1: size + ceiling on the GROSS long-leg outlay (`atm_mid`), NOT the net
+        # debit. The BTO market order pays the FULL long premium up front; sizing off
+        # net_debit let a debit spread's long leg deploy MULTIPLES of the ceiling
+        # (e.g. net $1 / long $5 → qty 6 → $3,000 long outlay vs a $600 cap). net_debit
+        # still defines max-loss (risk). For a naked long atm_mid == net_debit (no change).
+        long_outlay = atm_mid * 100
+        if long_outlay > _ceiling:
+            raise ValueError(f"{sym}: HARD ceiling — 1 long contract ${long_outlay:.0f} "
                              f"> ${_ceiling:.0f} (can't fit even one; bad quote or too pricey)")
         # ── Equal-dollar sizing (operator 2026-06-04) ───────────────────────────
-        # Buy as many contracts as fit the ${_ceiling} cap so every option position
-        # deploys ~equal capital ("if we are not positioning equal we lose money").
-        # qty≥1 guaranteed (per_contract ≤ ceiling above); total ≤ ceiling by floor.
-        qty        = max(1, int(_ceiling // per_contract))
-        total_cost = per_contract * qty
+        # As many contracts as fit the ${_ceiling} cap on the LONG outlay → ~equal
+        # capital per position AND the cap can't be defeated by a wide spread.
+        qty        = max(1, int(_ceiling // long_outlay))
+        total_cost = long_outlay * qty             # long-leg capital deployed (≤ ceiling)
+        total_risk = net_debit * 100 * qty         # max loss = net debit × qty
         result["qty"]        = qty
         result["total_cost"] = round(total_cost, 2)
-        if total_cost > max_risk:
+        result["total_risk"] = round(total_risk, 2)
+        if total_risk > max_risk:
             if _enforce_max_risk():
-                raise ValueError(f"{sym}: KB §4 Risk — ${total_cost:.0f} ({qty}×${per_contract:.0f}) "
+                raise ValueError(f"{sym}: KB §4 Risk — ${total_risk:.0f} ({qty}×${net_debit*100:.0f}) "
                                  f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
             if not dry_run:                # audit ONLY real orders
                 _log_kb_relaxed(sym, "§4 max-risk",
-                                f"${total_cost:.0f} ({qty}×${per_contract:.0f}) > ${max_risk:.0f} soft cap (relaxed)")
+                                f"${total_risk:.0f} ({qty}×${net_debit*100:.0f}) > ${max_risk:.0f} soft cap (relaxed)")
 
         # ── 5. Dry run ───────────────────────────────────────────────────────
         if dry_run:

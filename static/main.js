@@ -2437,8 +2437,11 @@ function _renderDtTable(rows) {
 
   // Sort by KB match desc (operator 2026-06-04). Previously [...valid, ...neutral],
   // which overrode the server's KB-match ordering — that's why stocks weren't sorted.
-  const all = [...rows].sort((a, b) => (b.kb_match || 0) - (a.kb_match || 0)).slice(0, 15);
-  window._scrDtRows = all;   // for the per-row Execute button
+  const sorted = [...rows].sort((a, b) => (b.kb_match || 0) - (a.kb_match || 0));
+  const all = sorted.slice(0, 15);
+  // CR-3: keep the FULL sorted list (not the 15-slice) so _execPick can map a Picks-tab
+  // row ranked >15 back to its execution row; the 15 rendered buttons index the same prefix.
+  window._scrDtRows = sorted;
 
   // Update tab count badge
   const countEl = document.getElementById("scr-stocks-count");
@@ -2637,7 +2640,9 @@ function _renderOptTable(rows) {
   }).join("");
 
   // Store rows for execute function to reference
-  window._scrOptRows = display;
+  // CR-3: store the FULL rows (not the 15-slice) so _execPick maps picks ranked >15.
+  // The 15 rendered Execute buttons index the same prefix, so their indices stay valid.
+  window._scrOptRows = rows;
 }
 
 // ── Merged Picks renderer (MERGED_PICKS_ENABLED) — one KB-ranked list ─────────

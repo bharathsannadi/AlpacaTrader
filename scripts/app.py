@@ -2321,10 +2321,22 @@ def _build_picks(data: dict, positions: list, vix: float | None = None) -> list:
         if s and s not in stk_by:
             stk_by[s] = r
 
+    # Equity for routing/sizing. Read the CHEAP state snapshot FIRST (CR-4 — avoids a
+    # blocking account_value() network call on the refresh greenlet that can wedge the
+    # eventlet hub); fall back to a live read only if the snapshot is empty; route
+    # display-only (rb=None) only when BOTH are 0 so a transient read can't silently
+    # halt all auto-exec (CR-2).
+    equity = 0.0
     try:
-        equity = float(trader.account_value() or 0.0)
+        with _state_lock:
+            equity = float(state.get("account_value") or 0.0)
     except Exception:
         equity = 0.0
+    if equity <= 0:
+        try:
+            equity = float(trader.account_value() or 0.0)
+        except Exception:
+            equity = 0.0
     rb = RiskBrain(total_equity=equity) if equity > 0 else None
 
     picks = []
