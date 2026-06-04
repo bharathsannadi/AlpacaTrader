@@ -1071,3 +1071,15 @@ All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
 | **OB-3** | **Metrics + equity curve** — per-strategy P&L/win/fills-vs-signals/latency; persist equity curve (≥5 EOD pts) + chart | Checklist §2 needs it; no real performance view | ⬜ |
 | **OB-4** | **State↔broker reconciliation** — periodic check internal positions == Alpaca account; alert on drift | Catches the phantom-position class (checklist §6) | ⬜ |
 | **OB-5** | **Health history** — aggregate wedges/restarts/watchdog-kills over time (not just point-in-time /health) | Reliability trend visibility | ⬜ |
+
+### 🔴 Code-review findings (2026-06-04, merged-picks/sizing diff)
+
+| ID | Finding | File | Status |
+|----|---------|------|--------|
+| **CR-1** | **🔴 Spread sizing defeats the $600 cap** — `qty = ceiling // net_debit` but the BTO pays the FULL long premium, so a debit spread's long leg can deploy multiples of $600 (e.g. net $1, long $5 → qty 6 → $3,000 long outlay). Ceiling check only validates net per-contract. Cap qty on the long-leg gross, or size by long premium. | `screener_executor.py:~539` | ⬜ |
+| **CR-2** | **🟠 Transient equity=0 silently disables ALL auto-exec** — `_build_picks` sets `rb=None` when `account_value()` returns 0 (API hiccup / client None) → every pick routes "skip" → zero trades, no error. Fall back to last-known equity or the legacy lists. | `app.py:_build_picks` | ⬜ |
+| **CR-3** | **🟠 `_execPick` false "not executable"** — picks table renders 20 rows but `_scrOptRows`/`_scrDtRows` are sliced to 15; a pick ranked 16–20 → `findIndex` -1 → misleading toast on a valid BUY. Dispatch by the pick's own sym/payload, not an index into a truncated array. | `static/main.js:_execPick` | ⬜ |
+| **CR-4** | **🟠 Refresh path blocks the hub + double work** — `account_value()` network read + fresh `RiskBrain` + route every symbol on every refresh AND on cached tab-open; plus `_annotate_kb` runs twice (re-scores stocks needlessly). Read equity from `state` snapshot; re-score only option rows after liquidity. | `app.py:_refresh_screener_bg` | ⬜ |
+| **CR-5** | **🟡 Duplicated IVR parser** — `router._ivr_num` is byte-identical to `kb_principles._parse_ivr`. Import the shared one. | `router.py` / `kb_principles.py` | ⬜ |
+| **CR-6** | **🟡 Sizing fragmented** — equal-dollar sizing added in `screener_executor` (options) + `app._stock_qty_for` (stocks) while `risk_brain` still fixed-10; router sizes via RiskBrain but executor sizes differently → routing vs fill disagree. One `size_position()` (ties to AH-2). | multiple | ⬜ |
+| **CR-7** | **🟡 `has_vol_edge=bool(o)` shallow proxy** — any symbol with an option row is treated as a vol-edge → can misroute to options. Emit an explicit edge flag on the option row (ties to AH-1 IVR feed). | `router.py:route_for_pick` | ⬜ |

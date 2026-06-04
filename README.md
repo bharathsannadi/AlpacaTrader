@@ -89,6 +89,13 @@ Open **[http://localhost:5000](http://localhost:5000)** in your browser.
 
 The server binds to `127.0.0.1` (localhost only) — it is not reachable from other machines by default. Two log files are written to the project root: `auto_trader.log` and `security.log`.
 
+**Charts-only server (port 5001):** a decoupled, login-free charts server runs
+separately at **[http://localhost:5001/charts](http://localhost:5001/charts)**
+(`scripts/charts_server.py`, yfinance data, no Alpaca login). Start it directly
+with `python scripts/charts_server.py`, or let launchd manage it (see
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)). The main app uses **:5000**, the
+charts server uses **:5001**.
+
 ---
 
 ## First login
@@ -139,7 +146,9 @@ All settings are adjustable from the dashboard UI without restarting the server.
 
 | Feature | Details |
 |---------|---------|
-| **Tab-based UI** | ⚙ Settings (default) · SPY/AMZN/GOOG/MSFT/NVDA/META (full-screen charts) · 📊 Backtest · 📋 Log |
+| **Merged KB-driven picks** (NEW 2026-06-04) | "Shown == traded." The screener is ONE KB-ranked pick list (`data["picks"]`, built by `app._build_picks`, flag `MERGED_PICKS_ENABLED = True`) that drives BOTH the UI display and both auto-exec lanes. Each symbol is ROUTED to stock OR option (`router.route_for_pick`, KB §5/§2) and trades once via its route. Ranking is by KB-match descending. New **⭐ Picks** tab (primary), legacy Stocks/Options tabs kept. Flip the flag to `False` for the old two-list behavior. |
+| **Equal-dollar sizing** (NEW 2026-06-04) | Options are sized to as many contracts as fit ~$600 (`qty = OPT_HARD_MAX_USD // per_contract_cost` in `execute_screener_option`); stocks to ~$5000/position (`app._stock_qty_for`, `STOCK_TARGET_USD = 5000`). Supersedes fixed-10-shares / fixed-1-contract. |
+| **Tab-based UI** | ⚙ Settings (default) · ⭐ Picks (primary) · Stocks / Options · SPY/AMZN/GOOG/MSFT/NVDA/META (full-screen charts) · 📊 Backtest · 📋 Log (closed trades now appear here as `CLOSED` / `OPTION EXIT` lines — the old Notes/Closed-Trades panel is retired) |
 | **All-day session** | 9:30–15:45 ET — ORB breakout + Gap fade + VWAP momentum + trend continuation + mean reversion |
 | **Auto-scheduler** | All 6 symbols fire at market open. Retries any symbol not currently running on every poll. |
 | **Indicators** | VWAP, EMA 9/21/200, RSI, MACD, Bollinger Bands, ATR |
@@ -151,6 +160,8 @@ All settings are adjustable from the dashboard UI without restarting the server.
 | **Bull/Bear debate** | Three Claude Haiku calls (bull → bear → judge) gate each signal. 28-book knowledge base injected into prompts. Singleton client avoids file-descriptor exhaustion. |
 | **Position persistence** | `_open_positions` persisted to `~/.spy_trader/open_positions.json` on every mutation. Two-way Alpaca reconcile on restart (adds orphans, removes stale). Manual `⟳ Sync Positions` button for on-demand resync. |
 | **Backtest panel** | Interactive backtest UI: pick symbols + lookback (7-180d) → run + view edge metrics |
+| **Option exit ladder** | Live option exits: +80% TP / −50% SL / 90-min stall time-stop (`screener_executor.OPT_TAKE_PROFIT_PCT` / `OPT_STOP_LOSS_PCT` / `OPT_STALL_MINUTES`, applied in `_manage_option_positions`). Optional dynamic stop (breakeven+trail via exit_engine) behind `OPT_DYNAMIC_EXIT_ENABLED` (default OFF). |
+| **§9 liquidity ranking** | `kb_principles.score_option_candidate` hard-floors a confirmed-illiquid contract below the 60% KB gate (one-sided gate) so illiquid picks never rank or show as a top BUY. |
 | **Native macOS app** | `SPY Auto Trader.app` bundle with gradient bar-chart icon. Install to `/Applications`. |
 | **Paper / Live toggle** | Defaults to Alpaca paper trading |
 | **Emergency flatten-all** | One-click confirmation modal closes every open position immediately |
@@ -165,26 +176,34 @@ CLAUDE.md              Claude Code agent guidance — read this first if editing
 .env.example           Documented credential template (copy to .env, chmod 600)
 
 scripts/
-  app.py               Flask + SocketIO server, state, auto-scheduler, _auto_login
+  app.py               Flask + SocketIO server, state, _build_picks, _auto_login
   spy_auto_trader.py   Trading logic, Alpaca API calls, indicator stack
   daily_trader.py      Connors RSI(2) daily-bar strategy
   screener_engine.py   Multi-strategy live screener
-  screener_executor.py Options order placement (manual + auto-execute)
+  screener_executor.py Options order placement + caps/exit constants (manual + auto)
+  router.py            KB §5/§2 stock-vs-option route_for_pick
+  risk_brain.py        Sleeves / caps / sizing (OPT_PER_TRADE_MAX_USD, OPT_WEEK_MAX_USD)
+  kb_principles.py     KB scoring + §9 liquidity floor + calibrate() seam
+  charts_server.py     Standalone charts-only server, port 5001 (yfinance, no login)
+  watchdog.sh          Health-check watchdog — monitors :5000 AND :5001
+  poly_keepalive.sh    Polygon 5yr archival keep-alive loop (→ poly_watchdog.sh)
   security.py          Login lockout, input validators, security headers
   news_filter.py       Finnhub / yfinance headline scan → veto flag
   trade_memory.py      ChromaDB trade memory with custom numpy embedder
   debate.py            Bull/Bear LLM debate layer (Claude Haiku)
 
-templates/index.html   Dashboard UI (single template)
-static/main.js         Chart, screener, backtest, approval modal
+templates/index.html   Dashboard UI (single template; ⭐ Picks tab)
+static/main.js         Chart, screener, picks, backtest, approval modal
 
 docs/
   README.md            Index of operational docs
-  DEPLOYMENT.md        First-time setup, launchd install
-  AUTO_EXECUTE.md      Headless options auto-execution + safety rails
+  DEPLOYMENT.md        First-time setup, the 5 launchd agents, ports 5000/5001
+  AUTO_EXECUTE.md      Merged picks, caps, equal-dollar sizing, safety rails
   RUNBOOK.md           Daily ops, troubleshooting, "why isn't it trading?"
 
-deploy/launchd/        launchd plist templates (under version control)
+deploy/launchd/        launchd plist templates, under version control — 5 agents:
+                       com.alpacatrader (app :5000), .charts (:5001), .caffeinate,
+                       .polygon, and com.spy_auto_trader.watchdog
 
 data/                  Runtime state (gitignored) — auto_exec_state.json etc.
 ```
@@ -197,11 +216,19 @@ The server can now auto-start at machine boot and trade options without any
 browser interaction:
 
 1. `_auto_login` reads `ALPACA_AUTO_*` from `.env` and connects to Alpaca on startup
-2. The screener auto-refreshes every 90s during market hours
-3. If **⬛ Auto-Execute** is armed (button in screener topbar), ✅ BUY rows
-   are auto-placed via `screener_executor`, respecting:
-   - $400 max per trade
-   - 3 orders per day cap
+2. The screener auto-refreshes every 90s during market hours and rebuilds the
+   merged KB-ranked pick list (`_build_picks`)
+3. If **Auto-Execute** is armed (Settings → Automation), the merged picks are
+   auto-placed via their route (stock or option) through `screener_executor`,
+   respecting (all reconciled to "same as paper" 2026-06-04):
+   - Options: **$600** HARD ceiling per trade for ALL options *including ETFs*
+     (`screener_executor.OPT_HARD_MAX_USD` / `OPT_HARD_MAX_USD_ETF`); sized to
+     as many contracts as fit ~$600 (equal-dollar)
+   - Stocks: sized to ~**$5000**/position (`STOCK_TARGET_USD`)
+   - **5** orders per day cap (`MAX_AUTO_EXEC_PER_DAY`)
+   - **5** concurrent option positions (`OPT_MAX_OPEN`)
+   - Rolling-week **$3000** options cap / per-trade **$600**
+     (`risk_brain.OPT_WEEK_MAX_USD` / `OPT_PER_TRADE_MAX_USD`)
    - One execution per symbol per day (persisted across restarts)
    - 2% daily loss circuit breaker (auto-disarms on breach)
    - Naked-leg rollback if a debit-spread STO fails
