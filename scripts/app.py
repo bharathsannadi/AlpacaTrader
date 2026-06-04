@@ -2180,11 +2180,15 @@ MERGED_PICKS_ENABLED = True   # enabled 2026-06-04 (operator). Invariant: merged
 _PICK_ETF_SYMS = set(ETFS_TRADE) | set(ETFS_HEDGE)   # for the instrument-priority tiebreak
 
 
-def _annotate_kb(data: dict) -> None:
+def _annotate_kb(data: dict, options_only: bool = False) -> None:
     """Attach a KB-principles match score to every screener row (in place).
 
     Adds row['kb_match'] (0-100%) + row['kb_principles'] {matched,failed} so the
     UI can show a Confidence % column and the executor can gate on KB alignment.
+
+    options_only=True (CR-4): the post-liquidity re-score only needs to revisit OPTION
+    rows (liquidity affects only option scores); skipping the unchanged stock rows
+    avoids re-scoring them twice every refresh.
     """
     try:
         with _state_lock:
@@ -2203,6 +2207,8 @@ def _annotate_kb(data: dict) -> None:
                 o["kb100_upgrade"] = True
         except Exception:
             o["kb_match"] = None
+    if options_only:
+        return
     for r in data.get("dt", []):
         try:
             sc = kb_principles.score_stock_candidate(r, vix=vix)
@@ -2938,7 +2944,7 @@ def _refresh_screener_bg():
         data = screener.refresh_screener(positions)
         _annotate_kb(data)
         _annotate_liquidity(data)
-        _annotate_kb(data)           # re-score so kb_match reflects §9 liquidity (rank-liquidity-gate)
+        _annotate_kb(data, options_only=True)   # re-score options for §9 liquidity (rank-liquidity-gate; CR-4)
         _annotate_held_exits(data, positions)
         _sort_screener_by_kb(data)
         if MERGED_PICKS_ENABLED:
@@ -2972,7 +2978,7 @@ def on_get_screener(data=None):
     if cached.get("dt"):
         _annotate_kb(cached)
         _annotate_liquidity(cached)
-        _annotate_kb(cached)         # re-score for §9 liquidity (rank-liquidity-gate)
+        _annotate_kb(cached, options_only=True)   # re-score options for §9 liquidity (CR-4)
         _cpos = []
         try:
             _cpos = dtrad._load_positions()
