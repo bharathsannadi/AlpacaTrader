@@ -74,8 +74,8 @@ OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss SOFT cap
 OPT_HARD_MAX_USD     = 600.0   # operator 2026-06-02: HARD ceiling — max $600 per
                                # option trade, ALWAYS enforced even in relaxed mode
                                # (stops a garbage quote, e.g. the $11k MU glitch).
-OPT_HARD_MAX_USD_ETF = 1500.0  # ETFs get a higher ceiling (operator) — liquid index
-                               # options (SPY/QQQ ATM) legitimately cost > $600.
+OPT_HARD_MAX_USD_ETF = 600.0   # operator 2026-06-04: ETFs capped at $600 too (was
+                               # $1500) — "limit all options to 600 even for ETFs".
 try:
     from universe import ETFS_TRADE as _ETFS_T, ETFS_HEDGE as _ETFS_H
     _ETF_SET = set(_ETFS_T) | set(_ETFS_H)
@@ -84,7 +84,14 @@ except Exception:
 OPT_TAKE_PROFIT_PCT  = 0.80    # KB §24 / _position_exit_plan: take +80% of premium
 OPT_STOP_LOSS_PCT    = 0.50    # KB §9: stop at 50% of premium paid
 OPT_STALL_MINUTES    = 90      # time-stop: close a green-but-stalled option after N min
-OPT_MAX_OPEN         = 3       # max concurrent option positions (by underlying)
+OPT_MAX_OPEN         = 5       # max concurrent option positions (operator 2026-06-04: 3→5)
+# REQ-608: apply exit_engine's breakeven+trail ladder to the option STOP side
+# (KB §XM-4 "move stop to breakeven once green"). Default OFF — when off the stop
+# is the flat -OPT_STOP_LOSS_PCT. When on, the stop starts at -50% then ratchets
+# UP (breakeven at +5%, lock +10% at +20%, trail 30% off the high-water mark) so a
+# winner can't round-trip to the flat stop. The +80% TP and 90-min stall are
+# unchanged. Gated per CLAUDE.md trading safety rails.
+OPT_DYNAMIC_EXIT_ENABLED = False
 _KB_RELAXED_LOG = os.path.expanduser("~/.spy_trader/kb_relaxed.jsonl")
 
 # ── Operator directive 2026-06-03: LIVE NEVER RELAXES A KB ─────────────────────
@@ -529,24 +536,33 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # single mispriced/garbage contract can't blow a huge position (the MU
         # $11k glitch). This is NOT relaxable.
         _ceiling = OPT_HARD_MAX_USD_ETF if sym.upper() in _ETF_SET else OPT_HARD_MAX_USD
-        if net_debit * 100 > _ceiling:
-            raise ValueError(f"{sym}: HARD ceiling — debit ${net_debit*100:.0f} "
-                             f"> ${_ceiling:.0f} (sanity guard; likely a bad quote)")
-        if net_debit * 100 > max_risk:
+        per_contract = net_debit * 100
+        if per_contract > _ceiling:
+            raise ValueError(f"{sym}: HARD ceiling — 1 contract ${per_contract:.0f} "
+                             f"> ${_ceiling:.0f} (can't fit even one; bad quote or too pricey)")
+        # ── Equal-dollar sizing (operator 2026-06-04) ───────────────────────────
+        # Buy as many contracts as fit the ${_ceiling} cap so every option position
+        # deploys ~equal capital ("if we are not positioning equal we lose money").
+        # qty≥1 guaranteed (per_contract ≤ ceiling above); total ≤ ceiling by floor.
+        qty        = max(1, int(_ceiling // per_contract))
+        total_cost = per_contract * qty
+        result["qty"]        = qty
+        result["total_cost"] = round(total_cost, 2)
+        if total_cost > max_risk:
             if _enforce_max_risk():
-                raise ValueError(f"{sym}: KB §4 Risk — debit ${net_debit*100:.0f} "
+                raise ValueError(f"{sym}: KB §4 Risk — ${total_cost:.0f} ({qty}×${per_contract:.0f}) "
                                  f"> ${max_risk:.0f} max-risk (½-Kelly per-trade budget)")
             if not dry_run:                # audit ONLY real orders
                 _log_kb_relaxed(sym, "§4 max-risk",
-                                f"debit ${net_debit*100:.0f} > ${max_risk:.0f} soft cap (relaxed)")
+                                f"${total_cost:.0f} ({qty}×${per_contract:.0f}) > ${max_risk:.0f} soft cap (relaxed)")
 
         # ── 5. Dry run ───────────────────────────────────────────────────────
         if dry_run:
-            msg = (f"[DRY RUN] BTO 1 {atm_occ}  "
+            msg = (f"[DRY RUN] BTO {qty} {atm_occ}  "
                    f"strike=${atm_strike:.2f}  est=${net_debit:.2f}/contract  "
-                   f"structure={structure}")
+                   f"total=${total_cost:.0f}  structure={structure}")
             if short_occ:
-                msg += f"  /  STO 1 {short_occ}  strike=${short_strike:.2f}"
+                msg += f"  /  STO {qty} {short_occ}  strike=${short_strike:.2f}"
             result.update({
                 "success": True, "message": msg, "paper": True,
                 "long_order_id": "dry_run",
@@ -572,10 +588,10 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # (you pay the ask). Otherwise a limit slightly above mid.
         _use_mkt = _market_orders()    # paper-only; live forces limit-order discipline
         if _use_mkt:
-            req = MarketOrderRequest(symbol=atm_occ, qty=1, side=OrderSide.BUY,
+            req = MarketOrderRequest(symbol=atm_occ, qty=qty, side=OrderSide.BUY,
                                      time_in_force=TimeInForce.DAY)
         else:
-            req = LimitOrderRequest(symbol=atm_occ, qty=1, side=OrderSide.BUY,
+            req = LimitOrderRequest(symbol=atm_occ, qty=qty, side=OrderSide.BUY,
                                     time_in_force=TimeInForce.DAY, limit_price=long_limit)
         order         = tc.submit_order(req)
         long_order_id = str(order.id)
@@ -611,10 +627,10 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                                        live_short_mid * 0.90, 0.01), 2)
             try:
                 if _use_mkt:
-                    req = MarketOrderRequest(symbol=short_occ, qty=1, side=OrderSide.SELL,
+                    req = MarketOrderRequest(symbol=short_occ, qty=qty, side=OrderSide.SELL,
                                              time_in_force=TimeInForce.DAY)
                 else:
-                    req = LimitOrderRequest(symbol=short_occ, qty=1, side=OrderSide.SELL,
+                    req = LimitOrderRequest(symbol=short_occ, qty=qty, side=OrderSide.SELL,
                                             time_in_force=TimeInForce.DAY, limit_price=short_limit)
                 order          = tc.submit_order(req)
                 short_order_id = str(order.id)
@@ -652,10 +668,11 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                         log.info(f"  rollback: cancelled unfilled BTO {long_order_id}")
                         rolled_back = True
                     elif "filled" in long_status:
-                        # Already filled — flatten with a market sell
+                        # Already filled — flatten the ACTUAL filled qty with a market sell
                         from alpaca.trading.requests import MarketOrderRequest
+                        _flat_qty = int(result.get("long_filled_qty") or qty)
                         req_flat = MarketOrderRequest(
-                            symbol=atm_occ, qty=1,
+                            symbol=atm_occ, qty=max(1, _flat_qty),
                             side=OrderSide.SELL,
                             time_in_force=TimeInForce.DAY,
                         )

@@ -51,3 +51,36 @@ def test_dte_parsing_and_unknown_fields_safe():
     # missing everything should not raise, just score low
     sc = kb.score_option_candidate({}, vix=None)
     assert 0 <= sc["pct"] <= 100
+
+
+# ── rank-liquidity-gate: §9 liquidity must affect the score/rank ──────────────
+_LIQ_BASE = {"dir_pct": 66.4, "pf": 1.32, "ivr": "IVR 22",
+             "expiry": "2099-01-15", "structure": "ATM Call", "max_risk": 400}
+
+
+def test_liquid_option_score_unchanged():
+    # liquidity is a one-sided gate: being liquid is the baseline and must NOT
+    # boost the score (otherwise a borderline name jumps the 60 gate → more trades).
+    no_liq = kb.score_option_candidate(dict(_LIQ_BASE), vix=18)
+    liquid = kb.score_option_candidate({**_LIQ_BASE, "liquidity": {"ok": True}}, vix=18)
+    assert liquid["pct"] == no_liq["pct"]
+
+
+def test_illiquid_option_forced_below_floor():
+    # an otherwise-perfect contract must be disqualified (below 60) when illiquid,
+    # so it can never rank/show as a top BUY (the hard-floor, not just -3 weight).
+    sc = kb.score_option_candidate(
+        {**_LIQ_BASE, "liquidity": {"ok": False, "reason": "OI 12 < 200"}}, vix=18)
+    assert sc["pct"] < kb.KB_MATCH_MIN
+    assert any("liquidity FAIL" in f for f in sc["failed"])
+
+
+def test_unknown_liquidity_is_fail_open():
+    no_liq = kb.score_option_candidate(dict(_LIQ_BASE), vix=18)
+    unknown = kb.score_option_candidate({**_LIQ_BASE, "liquidity": {"ok": None}}, vix=18)
+    assert unknown["pct"] == no_liq["pct"]     # not checked yet → no effect
+
+
+def test_calibrate_is_identity_today():
+    assert kb.calibrate(73) == 73
+    assert kb.calibrate(73, ivr=40, win_prob=0.6) == 73

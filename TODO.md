@@ -1044,3 +1044,30 @@ All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
 | **KB-9** | **Prefer DTE ≥ 21 (optimal window 21–28)** | §25 | ✅ Done 2026-05-23 — `_get_option_context()`: prefer ≥21 DTE, graceful fallback |
 | **KB-10** | **After VIX spike > 5 pts/day → spreads only** | Appendix | ✅ Done 2026-05-23 — `_fetch_vix()` tracks prev-day; `vix_spike` flag forces spread in `_get_option_context()` |
 | **KB-11** | **OI threshold: code uses 200 vs KB Appendix 500** | §9, Appendix | ✅ Done 2026-05-23 — documented in `OPT_MIN_OI` constant comment as intentional relaxation for single-names |
+
+---
+
+## Architecture & Observability Hardening (grade B+/B → A−) — start EOD 2026-06-04
+
+> Goal: remove recurring production fragility + duplication. **80/20 = AH-1 + AH-2.**
+
+### 🔴 Architecture
+
+| ID | Item | Why | Status |
+|----|------|-----|--------|
+| **AH-1** | **Stop blocking the eventlet hub** — (a) thread-pool + hard timeout around every yfinance/Alpaca call; (b) migrate eventlet→ASGI/gevent | A sync call wedges the whole process (price_ticker dead ~5.6h, login 21s); watchdog only papers over it | ⬜ |
+| **AH-2** | **Single source of truth for caps & sizing** — `config.py`/`RiskConfig` dataclass + one `size_position()` used by every path | Caps scattered/inconsistent ($600 screener, $600 risk_brain, $400 daily, fixed-10 vs $5000); changing one cap = 3 files | ⬜ |
+| **AH-3** | **Kill the duplicate autonomous engine** — decommission `auto_engine` options path (merged-picks is live) | Two autonomous paths, one disabled = confusion | ⬜ |
+| **AH-4** | **Runnable tests + CI** — commit requirements-dev, `make test`, CI/pre-push hook | ~163 tests exist but pytest not installed; changes hand-verified | ⬜ |
+| **AH-5** | **Break up monoliths** — split `app.py` (~3k lines) into screener_pipeline/auto_exec/exit_manager; modularize `main.js` | Low cohesion, hard to navigate | ⬜ |
+| **AH-6** | **Unify exit logic** — `exit_engine` as the single exit authority; retire flat +80/−50 dup in `_manage_option_positions` | Two exit implementations for one job | ⬜ |
+
+### 🟠 Observability
+
+| ID | Item | Why | Status |
+|----|------|-----|--------|
+| **OB-1** | **Slippage / fill-quality tracking** — log model price vs actual fill per trade; slippage bps per strategy | THE edge thesis ("does it survive real fills") is unanswerable without it | ⬜ |
+| **OB-2** | **Alerting** — wire + TEST ERROR webhook + push on breaker trip / watchdog kill / failed fill / gate-spike / drawdown | Failures are currently silent until you look | ⬜ |
+| **OB-3** | **Metrics + equity curve** — per-strategy P&L/win/fills-vs-signals/latency; persist equity curve (≥5 EOD pts) + chart | Checklist §2 needs it; no real performance view | ⬜ |
+| **OB-4** | **State↔broker reconciliation** — periodic check internal positions == Alpaca account; alert on drift | Catches the phantom-position class (checklist §6) | ⬜ |
+| **OB-5** | **Health history** — aggregate wedges/restarts/watchdog-kills over time (not just point-in-time /health) | Reliability trend visibility | ⬜ |

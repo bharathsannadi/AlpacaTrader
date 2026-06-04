@@ -92,8 +92,22 @@ def score_option_candidate(row: dict, vix: float | None = None) -> dict:
     if vix is not None:
         checks.append((1.0, vix < 30,
                        f"VIX {vix:.1f} < 30 entry gate (§ appendix)"))
+    # §9 liquidity — ONE-SIDED gate (rank-liquidity-gate TODO): a confirmed-illiquid
+    # contract is disqualified (can't fill), but being liquid is the expected baseline
+    # and must NOT *boost* a borderline score above the 60 gate. `row["liquidity"]` is
+    # set by app._annotate_liquidity; ok False = illiquid, ok True / None = no change.
+    liq = row.get("liquidity") or {}
+    disqualified = liq.get("ok") is False
+    if disqualified:
+        checks.append((3.0, False,
+                       f"§9 liquidity FAIL — {liq.get('reason', 'illiquid')} (won't fill)"))
 
-    return _tally(checks)
+    sc = _tally(checks)
+    if disqualified:
+        # Hard-floor below the gate so a confirmed-illiquid contract can NEVER rank
+        # or show as a top BUY, regardless of its other merits (rank-liquidity-gate).
+        sc["pct"] = min(sc["pct"], KB_MATCH_MIN - 1)
+    return sc
 
 
 def score_stock_candidate(row: dict, vix: float | None = None) -> dict:
@@ -151,6 +165,16 @@ def score_signal(strat_pf: float | None, strength: float, asset_class: str,
     else:
         checks.append((1.0, asset_class in ("stock", "etf"), "tradable equity/ETF (§14)"))
     return _tally(checks)
+
+
+def calibrate(pct: int, ivr: float | None = None, win_prob: float | None = None) -> int:
+    """Seam for turning the raw KB-match weighted-rule % into a CALIBRATED confidence
+    (confidence-calibration TODO). Identity today — a no-op so ranking/gating is
+    unchanged until a live IVR / historical win-probability feed is validated (today
+    IVR is an HV proxy, screener_engine.py). When that lands, blend `pct` with the
+    empirical win rate for the setup at this IVR here, in ONE place, so both the
+    displayed % and the gate use the same calibrated number."""
+    return int(pct)
 
 
 def _tally(checks: list[tuple[float, bool, str]]) -> dict:

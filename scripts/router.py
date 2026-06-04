@@ -110,6 +110,42 @@ def route_signal(sig: Signal, rb: RiskBrain,
     return RouteDecision("options", structure, why, opt_cost, opt_risk, 1)
 
 
+def _ivr_num(raw) -> Optional[float]:
+    """Numeric IVR from '22', 22, 'IVR 22', '—', None."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    digits = "".join(c for c in str(raw) if (c.isdigit() or c == "."))
+    return float(digits) if digits else None
+
+
+def route_for_pick(stock_row: Optional[dict], option_row: Optional[dict],
+                   rb: RiskBrain, vix: Optional[float] = None,
+                   spreads_enabled: bool = SPREADS_ENABLED) -> RouteDecision:
+    """Route ONE merged screener pick (its stock and/or option row) to an instrument
+    by reusing route_signal. `has_vol_edge` is approximated by the PRESENCE of a
+    screener-built option row for the symbol — the option-build path already screened
+    for an IVR/structure edge — and the §5/§2 + affordability + spreads-disabled rules
+    in route_signal then decide shares vs option. Pure: places no orders.
+
+    (instrument-priority TODO: stock-vs-ETF *preference* is a ranking tiebreak applied
+    by the caller; this function only decides the instrument vehicle.)"""
+    s = stock_row or {}
+    o = option_row or {}
+    sym = str(o.get("sym") or s.get("sym") or "?").upper()
+    direction = o.get("direction") if o.get("direction") in ("bull", "bear") else "bull"
+    price = float(s.get("price") or o.get("spot") or 0) or 0.0
+    atr   = float(s.get("atr") or s.get("atr14") or 0) or 0.0
+    strat = (o.get("strategy") or s.get("strategy")
+             or o.get("source") or s.get("setup") or "screener")
+    sig = Signal(sym, direction, str(strat), price=price, atr=atr,
+                 ivr=_ivr_num(o.get("ivr")),
+                 has_vol_edge=bool(o),     # an option candidate was built for this symbol
+                 asset_class=str(o.get("asset_class") or s.get("asset_class") or "stock"))
+    return route_signal(sig, rb, spreads_enabled=spreads_enabled)
+
+
 if __name__ == "__main__":
     rb = RiskBrain(total_equity=107_846)
     # directional-only → shares

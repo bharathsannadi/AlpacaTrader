@@ -349,3 +349,26 @@ always intervene (REQ-612.4).
 engine — it gets its OWN paper-execution path (places real PAPER orders, fake
 money) so the legacy dry-run paths are undisturbed. Multiple paper accounts let
 us A/B configs (e.g. regime-skip on vs off) under real fills simultaneously.
+
+---
+
+## 17. Two-step scale-out exit (KB §XM upgrade)
+
+| ID | Requirement | Rationale / source | Status |
+|----|-------------|--------------------|--------|
+| **REQ-614** | The exit engine shall support **scaling OUT** of a winner in pieces instead of all-or-nothing, so it stops clipping fat-tail winners while still banking "enough" | KB §XM (Elder Ch.53 + Schwab/OIC + Fontanills); operator profit-taking review 2026-06-04 | ⬜ (gated) |
+| REQ-614.1 | **Sizing prerequisite (the blocker)** — options must size at **≥ 2 contracts** (today hardcoded `qty=1` in `screener_executor.py`) and stocks at an **even lot** (today fixed 10, REQ-606), so a half exists to sell. Sizing stays inside the $500/trade + $1,500/week option caps (REQ-605) and the 6% monthly open-risk breaker (REQ-611) | you cannot halve a 1-lot | ⬜ |
+| REQ-614.2 | **T1 partial close** — at the first target (**+50% premium gain**, Fontanills; or +1 ATR for shares) close **half** the position unconditionally | KB §XM-3 "mandatory discipline, not optional" | ⬜ |
+| REQ-614.3 | **Breakeven the remainder** — after T1, move the runner's stop to breakeven → zero open risk → frees 6%-budget capacity. Already implemented by the **REQ-608 ladder** (now wired to live options via `OPT_DYNAMIC_EXIT_ENABLED`, default off) | KB §XM-4 | 🔄 (ladder exists) |
+| REQ-614.4 | **Trail the runner** — let the remaining half ride the +2/+3 ATR / 30%-trail ladder so a rare burst isn't clipped; stall-timer + 21-day cap remain the backstops | KB §XM-5; Covel §8 fat-tail | ⬜ |
+| REQ-614.5 | **Debit-spread variant** — use the Spread Close Hierarchy: T1 at +50% of debit, max-profit close at **75–85% of spread width**, −50% stop non-negotiable, forced close at **7 DTE** | KB spread-close-hierarchy (§24/§1) | ⬜ |
+| REQ-614.6 | **Gated rollout** — ship behind a feature flag (default off), honor `paper_mode`, and **A/B against the current single-shot exits on the Polygon backtest** before defaulting on (blocked: the Polygon pull currently stops after underlying #60 / UNH) | CLAUDE.md trading safety rails; KB §XM "propose as REQ, A/B first" | ⬜ |
+
+**Reading:** REQ-614 is the synthesis KB §XM flags — Covel "let the fat tail run"
++ Elder "bank enough", minus the all-or-nothing problem. The breakeven+trail half
+(REQ-614.3/.4) **already exists** as the REQ-608 ladder. The missing pieces are
+the **≥ 2-contract / even-lot sizing** (REQ-614.1 — the hard blocker; you can't
+scale out of a single contract, which is exactly why today's 1-lot DIA/SMCI/XLF
+positions are binary hold-or-close) and the **T1 partial-close** mechanic
+(REQ-614.2). Until sizing is ≥ 2, "exact trim size" is not executable. Gated and
+unvalidated until A/B'd on the backtest (REQ-614.6).

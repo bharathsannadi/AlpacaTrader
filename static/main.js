@@ -378,8 +378,7 @@ function updateUI(s) {
     set("ex-opt-tp", ec.opt_tp_pct);     set("ex-opt-sl", ec.opt_sl_pct);     set("ex-opt-stall", ec.opt_stall_min);
     set("ex-cap", ec.time_cap_days);
   }
-  // Notes / journal of closed trades
-  if (s.journal) renderJournal(s.journal);
+  // Notes panel retired 2026-06-04 — closed trades now appear in the Log.
 
   // Refresh exec brief when trade count changes
   const newCount = (s.trades_today || []).length;
@@ -2131,22 +2130,8 @@ function _exitSaved() {      // back to disabled "✓ Saved"
   if (b) { b.disabled = true; b.textContent = "✓ Saved"; b.style.opacity = ".45"; b.style.cursor = "not-allowed"; }
 }
 
-function renderJournal(items) {
-  const el = document.getElementById("journal-body");
-  if (!el) return;
-  if (!items || !items.length) {
-    el.innerHTML = `<span style="color:var(--muted)">No closed trades yet.</span>`;
-    return;
-  }
-  el.innerHTML = items.map(j => {
-    const up = (j.pnl_pct || 0) >= 0;
-    const cls = up ? "postab-pnl-up" : "postab-pnl-down";
-    const t = (j.ts || "").slice(11, 16);
-    return `<div>${up ? "▲" : "▼"} <b>${j.sym}</b> <span style="color:var(--muted)">${j.kind || ""}</span> ${j.reason || ""}
-      <span class="${cls}">${up ? "+" : ""}${(j.pnl_pct || 0).toFixed(1)}%</span>
-      <span style="color:var(--muted);font-size:9px">${t}</span></div>`;
-  }).join("");
-}
+// renderJournal removed 2026-06-04 — the Notes panel was retired; closed trades
+// are surfaced in the Log (auto-engine "CLOSED" / "OPTION EXIT" lines).
 
 function _posPnl(usd, pct) {
   if (usd == null) return "—";
@@ -2292,7 +2277,9 @@ function _renderPositionsTable() {
   if (acctOpts.length) {
     const byU = {};
     acctOpts.forEach(p => { (byU[p.sym] = byU[p.sym] || []).push(p); });
-    const groups = Object.entries(byU);
+    // Sort option groups by total P&L desc (operator) — matches the stocks table.
+    const _grpPnl = legs => legs.reduce((s, l) => s + (l.pnl_usd || 0), 0);
+    const groups = Object.entries(byU).sort((a, b) => _grpPnl(b[1]) - _grpPnl(a[1]));
     const oTot = acctOpts.reduce((s,p)=>s+(p.pnl_usd||0),0);
     const oDay = acctOpts.reduce((s,p)=>s+(p.day_pnl_usd||0),0);
     html += `<div class="pos-sec">
@@ -2389,7 +2376,7 @@ function _updateAutoExecBtn(armed, execToday) {
 
 // ── Inner screener tab switch ─────────────────────────────────────────────────
 function scrSwitchTab(tab) {
-  ["stocks", "options"].forEach(t => {
+  ["picks", "stocks", "options"].forEach(t => {
     const btn  = document.getElementById("scr-tab-" + t);
     const pane = document.getElementById("scr-pane-" + t);
     if (btn)  btn.classList.toggle("active",  t === tab);
@@ -2448,9 +2435,9 @@ function _renderDtTable(rows) {
   const tbody = document.getElementById("scr-dt-tbody");
   if (!tbody) return;
 
-  const valid   = rows.filter(r => r.valid);
-  const neutral = rows.filter(r => !r.valid);
-  const all     = [...valid, ...neutral].slice(0, 15);
+  // Sort by KB match desc (operator 2026-06-04). Previously [...valid, ...neutral],
+  // which overrode the server's KB-match ordering — that's why stocks weren't sorted.
+  const all = [...rows].sort((a, b) => (b.kb_match || 0) - (a.kb_match || 0)).slice(0, 15);
   window._scrDtRows = all;   // for the per-row Execute button
 
   // Update tab count badge
@@ -2653,6 +2640,57 @@ function _renderOptTable(rows) {
   window._scrOptRows = display;
 }
 
+// ── Merged Picks renderer (MERGED_PICKS_ENABLED) — one KB-ranked list ─────────
+// shown==traded. Each pick is routed to stock or option; ⚡ Buy dispatches to the
+// existing per-instrument executor by matching the underlying row by symbol.
+function _renderPicksTable(rows) {
+  const tbody = document.getElementById("scr-picks-tbody");
+  if (!tbody) return;
+  const all = (rows || []).slice(0, 20);
+  window._scrPickRows = all;
+  const countEl = document.getElementById("scr-picks-count");
+  if (countEl) countEl.textContent = all.length || "—";
+  if (!all.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">No picks yet…</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = all.map((p, i) => {
+    const routeChip = p.route === "options" ? _scrBadge("Ⓞ Option", "#a78bfa")
+                    : p.route === "stocks"  ? _scrBadge("🅢 Stock", "#38bdf8")
+                    : _scrBadge("skip", "#64748b");
+    const detail = p.structure || (p.route === "stocks" ? "shares" : "");
+    const edge = (p.dir_pct != null)
+      ? `${(+p.dir_pct).toFixed(0)}% · PF ${p.pf != null ? (+p.pf).toFixed(2) : "—"}` : "";
+    const canBuy = p.action === "✅ BUY" && p.route !== "skip" && !p.held;
+    const act = p.held ? _scrExitInline(p.exit_plan)
+      : (canBuy
+         ? `<button class="scr-exec-btn" onclick='event.stopPropagation(); _execPick(${i})' title="Route ${p.route} (paper)">⚡ Buy</button>`
+         : `<span style="color:var(--muted)">${(p.action || "").replace("✅ ", "")}</span>`);
+    return `<tr>
+      <td><b>${p.sym}</b><br><span style="font-size:9px;color:var(--muted)">${p.source || p.strategy || ""}</span></td>
+      <td>${routeChip}</td>
+      <td>${detail}</td>
+      ${_scrConfCell(p.kb_match, p.kb_principles)}
+      <td class="num">${edge}</td>
+      <td>${act}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ⚡ Buy on a pick → dispatch to the existing executor by route, matching by symbol.
+function _execPick(idx) {
+  const p = (window._scrPickRows || [])[idx];
+  if (!p) return;
+  if (p.route === "options") {
+    const oi = (window._scrOptRows || []).findIndex(o => (o.sym || "").toUpperCase() === p.sym);
+    if (oi >= 0) return _execScreenerOption(oi);
+  } else if (p.route === "stocks") {
+    const si = (window._scrDtRows || []).findIndex(r => (r.sym || "").toUpperCase() === p.sym);
+    if (si >= 0) return _execScreenerStock(si);
+  }
+  _scrToast(`${p.sym} not executable`, p.route_reason || "no route", "warn");
+}
+
 // ── SocketIO handlers ─────────────────────────────────────────────────────────
 socket.on("screener_data", function(data) {
   _scrLastTs = data.ts || (Date.now() / 1000);
@@ -2667,6 +2705,15 @@ socket.on("screener_data", function(data) {
 
   _renderDtTable(data.dt || []);
   _renderOptTable(data.options || []);
+  // Merged picks (MERGED_PICKS_ENABLED): show the unified tab and default to it.
+  const picksTab = document.getElementById("scr-tab-picks");
+  if (data.picks) {
+    _renderPicksTable(data.picks);
+    if (picksTab) picksTab.style.display = "";
+    if (!window._scrPicksShown) { scrSwitchTab("picks"); window._scrPicksShown = true; }
+  } else if (picksTab) {
+    picksTab.style.display = "none";   // flag off → hide, keep legacy tabs
+  }
   _scrStartClock();
 });
 
