@@ -333,6 +333,34 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
         return {"ok": None, "reason": f"liquidity check failed: {e}"}
 
 
+# OB-1 — slippage / fill-quality ledger. Records model mid vs actual fill per leg so we
+# can measure whether the edge survives REAL fills (the core go-live question). Append-only.
+_SLIPPAGE_PATH = os.path.expanduser("~/.spy_trader/slippage.jsonl")
+
+
+def _record_slippage(sym: str, leg: str, expected_mid, fill_price, qty, strategy: str = "") -> None:
+    """Append one model-vs-fill slippage record (bps). Never raises."""
+    try:
+        if not expected_mid or not fill_price or float(expected_mid) <= 0:
+            return
+        exp, fil = float(expected_mid), float(fill_price)
+        # long (buy): +bps = paid above mid (cost). short (sell): flip so +bps = cost too.
+        slip = (fil - exp) if leg == "long" else (exp - fil)
+        bps  = slip / exp * 10000
+        log.info(f"  SLIPPAGE {sym} {leg}: mid ${exp:.2f} → fill ${fil:.2f} ({bps:+.0f} bps cost)")
+        import json as _json
+        os.makedirs(os.path.dirname(_SLIPPAGE_PATH), exist_ok=True)
+        with open(_SLIPPAGE_PATH, "a") as fh:
+            fh.write(_json.dumps({
+                "ts": _time.strftime("%Y-%m-%dT%H:%M:%S"), "sym": sym, "leg": leg,
+                "expected": round(exp, 4), "fill": round(fil, 4),
+                "slip": round(slip, 4), "slip_bps": round(bps, 1),
+                "qty": qty, "strategy": strategy,
+            }) + "\n")
+    except Exception as e:
+        log.debug(f"slippage record failed: {e}")
+
+
 def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
     """
     Execute a screener options recommendation.
@@ -614,6 +642,8 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         result["long_fill_price"]    = long_fill["filled_avg_price"]
         log.info(f"  BTO fill: {long_fill['raw_status']}  qty={long_fill['filled_qty']}  "
                  f"avg=${long_fill['filled_avg_price'] or 0:.2f}")
+        _record_slippage(sym, "long", live_long_mid, long_fill["filled_avg_price"],
+                         long_fill["filled_qty"], strategy=structure)   # OB-1
 
         if long_fill["status"] == "rejected":
             # Order was rejected downstream — no position taken, no rollback
@@ -652,6 +682,8 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                 result["short_fill_price"]  = short_fill["filled_avg_price"]
                 log.info(f"  STO fill: {short_fill['raw_status']}  "
                          f"qty={short_fill['filled_qty']}")
+                _record_slippage(sym, "short", live_short_mid, short_fill["filled_avg_price"],
+                                 short_fill["filled_qty"], strategy=structure)   # OB-1
                 if short_fill["status"] == "rejected":
                     raise RuntimeError(
                         f"STO rejected downstream by Alpaca: {short_fill['raw_status']}"
