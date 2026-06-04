@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alpacatrader.caffeinate</string>
+
+  <!-- Keep the machine awake so the trading + charts servers and the
+       watchdog keep running. Without this the system idle-sleeps (pmset
+       sleep=1min) and stop-loss / position monitoring freezes.
+         -i  prevent idle system sleep (works on battery and AC)
+         -s  prevent system sleep when on AC power
+       caffeinate runs forever (no -t); KeepAlive restarts it if it dies. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>-s</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/alpacatrader.caffeinate.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/alpacatrader.caffeinate.log</string>
+</dict>
+</plist>

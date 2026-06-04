@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alpacatrader.polygon</string>
+
+  <!-- Polygon 5yr options archival pull (deadline 2026-06-16 subscription lapse).
+       Runs poly_watchdog.sh every 5 min: starts polygon_options.py --scope full
+       if not running, and kills+restarts it if the pull log stalls >15min.
+       The pull is resumable (skips already-archived underlyings), so this
+       survives Claude-terminal restarts, reboots, and crashes.
+       NOTE: after 2026-06-16 the subscription lapses — unload this agent then:
+         launchctl unload ~/Library/LaunchAgents/com.alpacatrader.polygon.plist -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/scripts/poly_keepalive.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader</string>
+
+  <!-- Long-running keep-alive loop: runs the stall/restart watchdog every 5 min.
+       RunAtLoad starts it at login/boot; KeepAlive restarts the loop if it dies. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- The watchdog nohup-spawns the long-running pull and then exits. Without
+       this, launchd reaps the script's whole process group on exit, killing
+       the pull. AbandonProcessGroup lets the detached pull keep running. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/poly_watchdog_agent.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/poly_watchdog_agent.err</string>
+</dict>
+</plist>

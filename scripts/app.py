@@ -301,6 +301,25 @@ security_log.addHandler(sec_handler)
 security_log.setLevel(logging.INFO)
 security_log.propagate = False  # security events don't need to go to main log
 
+# ── Dedicated LOGIN log ──────────────────────────────────────────────────────
+# A focused, isolated trail of the full login lifecycle (browser + silent re-auth)
+# so login problems can be diagnosed at a glance: `tail -f logs/login.log`.
+# Own handler + propagate=False so it survives root-handler reconfiguration and
+# stays uncluttered by the rest of the app's logging.
+login_log = logging.getLogger("login")
+try:
+    _login_log_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "login.log")
+    os.makedirs(os.path.dirname(_login_log_path), exist_ok=True)
+    _login_handler = RotatingFileHandler(_login_log_path, maxBytes=2_000_000, backupCount=3)
+    _login_handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-7s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    login_log.addHandler(_login_handler)
+    login_log.setLevel(logging.INFO)
+    login_log.propagate = False
+except Exception as _e:
+    log.warning(f"could not set up login log: {_e}")
+
 
 # ── Custom SocketIO log handler ───────────────────────────────────────────────
 class SocketIOHandler(logging.Handler):
@@ -425,6 +444,20 @@ _auto_exec_date:   str = ""
 _auto_exec_stock_today:  set = set()
 _auto_exec_stock_filled: set = set()
 STOCK_MAX_AUTO_EXEC_PER_DAY = 3
+# Equal-dollar stock sizing (operator 2026-06-04): buy shares totaling ~$5000 per
+# position instead of a flat 10 shares, so stock positions are equally weighted.
+STOCK_TARGET_USD = 5000.0
+
+
+def _stock_qty_for(price) -> int:
+    """Shares to deploy ~STOCK_TARGET_USD at `price` (min 1). 0 if price unusable."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return 0
+    if p <= 0:
+        return 0
+    return max(1, int(STOCK_TARGET_USD // p))
 # Per-symbol daily attempt cap (#36): a symbol that fails to fill (e.g. COHR
 # tripping the $600 hard ceiling, an illiquid name, a rejected order) is retried
 # at most this many times per day, then skipped — stops the retry storm where
@@ -588,6 +621,8 @@ _ACCT_POS_TTL   = 8.0   # cache Alpaca positions ~8s (state snapshot runs often)
 
 
 _opt_peak: dict = {}   # per-underlying option {peak P&L, ts} for the stall time-stop
+_opt_exit_state: dict = {}              # per-underlying ExitState for the REQ-608 dynamic option stop ladder
+_OPT_EXIT_ENGINE = auto_engine.ExitEngine()   # breakeven+trail ladder (pure logic; never places orders)
 _exit_mgmt_state = {"last": 0.0}   # throttle the heavy exit-management block (~30s)
 
 
@@ -754,6 +789,20 @@ def _manage_option_positions() -> None:
             reason = None
             if pct >= tp:
                 reason = f"take-profit +{tp*100:.0f}%"
+            elif screener_executor.OPT_DYNAMIC_EXIT_ENABLED:
+                # REQ-608: dynamic breakeven+trail ladder on the stop side. The init
+                # stop is -OPT_STOP_LOSS_PCT (same -50% floor as before); it then
+                # ratchets UP as the net debit gains, so a winner can't give it all
+                # back to the flat stop (KB §XM-4). Stall still applies as a fallback.
+                val = net_cost + net_pl                       # current value of the net debit
+                st  = _opt_exit_state.get(u) or _OPT_EXIT_ENGINE.init_position(
+                    net_cost, init_stop=net_cost * (1 - sl))
+                act, why, st = _OPT_EXIT_ENGINE.update(st, val, val, val)
+                _opt_exit_state[u] = st
+                if act == "exit":
+                    reason = f"dynamic stop: {why}"
+                elif stalled:
+                    reason = f"time-stop {int(stall_min)}min stalled +{pct*100:.1f}%"
             elif pct <= -sl:
                 reason = f"stop -{sl*100:.0f}%"
             elif stalled:
@@ -766,6 +815,7 @@ def _manage_option_positions() -> None:
                         log.warning(f"  option close {l.symbol}: {e}")
                 auto_engine._journal_add(u, "option", reason, pct * 100, net_pl)
                 _opt_peak.pop(u, None)
+                _opt_exit_state.pop(u, None)
                 _emit_log(f"OPTION EXIT {u}: {reason} (net {pct*100:+.0f}% on ${net_cost:.0f})",
                           level="INFO")
         except Exception as e:
@@ -888,7 +938,9 @@ def _state_snapshot() -> dict:
     # ETFs + stock auto-buys + manual buys + OPTION positions — not just the stores.
     snap["account_positions"]      = _account_equity_positions()
     snap["account_options"]        = _account_option_positions()
-    snap["journal"]                = _journal_recent(25)     # closed-trade notes (#34)
+    # Closed trades are surfaced in the Log (auto-engine "CLOSED" / "OPTION EXIT"
+    # lines), so the separate Notes panel was retired (operator 2026-06-04). The
+    # journal.jsonl store stays — EOD summary, trades-today count and restore use it.
     snap["exit_config"] = {                                  # operator-editable exits
         "stock_tp_pct":  round(auto_engine.STOCK_TAKE_PROFIT_PCT * 100, 2),
         "stock_sl_pct":  round(auto_engine.STOCK_STOP_PCT * 100, 2),
@@ -896,6 +948,7 @@ def _state_snapshot() -> dict:
         "opt_sl_pct":    round(screener_executor.OPT_STOP_LOSS_PCT * 100, 2),
         "stock_stall_days": round(auto_engine.STALL_MINUTES / 1440, 1),   # stocks: days
         "opt_stall_min":    screener_executor.OPT_STALL_MINUTES,          # options: minutes
+        "opt_dynamic_exit": screener_executor.OPT_DYNAMIC_EXIT_ENABLED,   # REQ-608 breakeven+trail ladder
         "time_cap_days": auto_engine.TIME_CAP_DAYS,
     }
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
@@ -1332,15 +1385,20 @@ def on_connect():
     # or network blip) would log the browser out and force an Alpaca re-login —
     # the "logging off often" symptom. If this browser already authenticated and
     # the shared Alpaca client is connected, silently re-grant the new sid.
+    _reauthed = False
     if (request.sid not in authenticated_sids
             and session.get("authenticated")
             and getattr(trader, "TRADING_CLIENT", None) is not None):
         with _state_lock:
             authenticated_sids.add(request.sid)
+        _reauthed = True
         security_log.info(f"Re-authenticated reconnecting browser from {ip} (session cookie)")
     # Per-client state with `logged_in` reflecting this specific socket's auth.
     snapshot = _state_snapshot()
     snapshot["logged_in"] = request.sid in authenticated_sids
+    login_log.info(f"⊙ ws connect  ip={ip}  sid={request.sid}  "
+                   f"authed={snapshot['logged_in']}  "
+                   f"{'(cookie re-auth)' if _reauthed else ('(has session, no client)' if session.get('authenticated') else '(fresh)')}")
     socketio.emit("state", snapshot, to=request.sid)
 
 
@@ -1356,6 +1414,7 @@ def _apply_exit_config(cfg: dict) -> None:
         if "opt_sl_pct"   in cfg: screener_executor.OPT_STOP_LOSS_PCT   = max(1.0, float(cfg["opt_sl_pct"])) / 100
         if "stock_stall_days" in cfg: auto_engine.STALL_MINUTES = max(60, int(float(cfg["stock_stall_days"]) * 1440))
         if "opt_stall_min"    in cfg: screener_executor.OPT_STALL_MINUTES = max(5, int(cfg["opt_stall_min"]))
+        if "opt_dynamic_exit" in cfg: screener_executor.OPT_DYNAMIC_EXIT_ENABLED = bool(cfg["opt_dynamic_exit"])
         if "time_cap_days" in cfg: auto_engine.TIME_CAP_DAYS = max(1, int(cfg["time_cap_days"]))
     except Exception as e:
         log.warning(f"apply exit config: {e}")
@@ -1434,10 +1493,14 @@ def on_disconnect():
 @limiter.limit(LOGIN_RATE_LIMIT, key_func=get_remote_address)
 def on_login(data):
     ip = request.remote_addr
+    _kp = str((data or {}).get("api_key", ""))[:6]
+    login_log.info(f"◀ login attempt  ip={ip}  sid={getattr(request,'sid','?')}  "
+                   f"key={_kp}…  paper={(data or {}).get('paper', True)}")
 
     locked, remaining = login_tracker.is_locked(ip)
     if locked:
         mins = remaining // 60 + 1
+        login_log.warning(f"✗ blocked — IP locked, {remaining}s remaining")
         security_log.warning(f"Blocked login from locked IP {ip} ({remaining}s remaining)")
         socketio.emit("login_result", {
             "success": False,
@@ -1503,13 +1566,16 @@ def on_login(data):
                 account = trader.TRADING_CLIENT.get_account()
             ok, err = True, None
             fast_path_taken = True
+            login_log.info("  fast-path OK (already authed, cached client)")
     except (Exception, _ev.Timeout) as e:
+        login_log.info(f"  fast-path probe failed ({e}) → full init")
         log.info(f"Login fast-path probe failed ({e}); falling back to full init")
         fast_path_taken = False
 
     # Slow path: full Alpaca handshake + client init (first browser login, or
     # different credentials than auto-login's).
     if not fast_path_taken:
+        login_log.info("  slow-path: init_clients (fresh Alpaca handshake, ≤8s)…")
         account, ok, err = trader.init_clients(api_key, api_secret, paper=paper)
         if ok:
             # Stash the active key prefix so subsequent logins can fast-path
@@ -1523,6 +1589,7 @@ def on_login(data):
         # Include the paper-mode flag + key prefix so we can diagnose
         # "credentials work in curl but not in app" mismatches.
         key_prefix = api_key[:6] if api_key else "?"
+        login_log.warning(f"✗ login FAILED  key={key_prefix}…  paper={paper}  err={err}")
         security_log.warning(
             f"Failed Alpaca login from {ip}: paper={paper} key={key_prefix}... "
             f"err={err}"
@@ -1542,6 +1609,8 @@ def on_login(data):
     session["api_key_prefix"] = api_key[:6] + "…"
     session["login_time"]     = datetime.now(timezone.utc).isoformat()
     login_tracker.record_success(ip)
+    login_log.info(f"✔ login SUCCESS  ({'fast-path' if fast_path_taken else 'full init'})  "
+                   f"paper={paper}  sid={request.sid}  → login_result emitted")
     security_log.info(f"Successful Alpaca login from {ip} (paper={paper})")
 
     # Tell the client login succeeded IMMEDIATELY — before any slow data
@@ -2097,7 +2166,18 @@ def on_daily_status():
 # ── Screener tab ──────────────────────────────────────────────────────────────
 _screener_refresh_lock = threading.Lock()
 
-MAX_AUTO_EXEC_PER_DAY = 3   # hard cap — never place more than this many auto orders per day
+MAX_AUTO_EXEC_PER_DAY = 5   # hard cap — never place more than this many auto orders per day (operator 2026-06-04: 3→5)
+
+# Merged-picks feature flag. When ON, the screener becomes ONE KB-ranked pick list
+# (data["picks"]) that drives the display AND both auto-exec lanes — so "what's shown
+# == what's traded". When OFF (default), the legacy dt/options two-list flow is
+# byte-for-byte preserved. Gated per CLAUDE.md trading safety rails; flip on only
+# after the Phase-5 backtest A/B shows no regression.
+MERGED_PICKS_ENABLED = True   # enabled 2026-06-04 (operator). Invariant: merged trades a
+# SUBSET of legacy (one order per symbol via its route) under the same KB gates/caps, so
+# it can't trade MORE or riskier than the legacy two-list flow. Full OOS backtest A/B is
+# still pending (blocked on the Polygon pull). Revert to False to fall back instantly.
+_PICK_ETF_SYMS = set(ETFS_TRADE) | set(ETFS_HEDGE)   # for the instrument-priority tiebreak
 
 
 def _annotate_kb(data: dict) -> None:
@@ -2208,12 +2288,111 @@ def _sort_screener_by_kb(data: dict) -> None:
     """Sort screener rows by KB-match desc (operator). BUY rows first, then by KB%,
     then held rows after (already owned). In place."""
     def key(r):
-        act_rank = 0 if r.get("action") == "✅ BUY" else 1
-        held_rank = 1 if r.get("held") else 0
-        return (held_rank, act_rank, -(r.get("kb_match") or 0))
+        # PRIMARY: KB match desc (operator 2026-06-04); held-last + BUY-first break ties.
+        return (-(r.get("kb_match") or 0),
+                1 if r.get("held") else 0,
+                0 if r.get("action") == "✅ BUY" else 1)
     for k in ("options", "dt"):
         if isinstance(data.get(k), list):
             data[k] = sorted(data[k], key=key)
+
+
+def _build_picks(data: dict, positions: list, vix: float | None = None) -> list:
+    """Merge the screener's stock (dt) + option rows into ONE KB-ranked pick list —
+    the single source of truth for the display AND both auto-exec lanes, so "what's
+    shown == what's traded" (operator: "the screener and picks should be the same").
+
+    Each unique underlying collapses to ONE pick that is ROUTED to stock or option
+    (router.route_for_pick, KB §5/§2). The canonical `kb_match` is the score of the
+    ROUTED instrument, so the displayed % equals the % the executor gates on. Picks
+    are lean (display + routing); the auto-exec lanes map a pick back to its original
+    dt/option row by symbol. Pure aside from a single equity read (kept OUTSIDE
+    _state_lock per the lock-contention gotcha)."""
+    import router as _router
+    from risk_brain import RiskBrain
+
+    opt_by, stk_by = {}, {}
+    for o in data.get("options", []):
+        s = (o.get("sym") or "").upper()
+        if s and s not in opt_by:
+            opt_by[s] = o
+    for r in data.get("dt", []):
+        s = (r.get("sym") or "").upper()
+        if s and s not in stk_by:
+            stk_by[s] = r
+
+    try:
+        equity = float(trader.account_value() or 0.0)
+    except Exception:
+        equity = 0.0
+    rb = RiskBrain(total_equity=equity) if equity > 0 else None
+
+    picks = []
+    for sym in (set(opt_by) | set(stk_by)):
+        srow, orow = stk_by.get(sym), opt_by.get(sym)
+        route, structure, route_reason = "skip", None, "no equity read — display only"
+        if rb is not None:
+            try:
+                dec = _router.route_for_pick(srow, orow, rb, vix=vix)
+                route, structure, route_reason = dec.route, dec.structure, dec.reason
+            except Exception as e:
+                route, route_reason = "skip", f"route error: {e}"
+
+        # canonical fields from the ROUTED instrument (fall back to whatever row exists)
+        if route == "options" and orow is not None:
+            base, action = orow, orow.get("action")
+        elif route == "stocks" and srow is not None:
+            base = srow
+            action = (srow.get("action")
+                      or ("✅ BUY" if (srow.get("valid") and srow.get("is_top")) else "⚠ WATCH"))
+        else:
+            base, action = (orow or srow or {}), "⚠ WATCH"
+
+        picks.append({
+            "sym": sym,
+            "route": route,                       # "stocks" | "options" | "skip"
+            "structure": structure,
+            "route_reason": route_reason,
+            "kb_match": base.get("kb_match"),
+            "kb_principles": base.get("kb_principles", {}),
+            "action": action,
+            "source": (orow or {}).get("source") or (srow or {}).get("strategy") or (srow or {}).get("setup"),
+            "dir_pct": (orow or {}).get("dir_pct") if orow else (srow or {}).get("bt_dir"),
+            "pf": (orow or {}).get("pf") if orow else (srow or {}).get("bt_pf"),
+            "expiry": (orow or {}).get("expiry"),
+            "opt_type": (orow or {}).get("opt_type"),
+            "max_risk": (orow or {}).get("max_risk"),
+            "price": (srow or {}).get("price"),
+            "held": bool(base.get("held")),
+            "exit_plan": base.get("exit_plan"),
+            "reason": base.get("reason"),
+            "strategy": base.get("strategy") or base.get("setup"),
+            # confidence-calibration: ONE kb_match-driven label on every pick (both routes)
+            "confidence": (f"KB {base.get('kb_match')}% · {route}"
+                           if base.get("kb_match") is not None else route),
+        })
+
+    def _src_priority(p):   # Connors "⭐ Proven" wins ties
+        s = str(p.get("source") or "")
+        return 0 if ("Connors" in s or "Proven" in s) else 1
+
+    def _instr_pref(p):     # instrument-priority: options favor ETFs; shares favor stocks
+        is_etf = p["sym"] in _PICK_ETF_SYMS
+        if p["route"] == "options":
+            return 0 if is_etf else 1
+        if p["route"] == "stocks":
+            return 0 if not is_etf else 1
+        return 2
+
+    picks.sort(key=lambda p: (
+        -(p.get("kb_match") or 0),                 # PRIMARY: KB match desc (operator 2026-06-04)
+        1 if p.get("held") else 0,                 # held after non-held on ties
+        0 if p.get("action") == "✅ BUY" else 1,   # BUY before WATCH on ties
+        _src_priority(p),
+        _instr_pref(p),
+        -(float(p.get("dir_pct") or 0)),
+    ))
+    return picks
 
 
 def _position_exit_plan(pos: dict) -> dict:
@@ -2450,7 +2629,15 @@ def _auto_exec_options(data: dict) -> None:
     except Exception as _e:
         log.debug(f"option-cap fetch: {_e}")
 
-    rows = data.get("options", [])
+    # Merged-picks: trade only option-ROUTED picks, in pick-rank order, mapped back
+    # to their option rows. Flag off → legacy full options list. Either way the
+    # per-row gates/caps below are unchanged.
+    if MERGED_PICKS_ENABLED and isinstance(data.get("picks"), list):
+        _opt_by = {(x.get("sym") or "").upper(): x for x in data.get("options", [])}
+        rows = [_opt_by[p["sym"]] for p in data["picks"]
+                if p.get("route") == "options" and p.get("sym") in _opt_by]
+    else:
+        rows = data.get("options", [])
     for o in rows:
         with _auto_exec_lock:
             count_today = len(_auto_exec_filled)   # cap counts FILLED trades, not attempts
@@ -2479,6 +2666,10 @@ def _auto_exec_options(data: dict) -> None:
         if not allowed:
             _emit_log(f"AUTO-EXEC ⛔ {sym} blocked by gate — {reason}", level="INFO")
             continue
+        # log-kb-principle TODO: print the FULL KB principles satisfied, not just §#
+        _matched = (o.get("kb_principles") or {}).get("matched") or []
+        if _matched:
+            _emit_log(f"AUTO-EXEC ✓ {sym} KB: " + " · ".join(_matched[:4]), level="INFO")
 
         with _auto_exec_lock:
             if sym in _auto_exec_today:
@@ -2588,7 +2779,15 @@ def _auto_exec_stocks(data: dict) -> None:
     # NOTE: the 3/day cap is OPTIONS-ONLY (operator). Stocks are not capped by a
     # daily count — the per-symbol dedup is the only limiter, so each strong name
     # is bought at most once/day, bounded by how many strong rows the screener has.
-    for r in data.get("dt", []):
+    # Merged-picks: trade only stock-ROUTED picks (a symbol routed to options is not
+    # also bought as shares), in pick-rank order. Flag off → legacy full dt list.
+    if MERGED_PICKS_ENABLED and isinstance(data.get("picks"), list):
+        _stk_by = {(x.get("sym") or "").upper(): x for x in data.get("dt", [])}
+        stock_rows = [_stk_by[p["sym"]] for p in data["picks"]
+                      if p.get("route") == "stocks" and p.get("sym") in _stk_by]
+    else:
+        stock_rows = data.get("dt", [])
+    for r in stock_rows:
         # Only strong, validated, top-ranked rows (the ⭐ + ✅ BUY ones).
         strong = (r.get("action") == "✅ BUY") or (r.get("valid") and r.get("is_top"))
         if not strong:
@@ -2610,13 +2809,24 @@ def _auto_exec_stocks(data: dict) -> None:
             _emit_log(f"AUTO-BUY ⛔ {sym} blocked — KB match {sc['pct']}% "
                       f"< {kb_principles.KB_MATCH_MIN}%", level="INFO")
             continue
+        # log-kb-principle TODO: print the FULL KB principles satisfied, not just §#
+        if sc.get("matched"):
+            _emit_log(f"AUTO-BUY ✓ {sym} KB: " + " · ".join(sc["matched"][:4]), level="INFO")
+        # Equal-dollar sizing: ~$5000 per stock position (operator 2026-06-04)
+        qty = _stock_qty_for(r.get("price"))
+        if qty <= 0:
+            _emit_log(f"AUTO-BUY ⛔ {sym} skipped — no usable price for $5000 sizing", level="INFO")
+            with _auto_exec_lock:
+                _auto_exec_stock_today.discard(sym)
+            continue
         with _auto_exec_lock:
             _auto_exec_stock_today.add(sym)      # mark before the call (dedup)
             _save_auto_exec_state()
         try:
-            res = shares_executor.buy(sym, 10, dry_run=dry)
+            res = shares_executor.buy(sym, qty, dry_run=dry)
             res["sym"] = sym
-            res["message"] = (f"AUTO-BUY 10 {sym}" if res.get("success")
+            res["message"] = (f"AUTO-BUY {qty} {sym} (~${qty*float(r.get('price') or 0):.0f})"
+                              if res.get("success")
                               else res.get("message", "stock order failed")) + (" [dry]" if dry else "")
             socketio.emit("screener_order_result", res)
             _emit_log(f"AUTO-BUY {'✅' if res.get('success') else '⚠️'}  {res['message']}",
@@ -2716,12 +2926,21 @@ def _refresh_screener_bg():
         data = screener.refresh_screener(positions)
         _annotate_kb(data)
         _annotate_liquidity(data)
+        _annotate_kb(data)           # re-score so kb_match reflects §9 liquidity (rank-liquidity-gate)
         _annotate_held_exits(data, positions)
         _sort_screener_by_kb(data)
+        if MERGED_PICKS_ENABLED:
+            try:
+                with _state_lock:
+                    _vix = state.get("vix")
+            except Exception:
+                _vix = None
+            data["picks"] = _build_picks(data, positions, _vix)
         _log_screened(data)          # EOD analysis: what we screened-as-buyable
         socketio.emit("screener_data", data)
         log.info(f"Screener refreshed: {len(data.get('dt',[]))} stocks, "
-                 f"{len(data.get('options',[]))} options")
+                 f"{len(data.get('options',[]))} options"
+                 + (f", {len(data.get('picks',[]))} picks" if MERGED_PICKS_ENABLED else ""))
         _auto_exec_options(data)   # auto-place options if armed
         _auto_exec_stocks(data)    # auto-buy strong stock rows if armed
     except Exception as e:
@@ -2741,11 +2960,21 @@ def on_get_screener(data=None):
     if cached.get("dt"):
         _annotate_kb(cached)
         _annotate_liquidity(cached)
+        _annotate_kb(cached)         # re-score for §9 liquidity (rank-liquidity-gate)
+        _cpos = []
         try:
-            _annotate_held_exits(cached, dtrad._load_positions())
+            _cpos = dtrad._load_positions()
+            _annotate_held_exits(cached, _cpos)
         except Exception:
             pass
         _sort_screener_by_kb(cached)
+        if MERGED_PICKS_ENABLED:
+            try:
+                with _state_lock:
+                    _vix = state.get("vix")
+            except Exception:
+                _vix = None
+            cached["picks"] = _build_picks(cached, _cpos, _vix)
         socketio.emit("screener_data", cached, to=request.sid)
     if force or not cached.get("dt"):
         socketio.start_background_task(_refresh_screener_bg)
@@ -2846,11 +3075,18 @@ def on_execute_screener_stock(data=None):
             log.warning(f"stock gate scoring error: {e}")
     sid = request.sid
 
+    qty = _stock_qty_for(data.get("price"))
+    if qty <= 0:
+        socketio.emit("screener_order_result", {"success": False, "sym": sym,
+                      "message": "No usable price for $5000 sizing."}, to=request.sid)
+        return
+
     def _run():
         import shares_executor
-        res = shares_executor.buy(sym, 10, dry_run=dry)
+        res = shares_executor.buy(sym, qty, dry_run=dry)   # ~$5000 equal-dollar sizing
         res["sym"] = sym
-        res["message"] = (f"Bought 10 {sym}" if res.get("success") else
+        res["message"] = (f"Bought {qty} {sym} (~${qty*float(data.get('price') or 0):.0f})"
+                          if res.get("success") else
                           res.get("message", "stock order failed")) + (" [dry]" if dry else "")
         socketio.emit("screener_order_result", res)
         _emit_log(f"SCREENER STOCK EXEC  {res['message']}",

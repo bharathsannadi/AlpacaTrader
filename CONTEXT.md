@@ -119,6 +119,52 @@ These are the constraints we'll design tomorrow's backtest and risk-gate work ar
 
 ---
 
+## 📌 Last session: 2026-06-04 (MERGED PICKS + CAPS + RESILIENCE)
+
+> Major live changes. Still PAPER-ONLY. Docs updated (README, DEPLOYMENT,
+> RUNBOOK, AUTO_EXECUTE).
+
+### 🧩 Merged KB-driven picks — "shown == traded"
+- `app.MERGED_PICKS_ENABLED = True`. The screener is now ONE KB-ranked pick list
+  (`data["picks"]`, built by `app._build_picks`) driving BOTH the UI and both
+  auto-exec lanes. Each symbol collapses to ONE pick, ROUTED to stock OR option
+  (`router.route_for_pick`, KB §5/§2), traded once via its route. New **⭐ Picks**
+  tab (primary); legacy Stocks/Options tabs kept. Ranking = KB-match desc.
+  Revert flag → False for the old two-list behavior.
+- ⚠️ A transient equity read in `_build_picks` (`trader.account_value()` → 0)
+  routes ALL picks to `skip` ("no equity read — display only"); self-heals next
+  refresh.
+
+### 💵 Caps reconciled to "same as paper" + equal-dollar sizing
+- Options HARD ceiling $600 for ALL options incl. ETFs (`OPT_HARD_MAX_USD` /
+  `OPT_HARD_MAX_USD_ETF`, ETF was 1500). `MAX_AUTO_EXEC_PER_DAY=5` (was 3),
+  `OPT_MAX_OPEN=5` (was 3), `risk_brain.OPT_WEEK_MAX_USD=3000` (was 1500),
+  `OPT_PER_TRADE_MAX_USD=600` (was 500).
+- Equal-dollar sizing (supersedes fixed-10-shares / fixed-1-contract): options
+  buy as many contracts as fit ~$600 (`execute_screener_option`); stocks ~$5000
+  (`STOCK_TARGET_USD=5000`, `_stock_qty_for`).
+
+### 🚪 Exits & ranking
+- Live option exits: +80% TP / −50% SL / 90-min stall (`_manage_option_positions`).
+  `OPT_DYNAMIC_EXIT_ENABLED` (default OFF) swaps the flat −50% for exit_engine's
+  breakeven+trail ladder.
+- §9 liquidity now affects ranking: `kb_principles.score_option_candidate`
+  hard-floors a confirmed-illiquid contract below the 60% gate (one-sided);
+  `calibrate()` seam added for future IVR/win-prob.
+- Notes/Closed-Trades panel retired — closes show in the Log (`CLOSED` /
+  `OPTION EXIT`); journal.jsonl kept for EOD/counts.
+
+### 🛡️ Resilience — FIVE launchd agents (plists in `deploy/launchd/`)
+- `com.alpacatrader` (app :5000), `com.alpacatrader.charts` (charts-only :5001,
+  `charts_server.py`, yfinance, no login), `com.alpacatrader.caffeinate`
+  (`caffeinate -i -s` — Mac never idle-sleeps; idle sleep had frozen stop-loss
+  monitoring), `com.alpacatrader.polygon` (5yr archival keep-alive; ⚠️ unload
+  after 2026-06-16), `com.spy_auto_trader.watchdog` (every 60s, monitors BOTH
+  :5000 + :5001, 3 failed /health → kill → relaunch). Watchdog + caffeinate +
+  KeepAlive + RunAtLoad ⇒ survives crash, hang, sleep, reboot.
+
+---
+
 ## 📌 Last session: 2026-05-31 (AUTONOMOUS DUAL-INSTRUMENT BUILD — huge)
 
 > The biggest single session in the project. Built an end-to-end autonomous,

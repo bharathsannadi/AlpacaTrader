@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alpacatrader.charts</string>
+
+  <!-- Standalone charts-only server on :5001 (no Alpaca login, yfinance data).
+       Decoupled from the main trading app per operator request 2026-06-01. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/bin/python3.11</string>
+    <string>-u</string>
+    <string>scripts/charts_server.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/venv/lib/python3.11/site-packages</string>
+    <key>CHARTS_PORT</key>
+    <string>5001</string>
+  </dict>
+
+  <!-- Start at login and restart automatically if it crashes -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Throttle restarts — wait 10s before restarting on crash -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Log output -->
+  <key>StandardOutPath</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/logs/charts_server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/logs/charts_server.log</string>
+</dict>
+</plist>

@@ -91,9 +91,13 @@ mis-scored contract is not a tradable edge — these must be closed before live.
       under one supervisor — date/initials: ____
 - [ ] **KB-match floor enforced** on every trade (`KB_MATCH_MIN = 60%`) and the
       debate gate runs (not silently suppressed by missing intraday indicators) — date/initials: ____
-- [ ] **If autonomous OPTIONS execution is enabled** (task #20): caps verified live
-      ($500/trade, $1,500/week) and `route=="options"` exit handling confirmed
-      firing on paper — date/initials: ____
+- [ ] **Autonomous OPTIONS execution caps verified live = the paper caps** (operator
+      2026-06-04 "do the same as paper trading"): **$600/trade** (hard ceiling, ETFs too),
+      **5 trades/day** (`MAX_AUTO_EXEC_PER_DAY`), **5 concurrent** (`OPT_MAX_OPEN`),
+      equal-dollar sized (~$600/position). `risk_brain.OPT_PER_TRADE_MAX_USD` reconciled
+      500→600 and `OPT_WEEK_MAX_USD` 1500→**3000** (rolling-week). `route=="options"`
+      exit (`_manage_option_positions`: +80%/−50%/90-min stall,
+      REQ-608 ladder optional) confirmed firing on paper — date/initials: ____
 
 ---
 

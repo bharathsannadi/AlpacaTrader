@@ -79,6 +79,17 @@ disabled until 2S-B passes (naked/shares route live in paper).
 max-DD; only then wired live (paper).
 **Effort:** ~2 days backtest + ~1 day wire · **Blocked by:** Phase 0; runs in parallel
 
+### Phase 3b — Two-step scale-out (REQ-614, KB §XM) — gated follow-on
+**Goal:** replace all-or-nothing exits with T1-partial + breakeven + trail, so
+fat-tail winners aren't clipped (KB §XM synthesis).
+**Done so far (2026-06-04):** REQ-608 breakeven+trail ladder wired to the **live
+option stop** behind `OPT_DYNAMIC_EXIT_ENABLED` (default off) — covers REQ-614.3/.4.
+**Still to do:** REQ-614.1 sizing (options `qty=1`→≥2, stock fixed-10→even lot,
+inside the $500/$1500 caps + 6% breaker) — the hard blocker; then REQ-614.2 T1
+partial-close + REQ-614.5 spread variant.
+**Acceptance:** scale-out beats single-shot on OOS PF/max-DD on the Polygon
+backtest (currently blocked — pull stops after underlying #60); only then default on.
+
 ## Phase 4 — Multi-strategy portfolio + regime overlay (paper)
 **Goal:** more than one validated strategy live (fix single-strategy fragility),
 plus the non-equity sleeve for tail risk.

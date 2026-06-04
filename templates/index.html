@@ -1730,13 +1730,7 @@
         </div>
       </div>
 
-      <!-- Notes / Journal (closed-trade events) -->
-      <div class="card" data-card-id="journal">
-        <div class="card-title">Notes — Closed Trades</div>
-        <div id="journal-body" style="font-size:var(--fs-xs);font-family:var(--mono);max-height:160px;overflow-y:auto">
-          <span style="color:var(--muted)">No closed trades yet.</span>
-        </div>
-      </div>
+      <!-- Notes/Journal panel retired 2026-06-04 — closed trades now show in the Log. -->
 
       <!-- EOD Analysis + Learning -->
       <div class="card" data-card-id="eod">
@@ -2089,6 +2083,13 @@
 
   <!-- ── Inner tab bar ── -->
   <div class="scr-tab-bar">
+    <!-- Merged KB-ranked picks (MERGED_PICKS_ENABLED) — shown==traded. Hidden until
+         the server emits data.picks; then JS makes it the default tab. -->
+    <button class="scr-tab" id="scr-tab-picks" style="display:none"
+            onclick="scrSwitchTab('picks')">
+      ⭐ Picks
+      <span class="scr-tab-count" id="scr-picks-count">—</span>
+    </button>
     <button class="scr-tab active" id="scr-tab-stocks"
             onclick="scrSwitchTab('stocks')">
       📈 Stocks
@@ -2100,6 +2101,34 @@
       <span class="scr-tab-count" id="scr-options-count">—</span>
     </button>
   </div>
+
+  <!-- ── Pane: Picks (merged KB-ranked — shown==traded; MERGED_PICKS_ENABLED) ── -->
+  <div class="scr-pane" id="scr-pane-picks">
+    <div class="scr-section-hdr">
+      <span class="scr-section-title">Picks</span>
+      <span class="scr-section-sub">One KB-ranked list — what's shown is what's traded · each routed to stock or option</span>
+      <span class="scr-section-ref">KB §5/§2 routing · §9 liquidity</span>
+    </div>
+    <div class="scr-table-wrap">
+      <table class="scr-table" id="scr-picks-table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th title="Routed instrument (KB §5/§2 + instrument-priority)">Route</th>
+            <th>Detail</th>
+            <th title="KB-principles match — gate floor 60%">KB Match</th>
+            <th class="num" title="Backtested directional hit · profit factor">Edge</th>
+            <th title="⚡ Buy routes to the picked instrument (paper)">Action</th>
+          </tr>
+        </thead>
+        <tbody id="scr-picks-tbody">
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px;font-size:11px">
+            Merged picks appear here when enabled.
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div><!-- /scr-pane-picks -->
 
   <!-- ── Pane: Stocks ── -->
   <div class="scr-pane active" id="scr-pane-stocks">
