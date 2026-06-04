@@ -1522,6 +1522,13 @@
   .risk-input { width: 56px !important; padding: 4px 8px !important; font-size: 11px !important; }
   .clear-btn, .stream-btn { padding: 3px 8px !important; font-size: 10px !important; }
   .stream-dot { width: 7px !important; height: 7px !important; }
+
+  /* EOD card — compact (full report goes to the Log) */
+  .eod-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .eod-head-right { display: flex; align-items: center; gap: 8px; }
+  .eod-when { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+  .eod-run { font-size: 10px; padding: 3px 10px; }
+  .eod-note { font-size: var(--fs-xs); line-height: 1.5; color: var(--muted); margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -1732,16 +1739,17 @@
 
       <!-- Notes/Journal panel retired 2026-06-04 — closed trades now show in the Log. -->
 
-      <!-- EOD Analysis + Learning -->
+      <!-- EOD Analysis + Learning — compact; full report is written to the Log (2026-06-04) -->
       <div class="card" data-card-id="eod">
-        <div style="display:flex;align-items:center;justify-content:space-between">
+        <div class="eod-head">
           <div class="card-title">EOD Analysis &amp; Learning</div>
-          <button class="btn-run" style="font-size:10px;padding:3px 10px" onclick="socket.emit('run_eod_analysis')">▶ Run Now</button>
+          <div class="eod-head-right">
+            <span id="eod-when" class="eod-when"></span>
+            <button class="btn-run eod-run" onclick="socket.emit('run_eod_analysis')">▶ Run Now</button>
+          </div>
         </div>
-        <div id="eod-stats" style="font-size:var(--fs-xs);font-family:var(--mono);color:var(--muted);margin:4px 0"></div>
-        <div id="eod-narrative" style="font-size:var(--fs-xs);line-height:1.5;color:var(--text)">
-          <span style="color:var(--muted)">Runs automatically at 4:10 PM ET — or click Run Now. Reviews closes, missed buys, KB relaxations &amp; P&L, with recommendations.</span>
-        </div>
+        <div class="eod-note">Runs automatically at 4:10&nbsp;PM&nbsp;ET — or click Run&nbsp;Now. Reviews closes, missed
+          buys, KB relaxations &amp; P&amp;L with recommendations; the full report prints to the <b>Log</b> below.</div>
       </div>
 
       <!-- Log (moved from the Log tab, 2026-06-02) -->

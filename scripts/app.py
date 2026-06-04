@@ -687,10 +687,23 @@ def _run_eod_analysis(emit: bool = True) -> dict:
     except Exception as e:
         log.warning(f"save eod report: {e}")
     if emit:
-        socketio.emit("eod_report", report)
-        _emit_log(f"EOD ANALYSIS {today}: {len(closed)} closed ({len(wins)}W/{len(losses)}L) "
-                  f"realized ${realized:+.0f} · {len(missed)} missed · {len(relaxed)} KB-relaxed",
-                  level="INFO")
+        socketio.emit("eod_report", report)   # carries ts for the card's "last run" stamp
+        # Full report → the Log (operator 2026-06-04: keep the card minimal, show analysis here)
+        _emit_log(f"━━━━━ EOD ANALYSIS {today} ━━━━━", level="INFO")
+        _emit_log(f"  Closed {len(closed)} ({len(wins)}W/{len(losses)}L · {stats['win_rate']}%) · "
+                  f"realized ${realized:+.0f} · open {stats['open']} (${unreal:+.0f} unreal)", level="INFO")
+        if reasons:
+            _emit_log("  Exits: " + " · ".join(f"{k} {v}" for k, v in reasons.items()), level="INFO")
+        if missed:
+            _emit_log(f"  Missed BUYs ({len(missed)}): " + ", ".join(missed[:15])
+                      + ("…" if len(missed) > 15 else ""), level="INFO")
+        if relaxed:
+            _emit_log(f"  KB relaxations: {len(relaxed)} (paper-only fills)", level="WARNING")
+        for line in (narrative or "").splitlines():
+            line = line.strip()
+            if line:
+                _emit_log("  " + line, level="INFO")
+        _emit_log("━━━━━ end EOD analysis ━━━━━", level="INFO")
     return report
 
 
