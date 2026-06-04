@@ -1066,7 +1066,7 @@ All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
 
 | ID | Item | Why | Status |
 |----|------|-----|--------|
-| **OB-1** | **Slippage / fill-quality tracking** — log model price vs actual fill per trade; slippage bps per strategy | THE edge thesis ("does it survive real fills") is unanswerable without it | ⬜ |
+| **OB-1** | **Slippage / fill-quality tracking** — log model price vs actual fill per trade; slippage bps per strategy | THE edge thesis ("does it survive real fills") is unanswerable without it | 🟡 Partial 2026-06-04 — option legs recorded (`_record_slippage` → `~/.spy_trader/slippage.jsonl`, bps/leg); stock-fill slippage + an aggregation view still TODO |
 | **OB-2** | **Alerting** — wire + TEST ERROR webhook + push on breaker trip / watchdog kill / failed fill / gate-spike / drawdown | Failures are currently silent until you look | ⬜ |
 | **OB-3** | **Metrics + equity curve** — per-strategy P&L/win/fills-vs-signals/latency; persist equity curve (≥5 EOD pts) + chart | Checklist §2 needs it; no real performance view | ⬜ |
 | **OB-4** | **State↔broker reconciliation** — periodic check internal positions == Alpaca account; alert on drift; also CANCEL never-filled orders (FILL_TIMEOUT_MINS=3 did NOT fire on a stale AMZN spread order that sat `NEW` ~24h → phantom "pending" showed as 🔵 HELD, reconciled manually 2026-06-04) | Catches the phantom-position class (checklist §6) | ⬜ |
