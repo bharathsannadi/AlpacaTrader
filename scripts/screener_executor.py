@@ -71,11 +71,9 @@ RISK_BUDGET          = 400.0  # KB §4: $400 max loss per trade
 OPT_RELAX_LIQUIDITY  = True    # §9 liquidity gate advisory, not blocking
 OPT_MARKET_ORDERS    = True    # place option legs at market so they fill
 OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss SOFT cap
-OPT_HARD_MAX_USD     = 600.0   # operator 2026-06-02: HARD ceiling — max $600 per
-                               # option trade, ALWAYS enforced even in relaxed mode
-                               # (stops a garbage quote, e.g. the $11k MU glitch).
-OPT_HARD_MAX_USD_ETF = 600.0   # operator 2026-06-04: ETFs capped at $600 too (was
-                               # $1500) — "limit all options to 600 even for ETFs".
+# AH-2: caps live in config.py (single source); imported here so screener_executor.OPT_*
+# references keep working. HARD ceiling = ALWAYS enforced even in relaxed mode.
+from config import OPT_HARD_MAX_USD, OPT_HARD_MAX_USD_ETF, size_position as _size_position
 try:
     from universe import ETFS_TRADE as _ETFS_T, ETFS_HEDGE as _ETFS_H
     _ETF_SET = set(_ETFS_T) | set(_ETFS_H)
@@ -84,7 +82,7 @@ except Exception:
 OPT_TAKE_PROFIT_PCT  = 0.80    # KB §24 / _position_exit_plan: take +80% of premium
 OPT_STOP_LOSS_PCT    = 0.50    # KB §9: stop at 50% of premium paid
 OPT_STALL_MINUTES    = 90      # time-stop: close a green-but-stalled option after N min
-OPT_MAX_OPEN         = 5       # max concurrent option positions (operator 2026-06-04: 3→5)
+from config import OPT_MAX_OPEN   # AH-2: max concurrent option positions (single source)
 # REQ-608: apply exit_engine's breakeven+trail ladder to the option STOP side
 # (KB §XM-4 "move stop to breakeven once green"). Default OFF — when off the stop
 # is the flat -OPT_STOP_LOSS_PCT. When on, the stop starts at -50% then ratchets
@@ -576,7 +574,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # ── Equal-dollar sizing (operator 2026-06-04) ───────────────────────────
         # As many contracts as fit the ${_ceiling} cap on the LONG outlay → ~equal
         # capital per position AND the cap can't be defeated by a wide spread.
-        qty        = max(1, int(_ceiling // long_outlay))
+        qty        = max(1, _size_position("options", per_contract_cost=long_outlay, ceiling=_ceiling))
         total_cost = long_outlay * qty             # long-leg capital deployed (≤ ceiling)
         total_risk = net_debit * 100 * qty         # max loss = net debit × qty
         result["qty"]        = qty

@@ -24,11 +24,8 @@ from typing import Optional
 
 # ── Constants (operator requirements) ─────────────────────────────────────────
 STOCK_SLEEVE_USD       = 95_000.0   # REQ-602
-OPT_PER_TRADE_MAX_USD  = 600.0      # REQ-605 — operator 2026-06-04: 500→600 to match the
-                                    # live $600 per-option ceiling (screener_executor.OPT_HARD_MAX_USD),
-                                    # so live mirrors paper ("do the same as paper trading").
-OPT_WEEK_MAX_USD       = 3_000.0    # REQ-605 — operator 2026-06-04: 1500→3000 (rolling-week
-                                    # options risk cap) to fit the $600/trade + 5/day sizing.
+# AH-2 (REQ-605): per-trade + rolling-week option risk caps live in config.py (single source).
+from config import OPT_PER_TRADE_MAX_USD, OPT_WEEK_MAX_USD
 STOCK_SHARES_FIXED     = 10         # REQ-606
 WEEK_MODE              = "rolling5" # REQ-605.3: "rolling5" (5 trading days) | "calendar" (Mon-Fri)
 SIX_PCT_MONTH_CAP      = 0.06       # Elder 6% Rule: month losses + open risk ≤ 6% equity (REQ-611)
