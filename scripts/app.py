@@ -1893,8 +1893,9 @@ LOG_PATH = os.path.join(os.path.dirname(__file__), "spy_trader.log")
 
 # ── Daily strategy background tasks (Connors RSI-2, Path A) ──────────────────
 def _emit_log(msg: str, level: str = "INFO") -> None:
-    """Emit a line to the dashboard log tab and the server log."""
-    socketio.emit("log", {"message": msg, "level": level})
+    """Log a line. The root SocketIOHandler streams it to the dashboard Log (exactly ONCE)
+    and the file handlers write it. Do NOT also socketio.emit("log") here — `log` propagates
+    to that handler, so a direct emit double-posts every line (duplicate-log bug, 2026-06-05)."""
     if level == "ERROR":
         log.error(msg)
     elif level == "WARNING":
