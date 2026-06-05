@@ -2029,6 +2029,49 @@ def _scheduler_supervisor():
             last_respawn = _time.monotonic()
 
 
+_reconcile_state = {"last": 0.0}
+RECONCILE_INTERVAL_SEC = 300     # OB-4: run reconciliation every 5 min
+STALE_ORDER_MINUTES    = 10      # cancel an order left unfilled longer than this
+
+
+def _reconcile_orders_positions() -> None:
+    """OB-4 — state↔broker reconciliation (the gap that left a stale AMZN order open ~24h).
+    (1) Cancel OPEN orders that have been unfilled > STALE_ORDER_MINUTES — restores the
+        FILL_TIMEOUT intent that didn't fire. (2) ALERT (don't auto-delete) on phantom daily
+        positions: marked open/pending but the underlying isn't in the live account.
+    Conservative + idempotent; never raises into the scheduler."""
+    c = getattr(trader, "TRADING_CLIENT", None)
+    if c is None:
+        return
+    import datetime as _dt
+    # 1) cancel stale unfilled orders
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        now = _dt.datetime.now(_dt.timezone.utc)
+        for o in c.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN)):
+            try:
+                age_min = (now - o.created_at).total_seconds() / 60.0
+                if float(o.filled_qty or 0) == 0 and age_min > STALE_ORDER_MINUTES:
+                    c.cancel_order_by_id(o.id)
+                    _emit_log(f"⚠ RECONCILE: cancelled stale unfilled order {o.symbol} "
+                              f"({age_min:.0f}m old — fill timeout didn't fire)", level="WARNING")
+            except Exception as e:
+                log.debug(f"reconcile order {getattr(o,'id','?')}: {e}")
+    except Exception as e:
+        log.debug(f"reconcile orders: {e}")
+    # 2) alert on phantom daily positions (state says held, broker doesn't)
+    try:
+        acct_syms = {p["sym"].upper() for p in _account_equity_positions()} \
+                    | {o["sym"].upper() for o in _account_option_positions()}
+        for p in dtrad._load_positions():
+            if p.get("status") in ("open", "pending") and str(p.get("sym", "")).upper() not in acct_syms:
+                _emit_log(f"⚠ RECONCILE: phantom — {p.get('sym')} is '{p.get('status')}' in state but "
+                          f"NOT in the broker account (no fill); needs cleanup", level="WARNING")
+    except Exception as e:
+        log.debug(f"reconcile positions: {e}")
+
+
 def scheduler():
     """Background task: auto-start all-day sessions at 9:30 ET on weekdays,
     fire end-of-day learning review at 15:35 ET, and run the Connors RSI(2)
@@ -2127,6 +2170,11 @@ def scheduler():
                     and daily_eod_fired_on != today:
                 daily_eod_fired_on = today
                 socketio.start_background_task(_run_daily_eod)
+
+            # OB-4 reconciliation: cancel stale unfilled orders + alert on phantom positions
+            if _time.monotonic() - _reconcile_state["last"] >= RECONCILE_INTERVAL_SEC:
+                _reconcile_state["last"] = _time.monotonic()
+                socketio.start_background_task(_reconcile_orders_positions)
                 socketio.start_background_task(_run_eod_analysis)   # EOD analysis + learning
 
             # Screener auto-refresh — every 90s during market hours
