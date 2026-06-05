@@ -1888,6 +1888,24 @@ def _emit_log(msg: str, level: str = "INFO") -> None:
         log.info(msg)
 
 
+def _alert(title: str, msg: str = "", level: str = "ERROR") -> None:
+    """OB-2 — push a critical alert so failures aren't silent: always to the UI Log +
+    server log, and to ALERT_WEBHOOK_URL (env, e.g. Slack/Discord) when configured.
+    Use for breaker trips, naked-leg rollback failures, repeated fill failures. Never raises."""
+    _emit_log(f"🚨 ALERT — {title}{(' · ' + msg) if msg else ''}", level=level)
+    url = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+    if not url:
+        return
+    try:
+        import json as _j, urllib.request as _u
+        body = _j.dumps({"text": f"[AlpacaTrader] {title}\n{msg}"}).encode()
+        req = _u.Request(url, data=body, headers={"Content-Type": "application/json"})
+        # short timeout; runs in a background greenlet — must not wedge the caller
+        _u.urlopen(req, timeout=5).read()
+    except Exception as e:
+        log.debug(f"alert webhook failed: {e}")
+
+
 def _run_daily_eod() -> None:
     """EOD routine for the daily Connors RSI(2) strategy.
     Fires at DAILY_EOD_HOUR:DAILY_EOD_MINUTE ET. Respects app's dry_run state."""
@@ -2676,12 +2694,10 @@ def _auto_exec_options(data: dict) -> None:
                 # so a single flaky equity fetch can't disarm a healthy account.
                 _loss_breach_count += 1
                 if _loss_breach_count >= LOSS_BREACH_CONFIRM:
-                    _emit_log(
-                        f"⛔ AUTO-EXEC HALTED — daily P&L {dd_pct:+.2f}% breached "
-                        f"-{DAILY_LOSS_LIMIT_PCT:.1f}% loss limit (equity "
-                        f"${cur_eq:,.2f} vs start ${_session_start_equity:,.2f})",
-                        level="WARNING",
-                    )
+                    _alert("AUTO-EXEC HALTED — daily loss limit breached",
+                           f"P&L {dd_pct:+.2f}% < -{DAILY_LOSS_LIMIT_PCT:.1f}% "
+                           f"(equity ${cur_eq:,.2f} vs start ${_session_start_equity:,.2f})",
+                           level="WARNING")   # OB-2: push so the operator is told, not just logged
                     with _state_lock:
                         state["auto_execute_options"] = False
                     emit_state()
