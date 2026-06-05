@@ -444,20 +444,14 @@ _auto_exec_date:   str = ""
 _auto_exec_stock_today:  set = set()
 _auto_exec_stock_filled: set = set()
 STOCK_MAX_AUTO_EXEC_PER_DAY = 3
-# Equal-dollar stock sizing (operator 2026-06-04): buy shares totaling ~$5000 per
-# position instead of a flat 10 shares, so stock positions are equally weighted.
-STOCK_TARGET_USD = 5000.0
+# AH-2/CR-6: equal-dollar stock sizing target lives in config.py (single source).
+from config import STOCK_TARGET_USD, size_position as _size_position
 
 
 def _stock_qty_for(price) -> int:
-    """Shares to deploy ~STOCK_TARGET_USD at `price` (min 1). 0 if price unusable."""
-    try:
-        p = float(price)
-    except (TypeError, ValueError):
-        return 0
-    if p <= 0:
-        return 0
-    return max(1, int(STOCK_TARGET_USD // p))
+    """Shares to deploy ~STOCK_TARGET_USD at `price` (min 1). 0 if price unusable.
+    Delegates to the shared config.size_position so every path sizes identically (CR-6)."""
+    return _size_position("stocks", price)
 # Per-symbol daily attempt cap (#36): a symbol that fails to fill (e.g. COHR
 # tripping the $600 hard ceiling, an illiquid name, a rejected order) is retried
 # at most this many times per day, then skipped — stops the retry storm where
@@ -2245,7 +2239,7 @@ def on_daily_status():
 # ── Screener tab ──────────────────────────────────────────────────────────────
 _screener_refresh_lock = threading.Lock()
 
-MAX_AUTO_EXEC_PER_DAY = 5   # hard cap — never place more than this many auto orders per day (operator 2026-06-04: 3→5)
+from config import MAX_AUTO_EXEC_PER_DAY   # AH-2: hard cap on auto orders/day (single source)
 
 # Merged-picks feature flag. When ON, the screener becomes ONE KB-ranked pick list
 # (data["picks"]) that drives the display AND both auto-exec lanes — so "what's shown
