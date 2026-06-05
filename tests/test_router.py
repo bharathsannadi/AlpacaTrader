@@ -55,21 +55,23 @@ def test_ivr_unknown_falls_back_to_shares():
 
 
 # ── REQ-601.3 affordability + risk-brain interaction ──────────────────────────
-def test_option_over_500_cap_falls_back_to_shares():
-    # premium high enough that naked risk > $500 → option blocked → shares
+def test_option_over_cap_falls_back_to_shares():
+    # premium high enough that naked risk > the $600 per-trade cap → option blocked → shares
     sig = Signal("NVDA", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
-    d = route_signal(sig, _rb(), option_premium=6.0)   # 6.00 × 100 = $600 > $500
+    d = route_signal(sig, _rb(), option_premium=7.0)   # 7.00 × 100 = $700 > $600
     assert d.route == "stocks"
     assert "fall back to shares" in d.reason
 
 def test_skip_when_neither_fits():
+    from risk_brain import OPT_PER_TRADE_MAX_USD, OPT_WEEK_MAX_USD
     rb = RiskBrain(total_equity=107_846)
     rb.register_entry("stocks", cost_usd=95_000)   # stock sleeve full
-    # exhaust options weekly cap too
+    # exhaust the options weekly cap too (config single source — no stale literal)
     from datetime import date
     t = date(2026, 6, 1)
-    for _ in range(3):
-        rb.register_entry("options", 100, 500, today=t)
+    per = OPT_PER_TRADE_MAX_USD
+    for _ in range(int(OPT_WEEK_MAX_USD // per)):
+        rb.register_entry("options", 100, per, today=t)
     sig = Signal("NVDA", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
     d = route_signal(sig, rb)
     assert d.route == "skip"

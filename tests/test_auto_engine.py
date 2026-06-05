@@ -25,13 +25,15 @@ def test_plan_routes_and_sizes():
     assert routes["NVDA"] == "options"     # vol edge, IVR<30 → naked (§2)
 
 
-def test_etf_prioritized_first():
+def test_shares_lane_prioritizes_stocks_over_etf():
+    # Route-aware (operator 2026-06-01): directional-only (shares-lane) signals trade
+    # individual stocks BEFORE ETFs — so AAPL ranks ahead of SPY (was blanket ETF-first).
     sigs = [
         Signal("AAPL", "bull", "connors_rsi2", strength=0.9, price=200, atr=4, asset_class="stock"),
         Signal("SPY", "bull", "trend_pullback", strength=0.1, price=560, atr=6, asset_class="etf"),
     ]
     plan = build_plan(sigs, equity=200_000, etf_set=ETF)
-    assert plan["planned"][0].signal.symbol == "SPY"   # ETF tier first
+    assert plan["planned"][0].signal.symbol == "AAPL"   # shares lane → stock before ETF
 
 
 def test_options_weekly_cap_skips_excess():
