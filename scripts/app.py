@@ -452,6 +452,19 @@ def _stock_qty_for(price) -> int:
     """Shares to deploy ~STOCK_TARGET_USD at `price` (min 1). 0 if price unusable.
     Delegates to the shared config.size_position so every path sizes identically (CR-6)."""
     return _size_position("stocks", price)
+
+
+def _free_cash() -> float:
+    """Settled CASH available (operator 2026-06-05: NO MARGIN — only deploy cash, never
+    borrow; margin amplifies losses). Negative = already on margin → buy nothing. Returns a
+    big number only if we genuinely can't read the account (fail-open is wrong here, so 0)."""
+    try:
+        c = getattr(trader, "TRADING_CLIENT", None)
+        if c is None:
+            return 0.0
+        return float(c.get_account().cash or 0.0)
+    except Exception:
+        return 0.0
 # Per-symbol daily attempt cap (#36): a symbol that fails to fill (e.g. COHR
 # tripping the $600 hard ceiling, an illiquid name, a rejected order) is retried
 # at most this many times per day, then skipped — stops the retry storm where
@@ -2766,12 +2779,18 @@ def _auto_exec_options(data: dict) -> None:
                 if p.get("route") == "options" and p.get("sym") in _opt_by]
     else:
         rows = data.get("options", [])
+    _opt_cash = _free_cash()   # NO-MARGIN guard (operator 2026-06-05)
     for o in rows:
         with _auto_exec_lock:
             count_today = len(_auto_exec_filled)   # cap counts FILLED trades, not attempts
         if count_today >= MAX_AUTO_EXEC_PER_DAY:
             log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY} filled) reached "
                      f"— skipping remaining signals")
+            break
+        # NO-MARGIN: need at least the $600 ceiling in settled cash to open an option
+        if _opt_cash < screener_executor.OPT_HARD_MAX_USD:
+            _emit_log(f"AUTO-EXEC ⛔ skipping options — free cash ${_opt_cash:.0f} "
+                      f"< ${screener_executor.OPT_HARD_MAX_USD:.0f} (no margin)", level="INFO")
             break
         if len(held_opt_underlyings) >= screener_executor.OPT_MAX_OPEN:
             log.info(f"[auto-exec] max {screener_executor.OPT_MAX_OPEN} option positions "
@@ -2836,6 +2855,7 @@ def _auto_exec_options(data: dict) -> None:
             _filled = (result.get("long_fill_status") in ("filled", "partial")
                        or int(result.get("long_filled_qty", 0) or 0) > 0)
             if _filled:
+                _opt_cash -= float(result.get("total_cost") or screener_executor.OPT_HARD_MAX_USD)  # no-margin
                 with _auto_exec_lock:
                     _auto_exec_filled.add(sym)
                     _auto_exec_attempts.pop(sym, None)   # success clears the counter
@@ -2925,6 +2945,7 @@ def _auto_exec_stocks(data: dict) -> None:
         _held_stock_syms = {p["sym"].upper() for p in _account_equity_positions()}
     except Exception:
         _held_stock_syms = set()
+    _cash = _free_cash()   # NO-MARGIN guard: only deploy settled cash this cycle (operator 2026-06-05)
     for r in stock_rows:
         # Only strong, validated, top-ranked rows (the ⭐ + ✅ BUY ones).
         strong = (r.get("action") == "✅ BUY") or (r.get("valid") and r.get("is_top"))
@@ -2959,11 +2980,19 @@ def _auto_exec_stocks(data: dict) -> None:
             with _auto_exec_lock:
                 _auto_exec_stock_today.discard(sym)
             continue
+        # NO-MARGIN guard: don't buy if it would exceed settled cash (operator 2026-06-05).
+        _cost = qty * float(r.get("price") or 0)
+        if _cost > _cash:
+            _emit_log(f"AUTO-BUY ⛔ {sym} skipped — ${_cost:.0f} > free cash ${_cash:.0f} "
+                      f"(no margin)", level="INFO")
+            continue
         with _auto_exec_lock:
             _auto_exec_stock_today.add(sym)      # mark before the call (dedup)
             _save_auto_exec_state()
         try:
             res = shares_executor.buy(sym, qty, dry_run=dry)
+            if res.get("success") and not res.get("dry_run"):
+                _cash -= _cost            # decrement remaining cash for this cycle
             res["sym"] = sym
             res["message"] = (f"AUTO-BUY {qty} {sym} (~${qty*float(r.get('price') or 0):.0f})"
                               if res.get("success")
