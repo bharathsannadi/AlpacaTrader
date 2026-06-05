@@ -38,12 +38,11 @@ MAX_NEW_PER_DAY     = 10       # #38: hard cap on TOTAL new entries per day. The
                                # ±% exit + re-entry loop produced 180 round-trips
                                # in a day (churn, not edge) — this bounds how much
                                # the engine can deploy/rotate in a single session.
-# #20: the engine can also place OPTIONS for vol-edge signals (ETFs + stocks).
-# Defaults OFF (project safety rule #1 for new order paths) — wired + ready; flip
-# on after a validation pass and the §9-OI fix (#28). Until then directional
-# signals route to shares; the separate screener auto-exec lane covers live
-# autonomous options in the meantime.
-OPTIONS_ENGINE_ENABLED = False
+# AH-3 (2026-06-04): the auto_engine OPTIONS path is DECOMMISSIONED. The merged-picks
+# screener auto-exec (_auto_exec_options) is the SINGLE autonomous-options path now, so
+# this engine is shares-only. The flag stays False (do NOT enable) and is kept only so
+# legacy references (signals_for_symbol) don't break; execution skips options unconditionally.
+OPTIONS_ENGINE_ENABLED = False   # decommissioned — superseded by merged-picks
 # Operator 2026-06-02: stocks exit on PRIMARY ±2% bands; the dynamic trailing
 # ladder + 21d time cap remain as the SIDEWAYS backstop. On a close, the stock
 # auto-buy lane rotates capital into the next eligible screener pick.
@@ -423,16 +422,11 @@ def execute_plan(plan: dict, dry_run: bool = False,
                 log.info(f"[auto-engine] ⛔ {s.symbol} {why6}")
                 continue
         if d.route == "options":
-            if not OPTIONS_ENGINE_ENABLED:
-                log.info(f"[auto-engine] {s.symbol} routes to OPTIONS — engine options "
-                         f"path disabled (OPTIONS_ENGINE_ENABLED=False); skipping")
-                continue
-            opos = _execute_option(s, d, dry_run=dry_run)
-            if opos is not None:
-                positions.append(opos)
-                held.add(s.symbol)
-                open_risk += float(opos.get("entry_debit") or 0.0) * 100
-                entries_today = _record_entry()   # #38
+            # AH-3 (2026-06-04): DECOMMISSIONED — the merged-picks screener auto-exec
+            # (_auto_exec_options) is the single autonomous-options path. Options-routed
+            # signals are skipped here (not double-traded). This engine is shares-only.
+            log.info(f"[auto-engine] {s.symbol} routes to OPTIONS → handled by the "
+                     f"merged-picks lane; skipping in auto_engine (decommissioned)")
             continue
         if d.route != "stocks":
             continue

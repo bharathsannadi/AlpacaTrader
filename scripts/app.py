@@ -1375,6 +1375,7 @@ def health():
         "screener_options_count": screener_options_count,
         # Position monitor activity
         "trades_today_count":     trades_count,
+        "boots_24h":              _boots_last_24h(),   # OB-5: restart frequency (instability)
     }
     # inf age right after boot is normal (loop hasn't ticked yet) — don't 503
     # on a cold start; only 503 once it has ticked then went stale.
@@ -1898,6 +1899,42 @@ def _alert(title: str, msg: str = "", level: str = "ERROR") -> None:
         _u.urlopen(req, timeout=5).read()
     except Exception as e:
         log.debug(f"alert webhook failed: {e}")
+
+
+# ── OB-5: health history — restart frequency is a wedge/instability proxy ─────
+_HEALTH_HISTORY_PATH = os.path.expanduser("~/.spy_trader/health_history.jsonl")
+
+
+def _record_boot() -> None:
+    """Append a boot event so restart frequency is visible. The watchdog kills+relaunches a
+    wedged process, so frequent boots = instability. Append-only; never raises."""
+    try:
+        import json as _j, datetime as _dt
+        os.makedirs(os.path.dirname(_HEALTH_HISTORY_PATH), exist_ok=True)
+        with open(_HEALTH_HISTORY_PATH, "a") as fh:
+            fh.write(_j.dumps({"ts": _dt.datetime.now().isoformat(),
+                               "event": "boot", "pid": os.getpid()}) + "\n")
+    except Exception as e:
+        log.debug(f"health history: {e}")
+
+
+def _boots_last_24h() -> int:
+    """Count boot events in the last 24h (restart-frequency / instability signal)."""
+    try:
+        import json as _j, datetime as _dt
+        cutoff = _dt.datetime.now() - _dt.timedelta(hours=24)
+        n = 0
+        with open(_HEALTH_HISTORY_PATH) as fh:
+            for line in fh:
+                try:
+                    r = _j.loads(line)
+                    if r.get("event") == "boot" and _dt.datetime.fromisoformat(r["ts"]) >= cutoff:
+                        n += 1
+                except Exception:
+                    pass
+        return n
+    except Exception:
+        return 0
 
 
 def _run_daily_eod() -> None:
@@ -3899,6 +3936,7 @@ def _single_instance_guard(port: int = 5000) -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     _single_instance_guard(5000)   # never run two instances on the same port
+    _record_boot()            # OB-5: track restart frequency (instability signal)
     _load_auto_exec_state()   # restore today's dedup set if mid-day restart
     _load_trades_today()      # restore today's closed trades (#17)
     _load_exit_config()       # restore operator-edited exit thresholds

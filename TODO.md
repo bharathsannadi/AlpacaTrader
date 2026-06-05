@@ -1057,7 +1057,7 @@ All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
 |----|------|-----|--------|
 | **AH-1** | **Stop blocking the eventlet hub** — (a) thread-pool + hard timeout around every yfinance/Alpaca call; (b) migrate eventlet→ASGI/gevent | A sync call wedges the whole process (price_ticker dead ~5.6h, login 21s); watchdog only papers over it | ⬜ |
 | **AH-2** | **Single source of truth for caps & sizing** — `config.py`/`RiskConfig` dataclass + one `size_position()` used by every path | Caps scattered/inconsistent ($600 screener, $600 risk_brain, $400 daily, fixed-10 vs $5000); changing one cap = 3 files | ✅ Done 2026-06-04 — `scripts/config.py` is the single source for option caps + stock target + a shared `size_position()`; screener_executor/risk_brain/app import from it; both executors size via it |
-| **AH-3** | **Kill the duplicate autonomous engine** — decommission `auto_engine` options path (merged-picks is live) | Two autonomous paths, one disabled = confusion | ⬜ |
+| **AH-3** | **Kill the duplicate autonomous engine** — decommission `auto_engine` options path (merged-picks is live) | Two autonomous paths, one disabled = confusion | ✅ Done 2026-06-04 — auto_engine options path decommissioned (unconditional skip; merged-picks is the single autonomous-options path); shares engine untouched; suite 184/184 |
 | **AH-4** | **Runnable tests + CI** — commit requirements-dev, `make test`, CI/pre-push hook | ~163 tests exist but pytest not installed; changes hand-verified | ✅ Done 2026-06-04 — pytest+pytest-mock installed; `make test`/`make smoke`; GitHub Actions `tests.yml`; suite green 179/179 (fixed 7 stale cap/ordering tests to use config constants) |
 | **AH-5** | **Break up monoliths** — split `app.py` (~3k lines) into screener_pipeline/auto_exec/exit_manager; modularize `main.js` | Low cohesion, hard to navigate | ⬜ |
 | **AH-6** | **Unify exit logic** — `exit_engine` as the single exit authority; retire flat +80/−50 dup in `_manage_option_positions` | Two exit implementations for one job | ⬜ |
@@ -1070,7 +1070,7 @@ All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
 | **OB-2** | **Alerting** — wire + TEST ERROR webhook + push on breaker trip / watchdog kill / failed fill / gate-spike / drawdown | Failures are currently silent until you look | 🟡 Partial 2026-06-04 — `_alert()` (UI log + optional `ALERT_WEBHOOK_URL` push) wired into the daily-loss circuit breaker; rollback/fill-fail hooks + webhook test still TODO |
 | **OB-3** | **Metrics + equity curve** — per-strategy P&L/win/fills-vs-signals/latency; persist equity curve (≥5 EOD pts) + chart | Checklist §2 needs it; no real performance view | ⬜ |
 | **OB-4** | **State↔broker reconciliation** — periodic check internal positions == Alpaca account; alert on drift; also CANCEL never-filled orders (FILL_TIMEOUT_MINS=3 did NOT fire on a stale AMZN spread order that sat `NEW` ~24h → phantom "pending" showed as 🔵 HELD, reconciled manually 2026-06-04) | Catches the phantom-position class (checklist §6) | ✅ Done 2026-06-04 — `_reconcile_orders_positions()` every 5min: cancels orders unfilled >10min + alerts phantom (state-held but not in account) |
-| **OB-5** | **Health history** — aggregate wedges/restarts/watchdog-kills over time (not just point-in-time /health) | Reliability trend visibility | ⬜ |
+| **OB-5** | **Health history** — aggregate wedges/restarts/watchdog-kills over time (not just point-in-time /health) | Reliability trend visibility | ✅ Done 2026-06-04 — `_record_boot()` on startup → `~/.spy_trader/health_history.jsonl`; `boots_24h` (restart frequency) in /health |
 
 ### 🔴 Code-review findings (2026-06-04, merged-picks/sizing diff)
 
@@ -1082,4 +1082,27 @@ All items target the **Connors RSI(2) daily strategy** (`daily_trader.py`).
 | **CR-4** | **🟠 Refresh path blocks the hub + double work** — `account_value()` network read + fresh `RiskBrain` + route every symbol on every refresh AND on cached tab-open; plus `_annotate_kb` runs twice (re-scores stocks needlessly). Read equity from `state` snapshot; re-score only option rows after liquidity. | `app.py:_refresh_screener_bg` | ✅ Fixed 2026-06-04 — equity read from `state` snapshot first (no blocking hub call); post-liquidity re-score is options-only (`_annotate_kb(options_only=True)`) |
 | **CR-5** | **🟡 Duplicated IVR parser** — `router._ivr_num` is byte-identical to `kb_principles._parse_ivr`. Import the shared one. | `router.py` / `kb_principles.py` | ✅ Fixed 2026-06-04 — `router` imports `kb_principles._parse_ivr` |
 | **CR-6** | **🟡 Sizing fragmented** — equal-dollar sizing added in `screener_executor` (options) + `app._stock_qty_for` (stocks) while `risk_brain` still fixed-10; router sizes via RiskBrain but executor sizes differently → routing vs fill disagree. One `size_position()` (ties to AH-2). | multiple | 🟡 Partial 2026-06-04 — both EXECUTORS now size via the shared `config.size_position` (AH-2); router's affordability estimate still uses fixed-10 (`rb.stock_shares`) — align next |
-| **CR-7** | **🟡 `has_vol_edge=bool(o)` shallow proxy** — any symbol with an option row is treated as a vol-edge → can misroute to options. Emit an explicit edge flag on the option row (ties to AH-1 IVR feed). | `router.py:route_for_pick` | ⬜ |
+| **CR-7** | **🟡 `has_vol_edge=bool(o)` shallow proxy** — any symbol with an option row is treated as a vol-edge → can misroute to options. Emit an explicit edge flag on the option row (ties to AH-1 IVR feed). | `router.py:route_for_pick` | ✅ Fixed 2026-06-04 — `has_vol_edge` now requires a usable IVR (`bool(o) and _ivr is not None`), not mere option-row presence |
+
+---
+
+## Multi-user cloud deployment (Option A: process-per-user) — for ~3 users
+
+> Decision (2026-06-04): run ONE isolated app INSTANCE per user (own Alpaca keys, own data
+> dir, own port) behind a reverse proxy — NOT in-process multi-tenant. In-process means
+> threading a per-user context through 121 `state[]` accesses + 59 locks + 6 loops + all of
+> spy_auto_trader (~5500 lines) = 3–5 wk, high risk; process-per-user ≈ 1 wk AND the isolation
+> FIXES the shared-account + log-broadcast-leak issues for free. Revisit in-process only at
+> dozens of users. (Standing caveat: edge unproven + paper — business call.)
+
+| ID | Item | Why | Status |
+|----|------|-----|--------|
+| **MU-1** | **Parameterize the data dir** — replace the 26 hardcoded `~/.spy_trader` paths with one `SPY_DATA_DIR` env (default `~/.spy_trader`) so each instance is isolated | per-user state/positions/journal isolation | ⬜ |
+| **MU-2** | **Parameterize port + bind** — `PORT` env, bind `0.0.0.0` only behind the proxy (today `127.0.0.1:5000` hardcoded) | run N instances; reachable via proxy | ⬜ |
+| **MU-3** | **Per-instance `.env`** — each user's `ALPACA_*` keys in their own env/secret; login uses that instance's account | trades route to the right account | ⬜ |
+| **MU-4** | **Linux/Docker packaging** — Dockerfile; drop `caffeinate`/`launchd` (macOS-only); container `restart: always` + healthcheck on `/health` (reuse `watchdog.sh` logic) | cloud host, not a Mac | ⬜ |
+| **MU-5** | **Reverse proxy + TLS + auth gateway** — Caddy/nginx (auto-TLS) + auth (basic-auth / OAuth proxy) routing each user→their instance (subdomain or path); set `SESSION_COOKIE_SECURE=True` | HTTPS + per-user routing | ⬜ |
+| **MU-6** | **Isolation verification** — no cross-user data/logs (`SocketIOHandler` broadcast is moot per-instance, one user/process); per-instance dedup/state files separate | security | ⬜ |
+| **MU-7** | **Shared services** — Polygon archival + screener yfinance are account-independent; run ONE shared instance/cron, not per-user, to avoid 3× API load | cost/efficiency | ⬜ |
+
+**Estimate ~1 week.** MU-1 is the only sizeable code change; rest is infra. Ties to REQ-613.
