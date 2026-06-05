@@ -465,6 +465,23 @@ def _free_cash() -> float:
         return float(c.get_account().cash or 0.0)
     except Exception:
         return 0.0
+
+
+def _portfolio_position_count() -> int:
+    """Total concurrent OPEN positions across BOTH lanes (equity + options).
+
+    Backs the concentration cap (config.MAX_PORTFOLIO_POSITIONS): the two
+    auto-exec lanes run independently and each only knew its own held set, so
+    together they rebuilt a 20-correlated-long book that a single risk-off day
+    stopped out 0W/20L (2026-06-05 post-mortem). Long-only book ⇒ count == net-
+    long breadth. Reads the throttled position cache (same source as the held-
+    skip), so it's cheap and won't block the hub. Returns -1 if the position
+    state can't be read at all, so callers FAIL SAFE (skip new entries) rather
+    than open into an unknown book."""
+    try:
+        return len(_account_equity_positions()) + len(_account_option_positions())
+    except Exception:
+        return -1
 # Per-symbol daily attempt cap (#36): a symbol that fails to fill (e.g. COHR
 # tripping the $600 hard ceiling, an illiquid name, a rejected order) is retried
 # at most this many times per day, then skipped — stops the retry storm where
@@ -2298,6 +2315,7 @@ def on_daily_status():
 _screener_refresh_lock = threading.Lock()
 
 from config import MAX_AUTO_EXEC_PER_DAY   # AH-2: hard cap on auto orders/day (single source)
+from config import MAX_PORTFOLIO_POSITIONS  # concentration cap: max concurrent positions, both lanes
 
 # Merged-picks feature flag. When ON, the screener becomes ONE KB-ranked pick list
 # (data["picks"]) that drives the display AND both auto-exec lanes — so "what's shown
@@ -2786,12 +2804,26 @@ def _auto_exec_options(data: dict) -> None:
     else:
         rows = data.get("options", [])
     _opt_cash = _free_cash()   # NO-MARGIN guard (operator 2026-06-05)
+    # CONCENTRATION cap (operator 2026-06-05): cap TOTAL open positions across both
+    # lanes so the book can't rebuild the 20-correlated-long stack that went 0W/20L.
+    # -1 = couldn't read the book → fail safe (open nothing this cycle).
+    _port_n   = _portfolio_position_count()
+    _opt_slots = (MAX_PORTFOLIO_POSITIONS - _port_n) if _port_n >= 0 else 0
+    if _opt_slots <= 0:
+        _emit_log(f"AUTO-EXEC ⛔ skipping options — portfolio full "
+                  f"({_port_n if _port_n >= 0 else '?'}/{MAX_PORTFOLIO_POSITIONS} "
+                  f"positions, concentration cap)", level="INFO")
+        return
     for o in rows:
         with _auto_exec_lock:
             count_today = len(_auto_exec_filled)   # cap counts FILLED trades, not attempts
         if count_today >= MAX_AUTO_EXEC_PER_DAY:
             log.info(f"[auto-exec] Daily cap ({MAX_AUTO_EXEC_PER_DAY} filled) reached "
                      f"— skipping remaining signals")
+            break
+        if _opt_slots <= 0:
+            log.info(f"[auto-exec] concentration cap ({MAX_PORTFOLIO_POSITIONS} "
+                     f"positions) reached — skipping remaining")
             break
         # NO-MARGIN: need at least the $600 ceiling in settled cash to open an option
         if _opt_cash < screener_executor.OPT_HARD_MAX_USD:
@@ -2861,7 +2893,9 @@ def _auto_exec_options(data: dict) -> None:
             _filled = (result.get("long_fill_status") in ("filled", "partial")
                        or int(result.get("long_filled_qty", 0) or 0) > 0)
             if _filled:
-                _opt_cash -= float(result.get("total_cost") or screener_executor.OPT_HARD_MAX_USD)  # no-margin
+                _opt_cash  -= float(result.get("total_cost") or screener_executor.OPT_HARD_MAX_USD)  # no-margin
+                _opt_slots -= 1                     # concentration cap: one more position open
+                held_opt_underlyings.add(sym)       # keep OPT_MAX_OPEN count current within the cycle
                 with _auto_exec_lock:
                     _auto_exec_filled.add(sym)
                     _auto_exec_attempts.pop(sym, None)   # success clears the counter
@@ -2952,7 +2986,20 @@ def _auto_exec_stocks(data: dict) -> None:
     except Exception:
         _held_stock_syms = set()
     _cash = _free_cash()   # NO-MARGIN guard: only deploy settled cash this cycle (operator 2026-06-05)
+    # CONCENTRATION cap (operator 2026-06-05): same portfolio-wide breadth ceiling the
+    # options lane enforces — total open positions across both lanes ≤ MAX_PORTFOLIO_POSITIONS.
+    _port_n     = _portfolio_position_count()
+    _stk_slots  = (MAX_PORTFOLIO_POSITIONS - _port_n) if _port_n >= 0 else 0
+    if _stk_slots <= 0:
+        _emit_log(f"AUTO-BUY ⛔ skipping stocks — portfolio full "
+                  f"({_port_n if _port_n >= 0 else '?'}/{MAX_PORTFOLIO_POSITIONS} "
+                  f"positions, concentration cap)", level="INFO")
+        return
     for r in stock_rows:
+        if _stk_slots <= 0:
+            log.info(f"[auto-buy] concentration cap ({MAX_PORTFOLIO_POSITIONS} "
+                     f"positions) reached — skipping remaining")
+            break
         # Only strong, validated, top-ranked rows (the ⭐ + ✅ BUY ones).
         strong = (r.get("action") == "✅ BUY") or (r.get("valid") and r.get("is_top"))
         if not strong:
@@ -2999,6 +3046,8 @@ def _auto_exec_stocks(data: dict) -> None:
             res = shares_executor.buy(sym, qty, dry_run=dry)
             if res.get("success") and not res.get("dry_run"):
                 _cash -= _cost            # decrement remaining cash for this cycle
+                _stk_slots -= 1           # concentration cap: one more position open
+                _held_stock_syms.add(sym) # keep the held set current within the cycle
             res["sym"] = sym
             res["message"] = (f"AUTO-BUY {qty} {sym} (~${qty*float(r.get('price') or 0):.0f})"
                               if res.get("success")

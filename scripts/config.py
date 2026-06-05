@@ -21,6 +21,15 @@ OPT_WEEK_MAX_USD      = 3000.0    # risk_brain rolling-week options risk cap (RE
 # ── Stock sizing ─────────────────────────────────────────────────────────────
 STOCK_TARGET_USD      = 5000.0    # equal-dollar target capital per stock position
 
+# ── Portfolio concentration cap (operator 2026-06-05) ────────────────────────
+# Post-mortem of the −$2,549 / 0W-20L day: the screener + autonomous lanes each
+# piled into 20+ same-direction LONG positions, so a single risk-off tape (12 of
+# 15 names down) stopped them ALL out together. This is KB-5 ("max 3 correlated")
+# generalised to a portfolio breadth ceiling: in a long-only book, position COUNT
+# *is* the concentration measure. Enforced across BOTH auto-exec lanes (stocks +
+# options) so neither can independently rebuild a 20-correlated-long book.
+MAX_PORTFOLIO_POSITIONS = 12      # max concurrent open positions, stocks + options combined
+
 
 def size_position(route: str, price: float = 0.0, per_contract_cost: float = 0.0,
                   ceiling: float = OPT_HARD_MAX_USD) -> int:

@@ -77,3 +77,65 @@ def test_reconcile_cancels_stale_and_alerts_phantom(monkeypatch):
     assert c.cancelled == ["O1"]                                   # only the 20-min stale one
     assert any("phantom" in m and "AMZN" in m for m in logs)       # pending, not in account
     assert not any("GOOG" in m for m in logs)                      # 'signal' is not a phantom
+
+
+# ── Concentration cap (2026-06-05): total open positions across BOTH lanes ─────
+def test_concentration_cap_constant():
+    assert config.MAX_PORTFOLIO_POSITIONS == 12
+    assert app.MAX_PORTFOLIO_POSITIONS == config.MAX_PORTFOLIO_POSITIONS
+
+
+def test_portfolio_position_count_sums_both_lanes(monkeypatch):
+    monkeypatch.setattr(app, "_account_equity_positions", lambda: [1, 2, 3])
+    monkeypatch.setattr(app, "_account_option_positions", lambda: [4, 5])
+    assert app._portfolio_position_count() == 5
+
+
+def test_portfolio_position_count_fails_safe_on_error(monkeypatch):
+    def boom(): raise RuntimeError("api down")
+    monkeypatch.setattr(app, "_account_equity_positions", boom)
+    assert app._portfolio_position_count() == -1   # -1 → caller opens nothing
+
+
+def _arm(monkeypatch):
+    """Arm both lanes: logged-in, market open, not dry — so only the caps gate."""
+    monkeypatch.setitem(app.state, "auto_execute_options", True)
+    monkeypatch.setitem(app.state, "logged_in", True)
+    monkeypatch.setitem(app.state, "dry_run", False)
+    monkeypatch.setattr(app.screener, "_is_market_open", lambda: True)
+
+
+def test_stocks_lane_blocked_when_portfolio_full(monkeypatch):
+    _arm(monkeypatch)
+    monkeypatch.setattr(app, "_portfolio_position_count",
+                        lambda: config.MAX_PORTFOLIO_POSITIONS)   # exactly full
+    monkeypatch.setattr(app, "_free_cash", lambda: 1_000_000.0)   # cash is NOT the limiter
+    monkeypatch.setattr(app, "_account_equity_positions", lambda: [])
+    logs = []
+    monkeypatch.setattr(app, "_emit_log", lambda m, **k: logs.append(m))
+    import shares_executor
+    bought = []
+    monkeypatch.setattr(shares_executor, "buy",
+                        lambda *a, **k: bought.append(a) or {"success": True})
+    data = {"dt": [{"sym": "NVDA", "action": "✅ BUY", "price": 100}]}
+    app._auto_exec_stocks(data)
+    assert bought == []                                           # nothing opened
+    assert any("portfolio full" in m for m in logs)
+
+
+def test_options_lane_blocked_when_portfolio_full(monkeypatch):
+    _arm(monkeypatch)
+    monkeypatch.setattr(app, "_portfolio_position_count",
+                        lambda: config.MAX_PORTFOLIO_POSITIONS + 3)   # over the cap
+    monkeypatch.setattr(app, "_free_cash", lambda: 1_000_000.0)
+    monkeypatch.setattr(app.trader, "TRADING_CLIENT", None, raising=False)
+    logs = []
+    monkeypatch.setattr(app, "_emit_log", lambda m, **k: logs.append(m))
+    import screener_executor as _se
+    placed = []
+    monkeypatch.setattr(_se, "execute_screener_option",
+                        lambda *a, **k: placed.append(a) or {"success": True})
+    data = {"options": [{"sym": "QQQ", "action": "✅ BUY"}]}
+    app._auto_exec_options(data)
+    assert placed == []                                          # nothing opened
+    assert any("portfolio full" in m for m in logs)
