@@ -372,3 +372,20 @@ scale out of a single contract, which is exactly why today's 1-lot DIA/SMCI/XLF
 positions are binary hold-or-close) and the **T1 partial-close** mechanic
 (REQ-614.2). Until sizing is ≥ 2, "exact trim size" is not executable. Gated and
 unvalidated until A/B'd on the backtest (REQ-614.6).
+
+---
+
+## 18. EOD self-improvement pipeline — propose → validate → apply (NOT auto-fix)
+
+| ID | Requirement | Rationale | Status |
+|----|-------------|-----------|--------|
+| **REQ-615** | The EOD analysis may **PROPOSE** changes; it must **never auto-apply code or params to the live account.** Closes the "analyze + improve daily" loop safely | over-fitting one noisy day / unsupervised LLM edits = money risk | ⬜ |
+| REQ-615.1 | **EOD emits structured proposals** — concrete param/flag diffs (not prose), each with the evidence (e.g. "OPT_RELAX_LIQUIDITY→False: 5 fills at >5% spread, 225bps slippage") | actionable, auditable | ⬜ |
+| REQ-615.2 | **Debate gate scores each proposal** (bull/bear: is the change justified by the evidence, or a one-day artifact?) — reuse `debate.py` for change-review, not just per-trade | guard against noise | ⬜ |
+| REQ-615.3 | **Backtest validates** every proposal against the cost-robust walk-forward (REQ-603.3 / 610.4) before it can go live — a proposal that fails the gate is rejected | non-negotiable: never silently retune live | ⬜ |
+| REQ-615.4 | **PARAMS** that pass 615.2+615.3 may auto-apply (then restart); **CODE** changes always require the green test suite (`make test`) + a human glance — no LLM-written code deploys unreviewed | code risk ≫ param risk | ⬜ |
+| REQ-615.5 | **Cautionary precedent (2026-06-04):** the EOD auto-summary's top rec was "tighten stops 2×" — the data showed stops were fine and illiquid market fills were the cause. Auto-apply would have made it worse. This REQ exists because of that day | why propose≠apply | ✅ logged |
+
+**Reading:** auto-*propose* + auto-*score* + backtest-*validate* = yes. Auto-*apply
+code/params live + restart* = no. The 2026-06-04 day is the proof: the right fix came
+from reading the data (slippage + relaxation logs), not the summary's first instinct.
