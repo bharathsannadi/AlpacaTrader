@@ -682,22 +682,24 @@ def _run_eod_analysis(emit: bool = True) -> dict:
         log.warning(f"save eod report: {e}")
     if emit:
         socketio.emit("eod_report", report)   # carries ts for the card's "last run" stamp
-        # Full report → the Log (operator 2026-06-04: keep the card minimal, show analysis here)
-        _emit_log(f"━━━━━ EOD ANALYSIS {today} ━━━━━", level="INFO")
-        _emit_log(f"  Closed {len(closed)} ({len(wins)}W/{len(losses)}L · {stats['win_rate']}%) · "
-                  f"realized ${realized:+.0f} · open {stats['open']} (${unreal:+.0f} unreal)", level="INFO")
+        # Full report → the Log. Build ALL lines, then emit with a yield between each so every
+        # line flushes to the socket. (Bug 2026-06-05: ~18 rapid emits with no yield → under
+        # eventlet hub contention only the header reached the browser.)
+        _lines = [f"━━━━━ EOD ANALYSIS {today} ━━━━━",
+                  f"  Closed {len(closed)} ({len(wins)}W/{len(losses)}L · {stats['win_rate']}%) · "
+                  f"realized ${realized:+.0f} · open {stats['open']} (${unreal:+.0f} unreal)"]
         if reasons:
-            _emit_log("  Exits: " + " · ".join(f"{k} {v}" for k, v in reasons.items()), level="INFO")
+            _lines.append("  Exits: " + " · ".join(f"{k} {v}" for k, v in reasons.items()))
         if missed:
-            _emit_log(f"  Missed BUYs ({len(missed)}): " + ", ".join(missed[:15])
-                      + ("…" if len(missed) > 15 else ""), level="INFO")
+            _lines.append(f"  Missed BUYs ({len(missed)}): " + ", ".join(missed[:15])
+                          + ("…" if len(missed) > 15 else ""))
         if relaxed:
-            _emit_log(f"  KB relaxations: {len(relaxed)} (paper-only fills)", level="WARNING")
-        for line in (narrative or "").splitlines():
-            line = line.strip()
-            if line:
-                _emit_log("  " + line, level="INFO")
-        _emit_log("━━━━━ end EOD analysis ━━━━━", level="INFO")
+            _lines.append(f"  KB relaxations: {len(relaxed)} (paper-only fills)")
+        _lines += ["  " + l.strip() for l in (narrative or "").splitlines() if l.strip()]
+        _lines.append("━━━━━ end EOD analysis ━━━━━")
+        for _ln in _lines:
+            _emit_log(_ln, level="INFO")
+            socketio.sleep(0)     # yield → let the hub flush this line before the next
     return report
 
 
