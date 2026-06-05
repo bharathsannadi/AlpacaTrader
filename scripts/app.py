@@ -2918,6 +2918,13 @@ def _auto_exec_stocks(data: dict) -> None:
                       if p.get("route") == "stocks" and p.get("sym") in _stk_by]
     else:
         stock_rows = data.get("dt", [])
+    # Don't STACK past the ~$5000/position target: skip a symbol already held in the account
+    # (mirrors the options lane's one-per-underlying). The same-day dedup alone let CVNA
+    # accumulate to ~2× target across re-entries on different days (observed 2026-06-05).
+    try:
+        _held_stock_syms = {p["sym"].upper() for p in _account_equity_positions()}
+    except Exception:
+        _held_stock_syms = set()
     for r in stock_rows:
         # Only strong, validated, top-ranked rows (the ⭐ + ✅ BUY ones).
         strong = (r.get("action") == "✅ BUY") or (r.get("valid") and r.get("is_top"))
@@ -2925,6 +2932,8 @@ def _auto_exec_stocks(data: dict) -> None:
             continue
         sym = str(r.get("sym", "")).upper().strip()
         if not sym or not sym.replace(".", "").isalpha():
+            continue
+        if sym in _held_stock_syms:           # already hold it → don't add another ~$5000
             continue
         with _auto_exec_lock:
             if sym in _auto_exec_stock_today:
