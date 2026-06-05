@@ -31,7 +31,10 @@ from exit_engine import ExitEngine, ExitState
 log = logging.getLogger("auto_engine")
 
 DUAL_ENGINE_ENABLED = True    # master on/off for the autonomous loop
-DUAL_ENGINE_MODE    = "execute"  # "shadow" (log only) | "execute" (place PAPER orders)
+# EOD 2026-06-04: → SHADOW. 24 of 33 closes were churning stock trades (-$4.2K, 24% win).
+# Pause the autonomous shares engine to observe-only while we dial activity down; flip back
+# to "execute" once the over-trading is fixed. (Reversible; merged-picks lane is unaffected.)
+DUAL_ENGINE_MODE    = "shadow"   # "shadow" (log only) | "execute" (place PAPER orders)
 MAX_CONCURRENT      = 8        # hard cap on open autonomous positions
 MAX_NEW_PER_CYCLE   = 3        # hard cap on new entries per cycle
 MAX_NEW_PER_DAY     = 10       # #38: hard cap on TOTAL new entries per day. The

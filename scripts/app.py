@@ -2810,7 +2810,10 @@ def _auto_exec_options(data: dict) -> None:
             "structure": o.get("structure", "ATM Call"),
             "expiry":    o.get("expiry", ""),
             "opt_type":  o.get("opt_type", "Call"),
-            "max_risk":  o.get("max_risk", 400),
+            # EOD fix 2026-06-04: align the enforced max-risk to the $600 ceiling (was the
+            # stale $400, which is what produced the §4 "relaxation" noise). Equal-dollar
+            # sizing keeps total risk ≤ $600, so enforce-max-risk passes cleanly — no relax.
+            "max_risk":  screener_executor.OPT_HARD_MAX_USD,
         }
         log.info(f"[auto-exec] {sym}  {payload['structure']}  "
                  f"{payload['expiry']}  dry={dry}")
