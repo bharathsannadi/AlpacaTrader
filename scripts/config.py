@@ -14,7 +14,7 @@ from __future__ import annotations
 OPT_HARD_MAX_USD      = 600.0     # HARD ceiling per option trade — ALL incl. ETFs
 OPT_HARD_MAX_USD_ETF  = 600.0     # ETFs capped at $600 too (was $1500)
 OPT_MAX_OPEN          = 5         # max concurrent option positions (by underlying)
-MAX_AUTO_EXEC_PER_DAY = 5         # max auto option orders placed per day
+MAX_AUTO_EXEC_PER_DAY = 2         # max auto option orders/day (EOD 2026-06-04: 5→2, dial down churn)
 OPT_PER_TRADE_MAX_USD = 600.0     # risk_brain per-trade options cap (REQ-605)
 OPT_WEEK_MAX_USD      = 3000.0    # risk_brain rolling-week options risk cap (REQ-605)
 

@@ -68,9 +68,12 @@ RISK_BUDGET          = 400.0  # KB §4: $400 max loss per trade
 # Fill everything (incl. illiquid) at market, no $400 cap. Every time a KB rule is
 # relaxed to let an order through, log a 'KB-RELAXED' note + append to an audit
 # file so it can be analysed later. (Paper; dry-run on by default.)
-OPT_RELAX_LIQUIDITY  = True    # §9 liquidity gate advisory, not blocking
-OPT_MARKET_ORDERS    = True    # place option legs at market so they fill
-OPT_ENFORCE_MAX_RISK = False   # drop the $400 per-trade max-loss SOFT cap
+# EOD fix 2026-06-04: the relaxed-fill was the killer — 5 of 9 KB relaxations filled
+# options with 5–21% bid-ask spreads AT MARKET (XLV 20.7%!), avg 225 bps slippage, driving
+# the 24% win-rate / -$4.2K day. Stop trading illiquid contracts at market.
+OPT_RELAX_LIQUIDITY  = False   # ENFORCE §9 liquidity — don't fill illiquid options
+OPT_MARKET_ORDERS    = False   # use LIMIT orders — don't pay the full (wide) spread
+OPT_ENFORCE_MAX_RISK = True    # enforce the per-trade max-risk cap (now aligned to $600)
 # AH-2: caps live in config.py (single source); imported here so screener_executor.OPT_*
 # references keep working. HARD ceiling = ALWAYS enforced even in relaxed mode.
 from config import OPT_HARD_MAX_USD, OPT_HARD_MAX_USD_ETF, size_position as _size_position
