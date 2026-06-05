@@ -133,9 +133,11 @@ def route_for_pick(stock_row: Optional[dict], option_row: Optional[dict],
     atr   = float(s.get("atr") or s.get("atr14") or 0) or 0.0
     strat = (o.get("strategy") or s.get("strategy")
              or o.get("source") or s.get("setup") or "screener")
-    sig = Signal(sym, direction, str(strat), price=price, atr=atr,
-                 ivr=_ivr_num(o.get("ivr")),
-                 has_vol_edge=bool(o),     # an option candidate was built for this symbol
+    _ivr = _ivr_num(o.get("ivr"))
+    sig = Signal(sym, direction, str(strat), price=price, atr=atr, ivr=_ivr,
+                 # CR-7: a real vol edge requires a usable IVR, not merely that an option row
+                 # exists. No IVR → can't confirm a volatility edge → route as directional (§5).
+                 has_vol_edge=bool(o) and _ivr is not None,
                  asset_class=str(o.get("asset_class") or s.get("asset_class") or "stock"))
     return route_signal(sig, rb, spreads_enabled=spreads_enabled)
 
