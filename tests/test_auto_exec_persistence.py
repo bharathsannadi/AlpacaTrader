@@ -119,5 +119,5 @@ def test_save_creates_parent_dir(app_module, tmp_path, monkeypatch):
 def test_dedup_constants_are_safe(app_module):
     """Guard rail — if someone bumps these from sane defaults, force them
     to update the test."""
-    assert app_module.MAX_AUTO_EXEC_PER_DAY == 3
+    assert app_module.MAX_AUTO_EXEC_PER_DAY == 5   # operator 2026-06-04: 3→5 (config.py)
     assert app_module.DAILY_LOSS_LIMIT_PCT  == 2.0

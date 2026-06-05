@@ -53,19 +53,21 @@ def test_stock_shares_zero_on_bad_price():
 # ── REQ-605: options per-trade + weekly caps ──────────────────────────────────
 def test_options_per_trade_cap():
     rb = RiskBrain(total_equity=107_846)
-    assert rb.can_enter("options", 400, 500)[0] is True       # exactly at cap
-    assert rb.can_enter("options", 400, 500.01)[0] is False   # over cap
+    cap = OPT_PER_TRADE_MAX_USD                                  # config single source (no stale literal)
+    assert rb.can_enter("options", 400, cap)[0] is True         # exactly at cap
+    assert rb.can_enter("options", 400, cap + 0.01)[0] is False # over cap
 
-def test_options_weekly_cap_blocks_fourth_max_trade():
+def test_options_weekly_cap_blocks_over_cap():
     rb = RiskBrain(total_equity=107_846)
     today = date(2026, 6, 1)
-    # 3 × $500 = $1500 (at the weekly cap)
-    for _ in range(3):
-        ok, _ = rb.can_enter("options", 100, 500, today=today)
+    per = OPT_PER_TRADE_MAX_USD
+    n = int(OPT_WEEK_MAX_USD // per)          # trades that exactly reach the rolling-week cap
+    for _ in range(n):
+        ok, _ = rb.can_enter("options", 100, per, today=today)
         assert ok
-        rb.register_entry("options", 100, 500, today=today)
-    # 4th would push to $2000 > $1500
-    ok, reason = rb.can_enter("options", 100, 500, today=today)
+        rb.register_entry("options", 100, per, today=today)
+    # the next trade pushes over the weekly cap → blocked
+    ok, reason = rb.can_enter("options", 100, per, today=today)
     assert not ok and "weekly" in reason
 
 def test_options_weekly_risk_rolls_off():
@@ -87,7 +89,9 @@ def test_tier_classification():
     assert RiskBrain.tier_of("XYZ", etf, None, dollar_volume=9e8) == TIER_LARGE
     assert RiskBrain.tier_of("XYZ", etf, None, dollar_volume=1e7) == TIER_SMALL
 
-def test_prioritize_orders_etf_then_large_then_small():
+def test_prioritize_route_aware():
+    # Route-aware prioritization (operator 2026-06-01): shares lane trades stocks before
+    # ETFs (large→small→ETF); options lane keeps ETF first (ETF→large→small).
     etf = {"SPY"}
     large = {"AAPL"}
     sigs = [
@@ -95,8 +99,11 @@ def test_prioritize_orders_etf_then_large_then_small():
         Signal("AAPL", "bull", "s", strength=0.5),
         Signal("SPY", "bull", "s", strength=0.1),
     ]
-    ordered = RiskBrain.prioritize(sigs, etf, large)
-    assert [s.symbol for s in ordered] == ["SPY", "AAPL", "SMALLCO"]
+    # shares lane (no vol edge) → large, small, ETF last
+    assert [s.symbol for s in RiskBrain.prioritize(sigs, etf, large)] == ["AAPL", "SMALLCO", "SPY"]
+    # options lane (vol edge) → ETF first
+    vsigs = [Signal(s.symbol, "bull", "vol", strength=s.strength, has_vol_edge=True) for s in sigs]
+    assert [s.symbol for s in RiskBrain.prioritize(vsigs, etf, large)] == ["SPY", "AAPL", "SMALLCO"]
 
 
 # ── entry/exit deployed accounting ────────────────────────────────────────────
