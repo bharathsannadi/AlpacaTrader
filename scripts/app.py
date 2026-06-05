@@ -1240,7 +1240,12 @@ def position_monitor() -> None:
             # Alpaca + yfinance calls (account fetch, option exits, per-symbol price,
             # closes) — heavy enough to stall the eventlet hub if run every 10s tick.
             # Throttle to ~every 30s; stops still fire well within tolerance.
-            if (auto_engine.DUAL_ENGINE_ENABLED and auto_engine.DUAL_ENGINE_MODE == "execute"
+            # EXITS MUST ALWAYS RUN — decoupled from the entry MODE (2026-06-05 bug: shadowing
+            # the engine to pause BUYING also gated this block on "execute", so stops/targets/
+            # option exits stopped firing and 24 positions went UNPROTECTED). These are
+            # exits-only (manage_exits/_manage_option_positions close, never buy), so they run
+            # in shadow AND execute. Only NEW ENTRIES are gated on execute mode (elsewhere).
+            if (auto_engine.DUAL_ENGINE_ENABLED
                     and time.monotonic() - _exit_mgmt_state["last"] >= 30):
                 _exit_mgmt_state["last"] = time.monotonic()
                 try:
