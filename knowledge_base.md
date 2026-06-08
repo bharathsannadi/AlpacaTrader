@@ -1,5 +1,6 @@
 # Trading, Day Trading & Options Knowledge Base
 
+> **Last updated: 2026-06-08** — Added §WHEEL: deep-read of Alpaca's official `alpacahq/options-wheel` reference repo (a concrete, runnable premium-SELLING wheel: cash-secured puts → assignment → covered calls). Records its real parameter values, the exact strike-scoring formula, and the position→state machine — and flags that, contrary to the onboarding email, it uses NO Bollinger Bands/ATR (delta-only Greeks) and places naked MARKET orders.
 > **Last updated: 2026-06-03** — Added §XM (Exit Management & Scaling-Out): deep-read of Elder "New Trading for a Living" Ch.53 (profit targets, ATR-channel ladder, move-stop-to-breakeven, "fast quarters beat slow dollars"), Schwab/OIC entry-exit transcript (scale-out, roll-up-winners), Cohen "Volatile Markets" — a KB-grounded two-step scale-out upgrade for the all-or-nothing exit engine.
 > **2026-05-25** — Added §T17-T27 and §DT14-DT17: Candlesticks, Weis/Wyckoff, Minervini SEPA, 25 Rules, Sinclair vol edge, Cooper intraday, Wyckoff intraday, Bulkowski/Bandy risk; Velez Pristine 4-Stage, 18 Champions cross-trader rules, Person Pivot P3T, Rhoads VIX derivatives, Heitkoetter/McDowell day trading, Murphy intermarket, McMillan covered calls & collars. 300 PDFs catalogued, ~50 books deeply read.
 >
@@ -3210,3 +3211,54 @@ Net effect: keeps the fast-rotation cadence the operator wants while stopping th
 edge-killing habit of clipping every winner at a flat target. **Gated** — propose
 as an exit-engine REQ, A/B it against the current single-shot exits on the
 Polygon backtest before defaulting it on.
+
+
+---
+
+## §WHEEL — The Options Wheel (premium-selling) — Alpaca `options-wheel` reference repo (read 2026-06-08)
+*Distilled directly from the source code of Alpaca's official repo `github.com/alpacahq/options-wheel` (cloned & read 2026-06-08). This is the concrete, runnable counterpart to the conceptual covered-call material in [[§T27]] and the "sell premium when IVR>50" rule in §2. It is the **opposite stance** of our current live system, which BUYS premium (long calls / debit call spreads) when IV is cheap; the wheel SELLS premium when it is rich.*
+
+**The wheel cycle (premium selling, fully cash-secured):**
+1. **Sell cash-secured puts** on stocks you'd accept owning (delta-banded, below current price).
+2. **If assigned**, you buy 100 shares/contract at the strike (cash was reserved).
+3. **Sell covered calls** against the shares, struck **at or above your cost basis**.
+4. **If called away**, you're flat; repeat. Income = put premia + call premia + any capital gain to strike.
+
+**Exact selection parameters (`config/params.py` — these are the repo's real defaults):**
+- `MAX_RISK = $80,000` — total cash-secured budget (their demo account is far larger than our $5K).
+- **Delta band `0.15 ≤ |Δ| ≤ 0.30`** for both the puts AND calls being sold. Delta ≈ probability of assignment, so this targets ~15–30% assignment odds per leg — "enough premium without inviting assignment."
+- **Annualized yield band `0.04 ≤ (bid/strike)·(365/(dte+1)) ≤ 1.00`** — a floor (worth the risk) and a ceiling (reject implausibly-rich = likely a data/illiquidity artifact).
+- **DTE `0–21` days** — short-dated, fast theta decay, frequent re-deployment.
+- **Open interest `> 100`** — liquidity gate (our [[project-rank-liquidity-gate]] concern; the wheel enforces it at selection time).
+- **`SCORE_MIN = 0.05`** — minimum score to be tradable.
+
+**Strike-scoring formula (`core/strategy.py::score_options`) — worth lifting:**
+```
+score = (1 − |Δ|) · (250 / (dte + 5)) · (bid / strike)
+```
+= annualized-ish rate of return on the short premium, **discounted by (1 − assignment probability)**. They keep only the single **highest-scoring contract per underlying**, then sort all winners descending. This is a clean, KB-citable way to rank short-premium candidates (cf. our screener's coarse rule-count "confidence" — [[project-confidence-calibration]]).
+
+**Hard guard-rails baked into the code (good ideas):**
+- **Underlying filter:** only trade a symbol if `100 × price ≤ buying_power` — you must be able to *afford assignment*. Truly cash-secured, never naked-short a put you can't cover.
+- **Covered calls are struck `≥ stock purchase price`** (`min_strike = purchase_price`) — the wheel will **never sell a call below cost basis**, so being called away always locks a gain, never a loss.
+- **Cash-secured risk accounting (`core/state_manager.py`):** short-put risk booked as full `100 × strike × |qty|`; equity risk as `avg_entry × qty`. `buying_power = MAX_RISK − current_risk`. No leverage assumed — aligns with our [[NO-MARGIN]] guard.
+
+**The position→state machine (`update_state`) — the actual "wheel" logic:**
+Each run it re-derives, from live broker positions, where each symbol sits:
+`short_put` → (assigned) → `long_shares` → (sell call) → `short_call` → (called away) → flat.
+Invariant enforced by raising `ValueError`: **only LONG stock and SHORT options are ever allowed.** Orchestration (`scripts/run_strategy.py`): for every `long_shares` symbol → `sell_calls`; for every symbol not currently in a wheel state → `sell_puts` until buying power is exhausted. It is **stateless / cron-driven** — re-reads broker truth each invocation; `--fresh-start` liquidates everything first.
+
+**⚠️ What the marketing email OVERSOLD / what the code actually lacks (read these before copying it):**
+- **NO Bollinger Bands and NO ATR.** Despite the onboarding email's pitch, selection is purely delta / annualized-yield / OI / DTE. The only Greek used is **delta**. (Email claim ≠ repo reality.)
+- **It places naked MARKET orders** (`client.market_sell`) — no limit/mid-price discipline. This directly contradicts our hard-won [[project-eod-risk-dialdown]] lesson (illiquid market fills cost ~225bps and were the −$4,157 day's killer). Any wheel we build must use **limit/mid orders**, not this.
+- **No defensive management of tested shorts:** no roll-down on a breached put, no early buy-to-close at a profit %, no stop. It simply waits for expiry/assignment. McMillan's roll-up/roll-down follow-ups ([[§T27]]) are the missing risk layer.
+- **Tail risk is real:** short puts have large, uncapped-until-zero downside on a gap-down; a basket of 0.15–0.30Δ puts can all get tested at once in a crash (same correlation failure that REFUTED our bond-sleeve hedge).
+
+**Application to our system (if we ever build a wheel lane — all GATED):**
+- This fills the missing **premium-SELLING** slot our KB only described conceptually ([[§T27]], §2 "sell premium when IVR>50"). Use it as the reference for strike/expiry/scoring, **not** as drop-in code.
+- **Keep:** the cash-secured-affordability filter, the `call strike ≥ cost basis` rule, the OI>100 liquidity gate, and the `(1−|Δ|)·return` scoring shape.
+- **Change:** market → **limit/mid** orders ([[project-eod-risk-dialdown]]); add roll/early-close/stop management; gate entries on **IVR > 50** (KB §2) so we only sell premium when it's actually rich.
+- **Process:** a wheel is a *new strategy*, not a tweak — it must pass its **own cost-robust ≥3bp/5bp walk-forward** before it is even paper-enabled (registry REQ-202, `scripts/strategy.py`), default behind a flag (CLAUDE.md safety rail #1), and respect [[feedback-trade-safety-directives]] (dry-run default, KB-principles + debate gate per trade) and [[feedback-live-never-relax-kb]].
+
+
+---
