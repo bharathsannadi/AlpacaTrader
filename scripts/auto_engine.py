@@ -57,6 +57,57 @@ STALL_MINUTES         = 3 * 1440   # 3 days
 STALL_MIN_PROFIT_PCT  = 0.01
 _JOURNAL_FILE = os.path.expanduser("~/.spy_trader/journal.jsonl")
 
+# ── Per-strategy validated exits (gap fix 2026-06-18) ─────────────────────────
+# The live system ran every stock through a fixed +6%/−3% exit, but the backtests
+# validated each strategy with its OWN exit. Applying the wrong exit (a +6% target
+# to a mean-reversion bounce that completes at +1–4%) collapsed the 66%-win Connors
+# edge to ~32% live. These mirror the validated backtest exits
+# (backtest_connors_daily): mean-reversion banks the bounce at RSI(2)≥70 with a
+# 2×ATR stop and 10-day cap; trend lets winners run on the trailing ladder.
+RSI_EXIT_BULL_LIVE  = 70.0   # mean-rev target (Connors/Bollinger), matches RSI_EXIT_BULL
+ATR_STOP_MULT_LIVE  = 2.0    # validated stop distance = 2×ATR14
+MEAN_REV_MAX_HOLD   = 10     # validated mean-rev time cap (trading days)
+_MEAN_REV_STRATS = ("connors", "rsi2", "bollinger", "reversion")
+_TREND_STRATS    = ("trend", "pullback", "breakout", "52w", "momentum")
+
+# Cache daily RSI(2)/ATR so the exit loop doesn't re-download per tick (daily bars
+# move slowly; a 15-min TTL is ample for an exit decision).
+_daily_ind_cache: dict = {}     # sym -> (ts, rsi2, atr14)
+_DAILY_IND_TTL = 900            # 15 min
+
+
+def _strategy_kind(strategy: Optional[str]) -> str:
+    """Bucket a position's strategy tag into the exit family that was validated for
+    it. Substring match so it works on canonical names ('connors_rsi2') AND the
+    screener's descriptive strings ('Connors RSI(2)=… → …')."""
+    s = (strategy or "").lower()
+    if any(k in s for k in _MEAN_REV_STRATS):
+        return "mean_rev"
+    if any(k in s for k in _TREND_STRATS):
+        return "trend"
+    return "other"
+
+
+def _daily_rsi2_atr(sym: str) -> tuple[Optional[float], Optional[float]]:
+    """Latest daily RSI(2) and ATR14 for `sym` (cached). Reuses the same indicator
+    prep the validated backtest uses. Returns (None, None) on any failure so the
+    caller falls back to other exit conditions — never blocks an exit."""
+    import time as _t
+    hit = _daily_ind_cache.get(sym)
+    if hit and _t.time() - hit[0] < _DAILY_IND_TTL:
+        return hit[1], hit[2]
+    rsi2 = atr = None
+    try:
+        from backtest_multi_strategy import _prep
+        df = _prep(sym)
+        if df is not None and len(df):
+            r = df.iloc[-1]
+            rsi2 = float(r["rsi2"]); atr = float(r["atr14"])
+    except Exception as e:
+        log.debug(f"[auto-engine] daily rsi2/atr {sym}: {e}")
+    _daily_ind_cache[sym] = (_t.time(), rsi2, atr)
+    return rsi2, atr
+
 
 def _journal_add(sym: str, kind: str, reason: str, pnl_pct: float, pnl_usd: float = 0.0) -> None:
     """Append a closed-trade event to the shared notes/journal (#34)."""
@@ -480,6 +531,7 @@ def record_stock_position(sym: str, qty: int, entry: float, strategy: str = "ext
     positions.append({
         "sym": sym, "strategy": strategy, "route": "stocks",
         "qty": int(qty), "entry_price": entry, "signal_price": entry,
+        "atr": float(atr or 0.0),     # entry-time ATR for the validated 2×ATR exit stop
         "entry_slippage_bps": 0.0, "entry_date": _date.today().isoformat(),
         "order_id": None, "exit_state": _asdict(st), "dry_run": dry_run,
     })
@@ -592,22 +644,54 @@ def manage_exits(dry_run: bool = False) -> None:
         except Exception:
             stall_min = 0.0
         stalled = chg >= STALL_MIN_PROFIT_PCT and stall_min >= STALL_MINUTES
-        # PRIMARY: fixed ±2% bands. Then a time-stop if green-but-stalled. Else the
-        # dynamic trailing ladder as the SIDEWAYS backstop; 21d cap is max-time.
-        if chg >= STOCK_TAKE_PROFIT_PCT:
-            action, why = "exit", f"take-profit +{STOCK_TAKE_PROFIT_PCT*100:.0f}%"
-        elif chg <= -STOCK_STOP_PCT:
-            action, why = "exit", f"stop -{STOCK_STOP_PCT*100:.0f}%"
-        elif stalled:
-            action, why = "exit", f"time-stop {int(stall_min)}min stalled +{chg*100:.1f}%"
-        else:
+        held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
+        # GAP FIX 2026-06-18: apply each position's VALIDATED exit, not a uniform
+        # +6%/−3%. (backtest_connors_daily exits per strategy.)
+        kind = _strategy_kind(p.get("strategy"))
+        if kind == "mean_rev":
+            # Connors/Bollinger: bank the bounce at RSI(2)≥70, 2×ATR stop, 10d cap.
+            rsi2_now, atr_now = _daily_rsi2_atr(p["sym"])
+            atr = float(p.get("atr") or atr_now or 0.0)
+            if rsi2_now is not None and rsi2_now >= RSI_EXIT_BULL_LIVE:
+                action, why = "exit", f"mean-rev target RSI2 {rsi2_now:.0f}≥{RSI_EXIT_BULL_LIVE:.0f}"
+            elif atr > 0 and (entry - px) >= ATR_STOP_MULT_LIVE * atr:
+                action, why = "exit", f"{ATR_STOP_MULT_LIVE:g}×ATR stop"
+            elif held_days >= MEAN_REV_MAX_HOLD:
+                action, why = "exit", f"{MEAN_REV_MAX_HOLD}d mean-rev cap"
+            else:
+                action, why = "hold", ""
+        elif kind == "trend":
+            # Trend pullback / 52w breakout: high-payoff/low-win — let winners run on
+            # the trailing ladder (2×ATR init stop), NO fixed target. 21d cap below.
             st = ExitState(**p["exit_state"])
             action, why, st = eng.update(st, high=px, low=px, last=px)
             p["exit_state"] = _asdict(st)
-        held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
+        else:
+            # Unknown / manual: legacy fixed bands + stall + ladder as a safe fallback.
+            if chg >= STOCK_TAKE_PROFIT_PCT:
+                action, why = "exit", f"take-profit +{STOCK_TAKE_PROFIT_PCT*100:.0f}%"
+            elif chg <= -STOCK_STOP_PCT:
+                action, why = "exit", f"stop -{STOCK_STOP_PCT*100:.0f}%"
+            elif stalled:
+                action, why = "exit", f"time-stop {int(stall_min)}min stalled +{chg*100:.1f}%"
+            else:
+                st = ExitState(**p["exit_state"])
+                action, why, st = eng.update(st, high=px, low=px, last=px)
+                p["exit_state"] = _asdict(st)
         if action == "exit" or held_days >= TIME_CAP_DAYS:
             reason = why if action == "exit" else f"time cap {held_days}d"
-            shares_executor.close(p["sym"], dry_run=p.get("dry_run", dry_run))
+            res = shares_executor.close(p["sym"], dry_run=p.get("dry_run", dry_run))
+            # CHURN GUARD (2026-06-16): only record a close that ACTUALLY executed. A
+            # failed/no-op close used to be journaled anyway and dropped from the store,
+            # so _protect_untracked_stocks re-recorded the still-held position next cycle
+            # and it was closed-and-journaled again — the phantom loop that logged 232
+            # "closes" in a day and fabricated +$31k of P&L vs a flat real account. On
+            # failure: keep managing it, journal nothing.
+            if not res.get("success"):
+                log.warning(f"[auto-engine] close {p['sym']} did not execute "
+                            f"({res.get('message','?')}) — keep managing, no journal")
+                still_open.append(p)
+                continue
             entry = p.get("entry_price", px)
             realized = (px - entry) * p.get("qty", 0)
             pnl_pct = round((px - entry) / entry * 100, 2) if entry else 0.0

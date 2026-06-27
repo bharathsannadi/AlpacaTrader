@@ -580,6 +580,208 @@ def _save_trades_today() -> None:
     except OSError as e:
         log.warning(f"[trades] Could not persist trades_today: {e}")
 
+
+# ── Real closed-trade ledger — single source of truth (2026-06-16) ────────────
+# The autonomous engine's journal.jsonl was fabricated: a churn loop logged 232
+# "closes" in a day and +$31k of P&L while the real paper account was flat. The
+# ONLY trustworthy signal is the real Alpaca account, so a trade is recorded as
+# closed ONLY when a real position actually leaves the account. We diff the real
+# equity-position set between position_monitor ticks; when a symbol's qty drops we
+# append one fill-verified row. Every row is a real (paper) fill — dry_run False by
+# construction — so analyze_trades.py reconciles with equity_history.json.
+_REAL_TRADES_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "real_trades.jsonl"
+)
+_REAL_POS_SNAP_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "real_pos_snapshot.json"
+)
+_real_pos_prev: dict = {}     # sym -> {qty, entry, last, pnl_usd, pnl_pct}
+_real_pos_seeded: bool = False
+
+
+def _load_real_pos_snapshot() -> None:
+    """Restore the last real-position snapshot so a restart doesn't mistake every
+    held position for a fresh close. Seeds lazily on the first live tick otherwise."""
+    global _real_pos_prev, _real_pos_seeded
+    try:
+        with open(_REAL_POS_SNAP_FILE) as fh:
+            _real_pos_prev = _json_dedup.load(fh)
+            _real_pos_seeded = True
+    except (FileNotFoundError, _json_dedup.JSONDecodeError, OSError):
+        _real_pos_prev = {}
+        _real_pos_seeded = False
+
+
+def _save_real_pos_snapshot() -> None:
+    os.makedirs(os.path.dirname(_REAL_POS_SNAP_FILE), exist_ok=True)
+    tmp = _REAL_POS_SNAP_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            _json_dedup.dump(_real_pos_prev, fh)
+        os.replace(tmp, _REAL_POS_SNAP_FILE)
+    except OSError as e:
+        log.warning(f"[real-ledger] could not persist snapshot: {e}")
+
+
+# Idempotency guard for the real ledger (edge review 2026-06-27). A watchdog kill
+# between the per-row append and the end-of-loop snapshot save in
+# _detect_real_stock_closes left the snapshot showing already-closed positions, so
+# the next boot re-diffed and re-emitted them — 9 rows on 2026-06-18 were logged
+# twice (16:17 + 17:59, identical exit price), fabricating -$863 of phantom losses.
+# We now refuse to append a close that matches one already on the ledger for the
+# same day. Key = (sym, qty, entry, exit, date); two genuine closes of the same
+# qty at the same entry AND exit on one day is implausible, so the false-positive
+# risk is negligible next to a confirmed double-count. Seeded lazily from the file.
+_real_trade_keys: set | None = None
+
+
+def _real_trade_key(row: dict) -> tuple:
+    return (
+        str(row.get("sym", "")).upper(),
+        int(row.get("qty", 0) or 0),
+        round(float(row.get("entry", 0) or 0.0), 2),
+        round(float(row.get("exit", 0) or 0.0), 2),
+        str(row.get("ts", ""))[:10],
+    )
+
+
+def _seed_real_trade_keys() -> None:
+    global _real_trade_keys
+    _real_trade_keys = set()
+    try:
+        with open(_REAL_TRADES_FILE) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    _real_trade_keys.add(_real_trade_key(_json_dedup.loads(line)))
+                except ValueError:
+                    continue
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _append_real_trade(row: dict) -> None:
+    global _real_trade_keys
+    if _real_trade_keys is None:
+        _seed_real_trade_keys()
+    key = _real_trade_key(row)
+    if key in _real_trade_keys:                      # restart re-emit → never double-count
+        log.warning(f"[real-ledger] duplicate close suppressed: {row.get('sym')} "
+                    f"{row.get('qty')}sh {row.get('entry')}->{row.get('exit')} "
+                    f"(already on ledger for {key[4]})")
+        return
+    os.makedirs(os.path.dirname(_REAL_TRADES_FILE), exist_ok=True)
+    try:
+        with open(_REAL_TRADES_FILE, "a") as fh:
+            fh.write(_json_dedup.dumps(row, default=str) + "\n")
+        _real_trade_keys.add(key)
+    except OSError as e:
+        log.warning(f"[real-ledger] could not append trade: {e}")
+
+
+def _snap_of(positions: list) -> dict:
+    return {p["sym"]: {"qty": p["qty"], "entry": p["entry"], "last": p["last"],
+                       "pnl_usd": p["pnl_usd"], "pnl_pct": p["pnl_pct"]}
+            for p in positions}
+
+
+def _real_exit_fill(sym: str, fallback: float) -> float:
+    """Best-effort ACTUAL Alpaca exit fill price for a symbol that just closed.
+    Looks up the most recent filled SELL order; falls back to the last observed
+    mark (already a real, <=10s-old Alpaca price). Called only when a close is
+    detected (infrequent), never per-tick. Fail-safe: returns fallback on any error."""
+    try:
+        c = getattr(trader, "TRADING_CLIENT", None)
+        if c is None:
+            return fallback
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus, OrderSide
+        orders = c.get_orders(GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED, symbols=[sym], side=OrderSide.SELL, limit=5))
+        for o in orders:                       # default sort is most-recent-first
+            fap = getattr(o, "filled_avg_price", None)
+            if fap:
+                return float(fap)
+    except Exception as e:
+        log.debug(f"[real-ledger] exit-fill lookup {sym}: {e}")
+    return fallback
+
+
+def _classify_exit_reason(pnl_pct: float, partial: bool) -> str:
+    """Label a real close by realized % against the configured stock bands so the
+    cooldown + reason analysis run on truth. A loss at/below the stop band reads as
+    'stop …' (kept prefix-compatible with the cooldown's stop detection)."""
+    sl = auto_engine.STOCK_STOP_PCT * 100        # e.g. 3.0
+    tp = auto_engine.STOCK_TAKE_PROFIT_PCT * 100  # e.g. 6.0
+    if pnl_pct <= -0.8 * sl:
+        base = f"stop {pnl_pct:.1f}%"
+    elif pnl_pct >= 0.8 * tp:
+        base = f"target +{pnl_pct:.1f}%"
+    elif pnl_pct >= 0:
+        base = f"gain +{pnl_pct:.1f}%"
+    else:
+        base = f"loss {pnl_pct:.1f}%"
+    return f"partial {base}" if partial else base
+
+
+def _detect_real_stock_closes() -> None:
+    """Diff real Alpaca equity positions against the last snapshot and append a
+    fill-verified close row for any position that left the account (or had qty
+    reduced). The SOLE writer of data/real_trades.jsonl — captures real closes
+    from ANY path (screener lane, engine exit, manual) and never fabricates one."""
+    global _real_pos_prev, _real_pos_seeded
+    try:
+        cur = _snap_of(_account_equity_positions())
+    except Exception as e:
+        log.debug(f"[real-ledger] position fetch failed: {e}")
+        return
+    # First live observation (fresh boot, no saved snapshot): seed without emitting
+    # closes so we never mistake pre-existing holdings for closes.
+    if not _real_pos_seeded:
+        _real_pos_prev = cur
+        _real_pos_seeded = True
+        _save_real_pos_snapshot()
+        return
+    # Iterate a copy: we persist the snapshot incrementally as each close is
+    # recorded (crash-safety — see _append_real_trade's idempotency note) so a
+    # watchdog kill mid-loop can't leave the snapshot showing a closed position.
+    for sym, prev in list(_real_pos_prev.items()):
+        prev_qty = int(prev.get("qty", 0) or 0)
+        cur_qty = int(cur.get(sym, {}).get("qty", 0) or 0)
+        if cur_qty >= prev_qty or prev_qty <= 0:
+            continue                                   # opened/added/unchanged → not a close
+        closed = prev_qty - cur_qty
+        frac = closed / prev_qty
+        partial = cur_qty > 0
+        entry = float(prev.get("entry") or 0.0)
+        # Real exit fill (falls back to the last observed mark, itself a real price).
+        exit_px = _real_exit_fill(sym, float(prev.get("last") or 0.0))
+        if entry > 0 and exit_px > 0:
+            pnl_usd = round((exit_px - entry) * closed, 2)      # from the real fill
+            pnl_pct = round((exit_px - entry) / entry * 100, 2)
+        else:                                                    # degraded: snapshot basis
+            pnl_usd = round(float(prev.get("pnl_usd", 0.0)) * frac, 2)
+            pnl_pct = round(float(prev.get("pnl_pct", 0.0)), 2)
+        _append_real_trade({
+            "ts": datetime.now(ET).isoformat(),
+            "sym": sym, "kind": "stock", "qty": closed,
+            "entry": round(entry, 2), "exit": round(exit_px, 2),
+            "pnl_usd": pnl_usd, "pnl_pct": pnl_pct,
+            "reason": _classify_exit_reason(pnl_pct, partial),
+            "dry_run": False,
+        })
+        log.info(f"[real-ledger] {sym} closed {closed}sh @ ${exit_px:.2f} "
+                 f"P&L ${pnl_usd:+.0f} ({pnl_pct:+.1f}%) — real fill")
+        # Record this close in the snapshot NOW, before the next append, so a
+        # crash here can't re-emit it on the next boot.
+        _real_pos_prev[sym] = cur.get(sym, {"qty": 0, "entry": entry,
+                                            "last": exit_px, "pnl_usd": 0.0, "pnl_pct": 0.0})
+        _save_real_pos_snapshot()
+    _real_pos_prev = cur
+    _save_real_pos_snapshot()
+
 # Per-symbol session threads and stop events
 _session_threads:     dict[str, threading.Thread] = {}
 _session_stop_events: dict[str, threading.Event]  = {
@@ -861,10 +1063,19 @@ def _manage_option_positions() -> None:
             log.debug(f"option-exit {u}: {e}")
 
 
+# Strategy/ATR hints from the screener so a position can be tagged with its REAL
+# strategy (gap fix 2026-06-18) — needed so manage_exits applies the validated
+# per-strategy exit instead of a generic one. Populated on each screener refresh.
+_strategy_hint: dict = {}   # sym -> strategy string (canonical or descriptive)
+_atr_hint:      dict = {}   # sym -> entry-time ATR14
+
+
 def _protect_untracked_stocks() -> None:
     """Any account equity position not yet in the engine's managed store gets brought
     under dynamic exit management — so stock auto-buys + manual buys get a trailing
-    stop / profit floor / time cap, not just the engine's own ETF entries."""
+    stop / profit floor / time cap, not just the engine's own ETF entries. Tags each
+    with its REAL screener strategy (+ATR) when known so the validated per-strategy
+    exit applies; falls back to 'screener/manual' (safe fallback exit) otherwise."""
     try:
         acct = _account_equity_positions()
         if not acct:
@@ -873,7 +1084,9 @@ def _protect_untracked_stocks() -> None:
         for p in acct:
             if p["sym"] not in tracked:
                 auto_engine.record_stock_position(
-                    p["sym"], p["qty"], p["entry"], strategy="screener/manual")
+                    p["sym"], p["qty"], p["entry"],
+                    strategy=_strategy_hint.get(p["sym"], "screener/manual"),
+                    atr=float(_atr_hint.get(p["sym"], 0.0)))
     except Exception as e:
         log.debug(f"protect untracked stocks: {e}")
 
@@ -1033,10 +1246,18 @@ def emit_state_to(sid: str) -> None:
 
 
 def refresh_account() -> None:
+    # CLAUDE.md gotcha: trader I/O must run OUTSIDE _state_lock. account_value()
+    # and buying_power() are Alpaca network calls; holding the lock across them
+    # (esp. when Alpaca's pooled connection is slow → multi-second read timeouts)
+    # blocks every greenlet that needs _state_lock — including /health and the
+    # login handshake — causing intermittent login failures / hub flapping
+    # (diagnosed 2026-06-17). Fetch first, then hold the lock only to assign.
     try:
+        av = round(trader.account_value(), 2)
+        bp = round(trader.buying_power(),  2)
         with _state_lock:
-            state["account_value"] = round(trader.account_value(), 2)
-            state["buying_power"]  = round(trader.buying_power(),  2)
+            state["account_value"] = av
+            state["buying_power"]  = bp
     except Exception as e:
         log.warning(f"refresh_account failed: {e}")
 
@@ -1167,6 +1388,128 @@ def heartbeat_age(name: str) -> float:
     return float("inf") if ts == 0.0 else (time.time() - ts)
 
 
+# ── Alpaca connectivity probe (smart /health) ─────────────────────────────────
+# Two failure modes that look identical to a naive watchdog but need OPPOSITE
+# responses:
+#   • DNS/socket staleness — the long-running process's resolver rots after a
+#     network blip or sleep; every Alpaca call fails with NameResolutionError
+#     while the machine itself is fine. A RESTART fixes this → /health 503 so the
+#     watchdog kills+restarts.
+#   • Expired/invalid keys — Alpaca returns 401. A restart will NEVER fix this
+#     (it just restart-loops). → surface a distinct operator alert, do NOT 503.
+# The probe runs INSIDE this process (so it sees the same stale resolver the
+# trader does) on a background loop, and caches a classified result that
+# /health reads without doing any blocking network I/O in the request path.
+_ALPACA_PROBE_INTERVAL_SEC   = 60      # how often the background loop probes
+_ALPACA_PROBE_TIMEOUT_SEC    = 6       # per-probe HTTP timeout
+_ALPACA_UNREACHABLE_FATAL_SEC = 120    # sustained unreachability before /health 503s
+                                       # (watchdog also needs 3 fails → ~real outage)
+_alpaca_probe = {
+    "status":            "unknown",    # ok | unauthorized | unreachable | no_creds | unknown
+    "detail":            "",
+    "ts":                0.0,          # last probe time
+    "ever_ok":           False,        # have we connected successfully since boot
+    "unreachable_since": 0.0,          # when the current unreachable streak began (0 = reachable)
+}
+_alpaca_probe_lock  = threading.Lock()
+_alpaca_alert_state = {"last_status": None}   # for transition-only operator alerts
+
+
+def _probe_alpaca_once() -> None:
+    """Probe Alpaca from THIS process and classify the result. Updates the
+    shared _alpaca_probe cache. Never raises."""
+    import requests
+    from credentials import load_alpaca_creds
+
+    creds = load_alpaca_creds()
+    if not creds.is_complete:
+        status, detail = "no_creds", "no API keys in env"
+    else:
+        base = ("https://paper-api.alpaca.markets" if creds.paper
+                else "https://api.alpaca.markets")
+        try:
+            r = requests.get(
+                base + "/v2/account",
+                headers={"APCA-API-KEY-ID": creds.key,
+                         "APCA-API-SECRET-KEY": creds.secret},
+                timeout=_ALPACA_PROBE_TIMEOUT_SEC,
+            )
+            if r.status_code == 200:
+                status, detail = "ok", ""
+            elif r.status_code in (401, 403):
+                status, detail = "unauthorized", f"HTTP {r.status_code}"
+            else:
+                # 5xx / rate-limit / unexpected — treat as a (restartable) blip
+                status, detail = "unreachable", f"HTTP {r.status_code}"
+        except requests.exceptions.RequestException as e:
+            # ConnectionError/DNS/timeout → stale resolver class (restartable)
+            status, detail = "unreachable", str(e)[:140]
+        except Exception as e:
+            status, detail = "unreachable", str(e)[:140]
+
+    now = time.time()
+    with _alpaca_probe_lock:
+        prev = _alpaca_probe["status"]
+        _alpaca_probe["status"] = status
+        _alpaca_probe["detail"] = detail
+        _alpaca_probe["ts"]     = now
+        if status == "ok":
+            _alpaca_probe["ever_ok"] = True
+            _alpaca_probe["unreachable_since"] = 0.0
+        elif status == "unreachable":
+            if _alpaca_probe["unreachable_since"] == 0.0:
+                _alpaca_probe["unreachable_since"] = now
+        else:
+            _alpaca_probe["unreachable_since"] = 0.0   # auth/no_creds isn't an outage
+
+    # Operator alert only on a status TRANSITION (avoid log spam every 60s).
+    if status != _alpaca_alert_state["last_status"]:
+        _alpaca_alert_state["last_status"] = status
+        if status == "unauthorized":
+            msg = ("🔑 Alpaca rejected the API keys (401 unauthorized). Trading is "
+                   "BLOCKED until keys are regenerated in the Alpaca dashboard and "
+                   "written to .env — a restart will NOT fix this.")
+            log.error(f"[alpaca-probe] {msg}")
+            try: socketio.emit("log", {"message": msg, "level": "ERROR"})
+            except Exception: pass
+        elif status == "unreachable":
+            log.warning(f"[alpaca-probe] Alpaca unreachable from this process "
+                        f"({detail}); will 503 /health after "
+                        f"{_ALPACA_UNREACHABLE_FATAL_SEC}s so the watchdog restarts.")
+        elif status == "no_creds":
+            log.warning("[alpaca-probe] No Alpaca credentials in env.")
+        elif status == "ok" and prev not in (None, "unknown"):
+            log.info("[alpaca-probe] Alpaca connectivity recovered.")
+
+
+def alpaca_probe_snapshot() -> dict:
+    """Thread-safe copy of the probe cache for /health, plus a derived
+    `fatal` flag (sustained unreachable after a prior success = restartable)."""
+    with _alpaca_probe_lock:
+        snap = dict(_alpaca_probe)
+    fatal = (
+        snap["status"] == "unreachable"
+        and snap["ever_ok"]                       # don't 503 a box that never connected
+        and snap["unreachable_since"] > 0.0
+        and (time.time() - snap["unreachable_since"]) > _ALPACA_UNREACHABLE_FATAL_SEC
+    )
+    snap["fatal"] = fatal
+    return snap
+
+
+def _alpaca_probe_loop() -> None:
+    """Background task: probe Alpaca connectivity every _ALPACA_PROBE_INTERVAL_SEC.
+    Runs regardless of logged_in (bad keys keep logged_in False — that's exactly
+    the case we must detect)."""
+    socketio.sleep(5)   # let the server bind + auto-login take its first shot
+    while True:
+        try:
+            _probe_alpaca_once()
+        except Exception as e:
+            log.warning(f"alpaca probe iteration failed: {e}")
+        socketio.sleep(_ALPACA_PROBE_INTERVAL_SEC)
+
+
 def price_ticker() -> None:
     """Background thread: refresh prices on TICKER_INTERVAL_SEC.
     Gated on streaming + at least one authenticated client connected.
@@ -1252,6 +1595,11 @@ def position_monitor() -> None:
             if events:
                 refresh_account()
                 emit_state()
+
+            # Real closed-trade ledger (truth layer): record any real stock position
+            # that actually left the account this tick. Runs every tick regardless of
+            # which engine/path closed it — the single source of truth for P&L.
+            _detect_real_stock_closes()
 
             # Autonomous-engine exit management (REQ-608/609). This does several
             # Alpaca + yfinance calls (account fetch, option exits, per-symbol price,
@@ -1393,11 +1741,20 @@ def health():
     with _auto_exec_lock:
         auto_exec_today_count = len(_auto_exec_filled)   # filled trades, not attempts
 
-    degraded = pm_stale or sc_stale
+    # Alpaca connectivity (cached by the background probe — no network here).
+    alpaca = alpaca_probe_snapshot()
+    alpaca_fatal = alpaca["fatal"]
+
+    degraded = pm_stale or sc_stale or alpaca["status"] in ("unreachable", "unauthorized")
     body = {
         "status": "degraded" if degraded else "ok",
         "logged_in":              logged_in,
         "paper_mode":             paper,
+        # Alpaca connectivity — distinguishes restartable outages (unreachable →
+        # eventually 503) from non-restartable bad keys (unauthorized → alert only)
+        "alpaca_status":          alpaca["status"],
+        "alpaca_detail":          alpaca["detail"],
+        "alpaca_probe_age_s":     None if alpaca["ts"] == 0.0 else round(time.time() - alpaca["ts"], 1),
         # Heartbeats
         "position_monitor_age_s": None if pm_age == float("inf") else round(pm_age, 1),
         "price_ticker_age_s":     None if pt_age == float("inf") else round(pt_age, 1),
@@ -1416,7 +1773,10 @@ def health():
     }
     # inf age right after boot is normal (loop hasn't ticked yet) — don't 503
     # on a cold start; only 503 once it has ticked then went stale.
-    fatal = pm_stale and pm_age != float("inf")
+    # Alpaca: 503 only on sustained unreachability after a prior success
+    # (restartable). 401/unauthorized is NOT fatal — restarting can't fix bad
+    # keys; it surfaces as degraded + an operator alert instead.
+    fatal = (pm_stale and pm_age != float("inf")) or alpaca_fatal
     return jsonify(body), (503 if fatal else 200)
 
 
@@ -2316,6 +2676,11 @@ _screener_refresh_lock = threading.Lock()
 
 from config import MAX_AUTO_EXEC_PER_DAY   # AH-2: hard cap on auto orders/day (single source)
 from config import MAX_PORTFOLIO_POSITIONS  # concentration cap: max concurrent positions, both lanes
+from config import AUTO_EXEC_OPTIONS_ENABLED  # edge review 2026-06-12: option lane paused (−EV)
+from config import SYMBOL_COOLDOWN_WINDOW_DAYS, SYMBOL_COOLDOWN_MIN_STOPS  # repeat-loser cooldown
+from config import MAX_POSITIONS_PER_SECTOR  # correlation cap: max open positions per correlated group
+from config import MAX_STOCK_ENTRY_PRICE     # gap-risk: skip fresh stock entries above this price
+from config import ENTRY_WINDOW_END_MIN      # restrict NEW auto-buys to the first N min after open
 
 # Merged-picks feature flag. When ON, the screener becomes ONE KB-ranked pick list
 # (data["picks"]) that drives the display AND both auto-exec lanes — so "what's shown
@@ -2712,6 +3077,14 @@ def _auto_exec_options(data: dict) -> None:
     global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_attempts
     global _session_start_equity, _session_start_date
 
+    # Edge review 2026-06-12 (analyze_trades.py): the option lane is −EV
+    # (−$11/trade over 60 closes). Entries are paused via config kill-switch
+    # until the exit logic shows positive expectancy. Exits are unaffected —
+    # they run from position_monitor regardless. Flip AUTO_EXEC_OPTIONS_ENABLED
+    # back to True in config.py to re-arm.
+    if not AUTO_EXEC_OPTIONS_ENABLED:
+        return
+
     with _state_lock:
         armed  = state.get("auto_execute_options", False)
         logged = state["logged_in"]
@@ -2941,6 +3314,68 @@ def _auto_exec_options(data: dict) -> None:
                 _save_auto_exec_state()
 
 
+def _cooldown_blocked_symbols() -> set:
+    """Symbols on stop-out cooldown — edge review 2026-06-12, retargeted to the
+    REAL ledger 2026-06-18.
+
+    Reads the authoritative real-fill ledger (data/real_trades.jsonl) — NOT the
+    old fabricated shadow journal — and returns symbols with >= SYMBOL_COOLDOWN_
+    MIN_STOPS losing closes in the trailing SYMBOL_COOLDOWN_WINDOW_DAYS *and* net
+    negative over that window. A losing real close (pnl_usd < 0) is the truthful
+    stop-out signal, independent of any reason string. These are the chronic
+    repeat-losers (e.g. PLTR/CVNA) the screener keeps re-buying. Fail-open: any
+    error returns an empty set so a ledger hiccup never blocks legitimate entries."""
+    try:
+        import json as _j
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=SYMBOL_COOLDOWN_WINDOW_DAYS)).isoformat()
+        stops: dict = {}   # sym -> losing-close count
+        net:   dict = {}   # sym -> net pnl_usd
+        with open(_REAL_TRADES_FILE) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = _j.loads(line)
+                except ValueError:
+                    continue
+                if r.get("dry_run"):                 # real fills only
+                    continue
+                if r.get("ts", "") < cutoff:
+                    continue
+                sym = str(r.get("sym", "")).upper()
+                if not sym:
+                    continue
+                pnl = float(r.get("pnl_usd", 0.0) or 0.0)
+                net[sym] = net.get(sym, 0.0) + pnl
+                if pnl < 0:
+                    stops[sym] = stops.get(sym, 0) + 1
+        return {s for s, n in stops.items()
+                if n >= SYMBOL_COOLDOWN_MIN_STOPS and net.get(s, 0.0) < 0}
+    except FileNotFoundError:
+        return set()
+    except Exception as e:
+        log.warning(f"[cooldown] could not compute blocked symbols: {e}")
+        return set()
+
+
+# Sectors that move as one risk-off basket — the 2026-06-23 wipeout was all of
+# these stopping out together. Collapsed into a single correlation group so the
+# sector cap treats "12 semis" as the one trade it really is.
+_SEMI_COMPLEX = {"Semis", "Semi Equip", "Photonics", "Servers", "Storage", "ETF-Semis"}
+
+
+def _corr_group(sym: str, sector: str | None = None) -> str:
+    """Correlation group for the sector concentration cap. Semis/semi-equip/etc.
+    collapse to one bucket; a known sector is its own bucket; an unknown sector
+    falls back to the symbol itself so distinct names are never falsely grouped."""
+    sec = sector or screener._SECTOR.get(sym.upper())
+    if sec in _SEMI_COMPLEX:
+        return "SEMI_COMPLEX"
+    return sec if sec else f"SYM:{sym.upper()}"
+
+
 def _auto_exec_stocks(data: dict) -> None:
     """Auto-buy 10 shares of strong screener STOCK rows — the shares analogue of
     _auto_exec_options (operator request). Same rails: armed toggle, market-open,
@@ -2957,6 +3392,15 @@ def _auto_exec_stocks(data: dict) -> None:
     if not armed or not logged:
         return
     if not screener._is_market_open():
+        return
+    # Entry-time window (edge review 2026-06-27): only open NEW positions in the
+    # first ENTRY_WINDOW_END_MIN minutes after the 09:30 ET open — midday entries
+    # were the worst-performing. Exits are unaffected (this is the entry path only).
+    _now_et = datetime.now(ET)
+    _mins_since_open = (_now_et.hour - 9) * 60 + (_now_et.minute - 30)
+    if _mins_since_open > ENTRY_WINDOW_END_MIN:
+        log.info(f"[auto-buy] outside entry window (open+{_mins_since_open}min "
+                 f"> {ENTRY_WINDOW_END_MIN}min) — no new stock entries")
         return
 
     today = datetime.now(ET).strftime("%Y-%m-%d")
@@ -2978,6 +3422,21 @@ def _auto_exec_stocks(data: dict) -> None:
                       if p.get("route") == "stocks" and p.get("sym") in _stk_by]
     else:
         stock_rows = data.get("dt", [])
+    # Record each candidate's REAL strategy + ATR so _protect_untracked_stocks can tag
+    # the resulting position for the validated per-strategy exit (gap fix 2026-06-18).
+    for _r in data.get("dt", []):
+        _sym = str(_r.get("sym", "")).upper()
+        if not _sym:
+            continue
+        _strat = _r.get("strategy") or _r.get("setup") or _r.get("source")
+        if _strat:
+            _strategy_hint[_sym] = str(_strat)
+        _atr = _r.get("atr") or _r.get("atr14")
+        if _atr:
+            try:
+                _atr_hint[_sym] = float(_atr)
+            except (TypeError, ValueError):
+                pass
     # Don't STACK past the ~$5000/position target: skip a symbol already held in the account
     # (mirrors the options lane's one-per-underlying). The same-day dedup alone let CVNA
     # accumulate to ~2× target across re-entries on different days (observed 2026-06-05).
@@ -2985,6 +3444,16 @@ def _auto_exec_stocks(data: dict) -> None:
         _held_stock_syms = {p["sym"].upper() for p in _account_equity_positions()}
     except Exception:
         _held_stock_syms = set()
+    # Sector/correlation cap (edge review 2026-06-27): seed the per-group open count
+    # from currently-held names so we never rebuild a one-basket book (the -$1,674
+    # 2026-06-23 semis wipeout). Incremented as new positions open this cycle.
+    _grp_count: dict[str, int] = {}
+    for _hs in _held_stock_syms:
+        _g = _corr_group(_hs)
+        _grp_count[_g] = _grp_count.get(_g, 0) + 1
+    # Repeat-loser cooldown (edge review 2026-06-12): names that keep stopping out
+    # and net negative are sat out until they age past the cooldown window.
+    _cooldown_syms = _cooldown_blocked_symbols()
     _cash = _free_cash()   # NO-MARGIN guard: only deploy settled cash this cycle (operator 2026-06-05)
     # CONCENTRATION cap (operator 2026-06-05): same portfolio-wide breadth ceiling the
     # options lane enforces — total open positions across both lanes ≤ MAX_PORTFOLIO_POSITIONS.
@@ -3008,6 +3477,25 @@ def _auto_exec_stocks(data: dict) -> None:
         if not sym or not sym.replace(".", "").isalpha():
             continue
         if sym in _held_stock_syms:           # already hold it → don't add another ~$5000
+            continue
+        if sym in _cooldown_syms:             # repeat-loser cooldown (edge review 2026-06-12)
+            _emit_log(f"AUTO-BUY ⛔ {sym} on stop-out cooldown "
+                      f"(≥{SYMBOL_COOLDOWN_MIN_STOPS} stops & net-negative in "
+                      f"{SYMBOL_COOLDOWN_WINDOW_DAYS}d)", level="INFO")
+            continue
+        # Sector/correlation cap (edge review 2026-06-27): don't pile a 4th name
+        # into one correlated basket (semis et al. all stop out together).
+        _grp = _corr_group(sym, r.get("sector"))
+        if _grp_count.get(_grp, 0) >= MAX_POSITIONS_PER_SECTOR:
+            _emit_log(f"AUTO-BUY ⛔ {sym} skipped — sector cap "
+                      f"({_grp_count[_grp]}/{MAX_POSITIONS_PER_SECTOR} in {_grp})", level="INFO")
+            continue
+        # High-priced gap-risk exclusion (edge review 2026-06-27): expensive names
+        # gap clean through the stop the polling monitor can't defend.
+        _px = float(r.get("price") or 0.0)
+        if _px > MAX_STOCK_ENTRY_PRICE:
+            _emit_log(f"AUTO-BUY ⛔ {sym} skipped — price ${_px:.0f} > "
+                      f"${MAX_STOCK_ENTRY_PRICE:.0f} gap-risk cap", level="INFO")
             continue
         with _auto_exec_lock:
             if sym in _auto_exec_stock_today:
@@ -3047,6 +3535,7 @@ def _auto_exec_stocks(data: dict) -> None:
             if res.get("success") and not res.get("dry_run"):
                 _cash -= _cost            # decrement remaining cash for this cycle
                 _stk_slots -= 1           # concentration cap: one more position open
+                _grp_count[_grp] = _grp_count.get(_grp, 0) + 1  # sector cap: one more in this group
                 _held_stock_syms.add(sym) # keep the held set current within the cycle
             res["sym"] = sym
             res["message"] = (f"AUTO-BUY {qty} {sym} (~${qty*float(r.get('price') or 0):.0f})"
@@ -4037,11 +4526,13 @@ if __name__ == "__main__":
     _record_boot()            # OB-5: track restart frequency (instability signal)
     _load_auto_exec_state()   # restore today's dedup set if mid-day restart
     _load_trades_today()      # restore today's closed trades (#17)
+    _load_real_pos_snapshot() # restore real-position snapshot so restart ≠ phantom closes
     _load_exit_config()       # restore operator-edited exit thresholds
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
     socketio.start_background_task(_scheduler_supervisor)   # respawn scheduler if it dies
     socketio.start_background_task(position_monitor)
+    socketio.start_background_task(_alpaca_probe_loop)  # smart /health: DNS-stale vs bad-keys
     socketio.start_background_task(_auto_login)  # connect to Alpaca on boot if .env has creds
 
     print("\n" + "=" * 55)

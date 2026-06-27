@@ -10,6 +10,22 @@ the static hard caps + sizing.
 """
 from __future__ import annotations
 
+# ── Option lane kill-switch (edge review 2026-06-12) ─────────────────────────
+# analyze_trades.py over 600 closed trades (Jun 2–12) found the autonomous OPTION
+# lane has NEGATIVE expectancy: 60 trades, 92% win rate, yet −$682 total / −$11 a
+# trade. Avg win $12 vs avg loss $271 (payoff 0.05) — it needs a 95.7% win rate
+# just to break even. The 90-min stall timer caps every winner at ~$12 while the
+# −50% stop lets losers run, so the structure is a guaranteed bleed. Entries are
+# paused until the exit logic earns its keep; EXITS still run (open legs stay
+# managed). Re-run `python scripts/analyze_trades.py` and flip back to True only
+# once the option lane shows positive per-trade expectancy. Reversible.
+# Re-enable attempt 2026-06-17 (operator) jammed the eventlet hub on boot
+# (/health 15–25s, flapping) — the entry path does heavy synchronous Alpaca/
+# yfinance work across all option picks on the single hub. Reverted to restore
+# stability; needs the entry work moved off-hub before re-enabling. See
+# [[project-architecture-hardening]].
+AUTO_EXEC_OPTIONS_ENABLED = False
+
 # ── Option caps (operator 2026-06-04) ────────────────────────────────────────
 OPT_HARD_MAX_USD      = 600.0     # HARD ceiling per option trade — ALL incl. ETFs
 OPT_HARD_MAX_USD_ETF  = 600.0     # ETFs capped at $600 too (was $1500)
@@ -29,6 +45,48 @@ STOCK_TARGET_USD      = 5000.0    # equal-dollar target capital per stock positi
 # *is* the concentration measure. Enforced across BOTH auto-exec lanes (stocks +
 # options) so neither can independently rebuild a 20-correlated-long book.
 MAX_PORTFOLIO_POSITIONS = 12      # max concurrent open positions, stocks + options combined
+
+# ── Per-symbol stop-out cooldown (edge review 2026-06-12) ────────────────────
+# analyze_trades.py found a handful of names that the screener re-buys and then
+# stops out of, over and over, for the bulk of the book's losses: GLD (0W/12L,
+# −$3,564), AMAT (1W/18L, −$3,149), GOOG (1W/12L, −$1,502) — ~−$8.2k, most of the
+# window's max drawdown. A name that keeps stopping out is one the strategy is
+# chronically misjudging in the current regime. After SYMBOL_COOLDOWN_MIN_STOPS
+# stop-outs inside the trailing SYMBOL_COOLDOWN_WINDOW_DAYS *and* a net-negative
+# P&L on that name over the window, block fresh entries until it ages out. The
+# net-negative AND clause is deliberate: a high-churn name that still nets
+# positive keeps trading. Set MIN_STOPS very high to disable.
+SYMBOL_COOLDOWN_WINDOW_DAYS = 5
+SYMBOL_COOLDOWN_MIN_STOPS    = 2   # edge review 2026-06-27: 3→2. GLD/MU stopped out
+                                  # TWICE before re-entry was blocked (GLD -3% then
+                                  # re-bought and -5.5%); two net-negative stops in
+                                  # the window is enough signal to sit a name out.
+
+# ── Sector / correlation concentration cap (edge review 2026-06-27) ──────────
+# The 2026-06-23 wipeout (-$1,674, 0W/12L) was one risk-off semis tape that
+# stopped out NVDA/AMAT/LRCX/MU/TXN/INTC at once. MAX_PORTFOLIO_POSITIONS counts
+# positions but can't tell "12 names" from "12 semis" — a long-only book of one
+# correlated basket is a single trade. Cap concurrent open positions per
+# correlation GROUP. Semis / semi-equip / photonics / servers / semi-ETFs collapse
+# into ONE group (they move together — see _corr_group in app.py); names with an
+# unknown sector are each their own group, never falsely lumped. Set high to disable.
+MAX_POSITIONS_PER_SECTOR = 3
+
+# ── High-priced gap-risk exclusion (edge review 2026-06-27) ──────────────────
+# The worst stop slippage was all in expensive names: MU stopped at -7.3% (-$346)
+# from a $1,179 entry, AMAT -6.7%, LRCX -5.7%, GLD -5.5%. At ~$5000/position a
+# $1,100 stock is ~4 shares — no sizing granularity, and a single overnight/midday
+# gap blows clean through the -3.5% stop the 10s polling monitor can't defend.
+# Sub-$100 names were net POSITIVE over the window; the >$300 semis carried the
+# losses. Skip fresh stock entries priced above this. Set high to disable.
+MAX_STOCK_ENTRY_PRICE = 300.0
+
+# ── Entry-time window (edge review 2026-06-27) ───────────────────────────────
+# Midday entries were the worst: the 2026-06-23 losers clustered 12:17-12:41 ET in
+# lunchtime chop, and the few real target-reachers were all morning entries.
+# Restrict fresh auto-buys to the first N minutes after the 09:30 ET open. Set to a
+# large number (e.g. 390) to effectively disable.
+ENTRY_WINDOW_END_MIN = 90   # 09:30 + 90 min = 11:00 ET cutoff for NEW entries
 
 
 def size_position(route: str, price: float = 0.0, per_contract_cost: float = 0.0,

@@ -4,6 +4,36 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 
 ---
 
+## 🎯 ACTIVE TODOs — curated 2026-06-08
+
+> Everything below the `═══ HISTORICAL ARCHIVE ═══` divider is the original dated
+> decision log, retained for reference but **superseded or done**. This top block
+> is the live worklist. Items are tagged by risk:
+> **🟢 safe** (observability/correctness, no change to trade economics) ·
+> **🔴 gated** (changes real trade behavior — needs its own cost-robust ≥3bp
+> walk-forward + operator sign-off before it ships, per the standing convention
+> and `feedback-live-never-relax-kb`).
+
+### Trade-logic — 🔴 GATED (backtest + sign-off required, do NOT hot-apply)
+- [ ] **Stock ±2% rotation** — stocks exit at +2%/−2% then rotate into the next screener pick. Needs A/B vs current exits on the Polygon backtest.
+- [ ] **Options ±20% on net debit** — options exit at +20%/−20% of net debit; existing exit ladder stays as the backstop. Backtest-gate before default-on.
+- [ ] **Two-step scale-out** (KB §XM) — sell a fraction at first target, move remainder to breakeven, trail. Propose as exit-engine REQ; A/B before defaulting.
+- [ ] **Wheel / premium-selling lane** (KB §WHEEL, added 2026-06-08) — short cash-secured puts → assignment → covered calls. New strategy: must clear its OWN ≥3bp walk-forward (REQ-202) before paper-enable; use limit/mid orders (NOT the reference repo's market orders), gate on IVR>50.
+
+### Correctness / observability
+- [x] **Rank liquidity gate (KB §9)** — ✅ DONE (verified in code 2026-06-08). `app._annotate_liquidity` demotes illiquid ✅ BUY option rows to "⚠ Illiquid"; `kb_principles.score_option_candidate` hard-floors a confirmed-illiquid contract below the 60% gate so it can never rank as a top BUY. Wired at `app.py:3151-3153/3185-3187`.
+- [x] **Log full KB principle** — ✅ DONE (verified in code 2026-06-08). Auto-exec logs the full principle sentences, not bare `§N`: pass → `AUTO-EXEC ✓ {sym} KB: {matched[:4]}` (`app.py:2857`), `AUTO-BUY ✓` (`:3028`); fail → `_kb_and_debate_gate` returns the `failed[:3]` labels (`:2669`). Labels come from `kb_principles` (e.g. "Directional edge 71% ≥ 53% (§19 backtest)").
+- [ ] **Confidence calibration** — 🟡 DEFERRED-pending-data (NOT a quick fix). `kb_principles.calibrate()` is an intentional identity-stub seam; it stays a no-op until a validated live IVR / historical win-probability feed exists (today IVR is an HV proxy). Faking a calibration would be worse than the honest no-op. Unblock requires the data feed first, then blend in that one place.
+
+### Infra / reliability — Architecture & Observability Hardening (B+→A−, started EOD 2026-06-04)
+- See the **`## Architecture & Observability Hardening`** table further below for full OB-* detail. Open items: concurrency/hub timeouts, central config + sizing module, kill the duplicate engine, CI pipeline, modularize `main.js`/templates, unify exits + slippage/alerts/metrics. (OB-4 state↔broker reconciliation ✅ done 2026-06-04.)
+- [ ] **KB-COMPLY** — KB compliance gaps audited 2026-05-21 (see section below).
+- [ ] **Live-money readiness gates** — codified checkpoints before flipping `PAPER_MODE=False` (60-day paper Sharpe, drawdown drill, etc.); see GO_LIVE_CHECKLIST.
+
+═══════════════════════ HISTORICAL ARCHIVE (pre-2026-06-08, superseded/done) ═══════════════════════
+
+---
+
 ## 📊 ADVISORY MODE (2026-05-18): chart now marks every vwap_momentum signal (the ONLY proven-edge signal) as ▲CALL/▼PUT with its measured 3yr track record in the tooltip — fires PRE-gate so you see all real signals & decide instrument/size/skip. Decision-support, NOT auto-trade (that strategy loses). trend_cont/gap_fade disabled (noise) so only the validated signal marks the chart.
 
 ## 🏗️ ARCHITECTURE DIRECTION (2026-05-18 PM, user): DUAL-INSTRUMENT SYSTEM — shared signal core, instrument router, EACH ROUTE BACKTEST-GATED.

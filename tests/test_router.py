@@ -66,9 +66,12 @@ def test_skip_when_neither_fits():
     from risk_brain import OPT_PER_TRADE_MAX_USD, OPT_WEEK_MAX_USD
     rb = RiskBrain(total_equity=107_846)
     rb.register_entry("stocks", cost_usd=95_000)   # stock sleeve full
-    # exhaust the options weekly cap too (config single source — no stale literal)
+    # exhaust the options weekly cap too (config single source — no stale literal).
+    # Seed at TODAY so the seeded risk lands in the same rolling-week window that
+    # route_signal() checks with the real date — otherwise this test is time-fragile
+    # (a hardcoded past date falls out of the current week and the cap looks unused).
     from datetime import date
-    t = date(2026, 6, 1)
+    t = date.today()
     per = OPT_PER_TRADE_MAX_USD
     for _ in range(int(OPT_WEEK_MAX_USD // per)):
         rb.register_entry("options", 100, per, today=t)

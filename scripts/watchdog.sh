@@ -28,12 +28,36 @@ PY="$REPO/venv/bin/python3.11"
 PYPATH="$REPO/venv/lib/python3.11/site-packages"
 LOG="/tmp/alpacatrader.watchdog.log"
 MAX_FAILS=3                       # consecutive bad checks before acting (~3 min @ 60s)
+MAX_TIME=15                       # per-probe HTTP timeout. Must exceed worst-case
+                                  # eventlet-hub stalls (screener yfinance fan-out /
+                                  # LLM debate freeze the single hub for several
+                                  # seconds). 8s was too tight → false 000s → a
+                                  # kill-loop that restarted a healthy app (2026-06-16).
 
 ts() { date "+%Y-%m-%d %H:%M:%S"; }
 note() { echo "$(ts) $*" >> "$LOG"; }
 
-# relaunch_cmd <name> — direct relaunch used only when launchd KeepAlive
-# didn't bring the service back (manual / .app launch).
+# launchd_label <name> — the launchd job that owns a service, or "" if none.
+# When a service is launchd-managed with KeepAlive, launchd is the SOLE restart
+# authority; the watchdog must only KILL and let KeepAlive relaunch. Doing its
+# own nohup relaunch races KeepAlive → two instances collide on the port →
+# corrupted responses (http=000) → more kills → loop. (Root cause, 2026-06-16.)
+launchd_label() {
+    case "$1" in
+        main)   echo "com.alpacatrader" ;;
+        charts) echo "com.alpacatrader.charts" ;;
+        *)      echo "" ;;
+    esac
+}
+
+# is_launchd_managed <label> — true if the job is currently loaded in launchd.
+is_launchd_managed() {
+    [ -n "$1" ] && launchctl list "$1" >/dev/null 2>&1
+}
+
+# relaunch_cmd <name> — direct relaunch used ONLY when the service is NOT
+# launchd-managed (manual / .app launch). Never used while launchd KeepAlive
+# owns the service.
 relaunch_cmd() {
     case "$1" in
         main)
@@ -55,7 +79,7 @@ check_service() {
     local bodyfile="/tmp/alpacatrader.watchdog.${name}.body"
 
     local code
-    code=$(curl -s -o "$bodyfile" -w "%{http_code}" --max-time 8 "$url" 2>/dev/null)
+    code=$(curl -s -o "$bodyfile" -w "%{http_code}" --max-time "$MAX_TIME" "$url" 2>/dev/null)
 
     if [ "$code" = "200" ]; then
         echo 0 > "$failfile" 2>/dev/null   # healthy — reset counter
@@ -77,7 +101,11 @@ check_service() {
     # relaunch below) brings up a clean one.
     note "[$name] THRESHOLD HIT — killing app on :$port (hung or down for ${MAX_FAILS} checks)"
     local pids
-    pids=$(lsof -ti :"$port" 2>/dev/null)
+    # LISTENER only. Plain `lsof -ti :PORT` also matches CLIENT connections to
+    # the port (e.g. a browser tab on the dashboard), so it would kill innocent
+    # client processes and report misleading multi-PID kills. Restrict to the
+    # process actually listening. (2026-06-16)
+    pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null)
     if [ -n "$pids" ]; then
         echo "$pids" | xargs kill -9 2>/dev/null
         note "[$name] killed PIDs: $(echo "$pids" | tr '\n' ' ')"
@@ -85,15 +113,27 @@ check_service() {
     fi
     echo 0 > "$failfile"
 
-    # If launchd owns it, KeepAlive will relaunch — give it a moment, verify.
-    sleep 5
-    if curl -s -o /dev/null --max-time 5 "$url" 2>/dev/null; then
-        note "[$name] recovered (launchd KeepAlive or already back up)"
+    local label
+    label=$(launchd_label "$name")
+    if is_launchd_managed "$label"; then
+        # launchd KeepAlive owns restart. Do NOT relaunch ourselves — that
+        # races KeepAlive and collides two instances on the port (the very
+        # bug that caused the 2026-06-16 kill-loop). Just wait past the
+        # plist ThrottleInterval (10s) and verify; if it's still not back,
+        # leave it to launchd rather than spawning a competing instance.
+        note "[$name] launchd-managed ($label) — waiting for KeepAlive restart"
+        sleep 15
+        if curl -s -o /dev/null --max-time "$MAX_TIME" "$url" 2>/dev/null; then
+            note "[$name] recovered via launchd KeepAlive"
+        else
+            note "[$name] still down after KeepAlive window — leaving to launchd (no direct relaunch)"
+        fi
         return 0
     fi
 
-    # Not back (manual / .app launch — no launchd). Relaunch ourselves.
-    note "[$name] no auto-restart detected — relaunching app directly"
+    # NOT launchd-managed (manual / .app launch) — we are the only restart
+    # authority, so relaunch directly.
+    note "[$name] not launchd-managed — relaunching app directly"
     cd "$REPO" || { note "[$name] cd $REPO failed"; return 1; }
     relaunch_cmd "$name"
     return 0
