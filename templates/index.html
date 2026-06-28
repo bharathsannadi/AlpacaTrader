@@ -1715,6 +1715,19 @@
         <button class="btn-run" id="btn-save-exit" style="margin-top:10px;width:100%;background:#22c55e;color:#04210f;font-weight:700;opacity:.45;cursor:not-allowed" disabled onclick="saveExitConfig()">✓ Saved</button>
       </div>
 
+      <!-- Risk Guards (editable) — edge review 2026-06-27: entry-side controls -->
+      <div class="card" data-card-id="risk-guards">
+        <div class="card-title">Entry Guards <span style="font-size:9px;color:var(--muted)">(editable)</span></div>
+        <div style="display:grid;grid-template-columns:auto auto;gap:6px 10px;font-size:var(--fs-xs);align-items:center"
+             oninput="_guardsChanged()">
+          <span title="Max open positions per correlated group (semis collapse into one)">🧩 Max / sector</span><input class="risk-input" type="number" id="rg-max-sector" min="1" step="1" style="width:60px">
+          <span title="Skip fresh stock entries priced above this — high-priced names gap through stops">💲 Max share $</span><input class="risk-input" type="number" id="rg-max-price" min="1" step="10" style="width:60px">
+          <span title="Only allow NEW auto-buys in the first N min after the 09:30 ET open">⏱ Entry window (min)</span><input class="risk-input" type="number" id="rg-entry-win" min="5" step="5" style="width:60px">
+          <span title="Cooldown a symbol after this many stop-outs (when net-negative)">🚫 Cooldown stops</span><input class="risk-input" type="number" id="rg-cooldown" min="1" step="1" style="width:60px">
+        </div>
+        <button class="btn-run" id="btn-save-guards" style="margin-top:10px;width:100%;background:#22c55e;color:#04210f;font-weight:700;opacity:.45;cursor:not-allowed" disabled onclick="saveRiskGuards()">✓ Saved</button>
+      </div>
+
     </div><!-- /s-col-left -->
 
     <!-- ── MIDDLE COLUMN (2× wide): Equity → Session → Positions → Slippage ─ -->
@@ -2259,6 +2272,6 @@
 </div>
 
 <script src="/static/lightweight-charts.js"></script>
-<script src="/static/main.js?v=6"></script>
+<script src="/static/main.js?v=7"></script>
 </body>
 </html>

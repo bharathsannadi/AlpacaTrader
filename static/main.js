@@ -375,6 +375,15 @@ function updateUI(s) {
     set("ex-opt-tp", ec.opt_tp_pct);     set("ex-opt-sl", ec.opt_sl_pct);     set("ex-opt-stall", ec.opt_stall_min);
     set("ex-cap", ec.time_cap_days);
   }
+
+  // Risk-guard inputs — same no-clobber rule as exit config (edge review 2026-06-27)
+  const _saveGuardsBtn = document.getElementById("btn-save-guards");
+  if (s.risk_guards && (!_saveGuardsBtn || _saveGuardsBtn.disabled)) {
+    const rg = s.risk_guards;
+    const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el && v != null) el.value = v; };
+    set("rg-max-sector", rg.max_per_sector); set("rg-max-price", rg.max_entry_price);
+    set("rg-entry-win", rg.entry_window_min); set("rg-cooldown", rg.cooldown_stops);
+  }
   // Notes panel retired 2026-06-04 — closed trades now appear in the Log.
 
   // Refresh exec brief when trade count changes
@@ -2124,6 +2133,24 @@ function _exitChanged() {   // enable Save on any edit
 }
 function _exitSaved() {      // back to disabled "✓ Saved"
   const b = document.getElementById("btn-save-exit");
+  if (b) { b.disabled = true; b.textContent = "✓ Saved"; b.style.opacity = ".45"; b.style.cursor = "not-allowed"; }
+}
+
+function saveRiskGuards() {   // edge review 2026-06-27: persist entry guards
+  const v = id => parseFloat(document.getElementById(id).value);
+  socket.emit("set_risk_guards", {
+    max_per_sector:   v("rg-max-sector"), max_entry_price: v("rg-max-price"),
+    entry_window_min: v("rg-entry-win"),  cooldown_stops:  v("rg-cooldown"),
+  });
+  _guardsSaved();
+}
+
+function _guardsChanged() {  // enable Save on any edit
+  const b = document.getElementById("btn-save-guards");
+  if (b) { b.disabled = false; b.textContent = "Save Entry Guards"; b.style.opacity = "1"; b.style.cursor = "pointer"; }
+}
+function _guardsSaved() {     // back to disabled "✓ Saved"
+  const b = document.getElementById("btn-save-guards");
   if (b) { b.disabled = true; b.textContent = "✓ Saved"; b.style.opacity = ".45"; b.style.cursor = "not-allowed"; }
 }
 

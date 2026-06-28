@@ -288,6 +288,25 @@ def test_price_cap_blocks_expensive_name(tmp_path, monkeypatch):
     assert any("gap-risk cap" in m for m in logs)
 
 
+def test_risk_guards_live_retune_and_clamp(monkeypatch):
+    """The UI handler mutates the same module globals _auto_exec_stocks reads,
+    and clamps out-of-range values so a guard can never be fully disabled."""
+    monkeypatch.setattr(app, "MAX_POSITIONS_PER_SECTOR", 3)
+    monkeypatch.setattr(app, "MAX_STOCK_ENTRY_PRICE", 300.0)
+    monkeypatch.setattr(app, "ENTRY_WINDOW_END_MIN", 90)
+    monkeypatch.setattr(app, "SYMBOL_COOLDOWN_MIN_STOPS", 2)
+    app._apply_risk_guards({"max_per_sector": 2, "max_entry_price": 250,
+                            "entry_window_min": 120, "cooldown_stops": 3})
+    assert app.MAX_POSITIONS_PER_SECTOR == 2
+    assert app.MAX_STOCK_ENTRY_PRICE == 250.0
+    assert app.ENTRY_WINDOW_END_MIN == 120
+    assert app.SYMBOL_COOLDOWN_MIN_STOPS == 3
+    # Out-of-range values clamp to safe minimums (guard stays active)
+    app._apply_risk_guards({"max_per_sector": 0, "entry_window_min": 1})
+    assert app.MAX_POSITIONS_PER_SECTOR == 1
+    assert app.ENTRY_WINDOW_END_MIN == 5
+
+
 def test_analyze_trades_skips_dry_run_rows(tmp_path, monkeypatch):
     """analyze_trades must ignore any dry_run row so shadow P&L is never reported."""
     import analyze_trades

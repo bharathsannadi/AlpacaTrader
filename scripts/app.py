@@ -1203,6 +1203,12 @@ def _state_snapshot() -> dict:
         "opt_dynamic_exit": screener_executor.OPT_DYNAMIC_EXIT_ENABLED,   # REQ-608 breakeven+trail ladder
         "time_cap_days": auto_engine.TIME_CAP_DAYS,
     }
+    snap["risk_guards"] = {                                  # operator-editable entry guards (edge review 2026-06-27)
+        "max_per_sector":   MAX_POSITIONS_PER_SECTOR,
+        "max_entry_price":  round(MAX_STOCK_ENTRY_PRICE, 0),
+        "entry_window_min": ENTRY_WINDOW_END_MIN,
+        "cooldown_stops":   SYMBOL_COOLDOWN_MIN_STOPS,
+    }
     snap["deployed_risk_pct"]      = round(trader.deployed_risk_pct(acct_val) * 100, 2)
     snap["max_portfolio_risk_pct"] = round(trader.eff_max_portfolio_risk() * 100, 2)
     snap["pdt_remaining"]          = trader.pdt_day_trades_remaining()
@@ -1852,6 +1858,62 @@ def on_set_exit_config(data):
     _emit_log(f"Exit thresholds updated: stocks ±{auto_engine.STOCK_TAKE_PROFIT_PCT*100:.1f}% · "
               f"options ±{screener_executor.OPT_TAKE_PROFIT_PCT*100:.0f}% · "
               f"stall {auto_engine.STALL_MINUTES}min", level="INFO")
+    emit_state()
+
+
+_RISK_GUARDS_FILE = os.path.expanduser("~/.spy_trader/risk_guards.json")
+
+
+def _apply_risk_guards(cfg: dict) -> None:
+    """Set the live entry-risk guards from a config dict. Edge review 2026-06-27.
+
+    Mutates the app-module globals that _auto_exec_stocks reads each pass:
+    sector/correlation cap, gap-risk price cap, entry-time window (min after
+    09:30 open), and the repeat-loser cooldown stop-count. Defaults live in
+    config.py; this lets the operator retune them live without a restart."""
+    global MAX_POSITIONS_PER_SECTOR, MAX_STOCK_ENTRY_PRICE
+    global ENTRY_WINDOW_END_MIN, SYMBOL_COOLDOWN_MIN_STOPS
+    try:
+        if "max_per_sector" in cfg:
+            MAX_POSITIONS_PER_SECTOR = max(1, int(cfg["max_per_sector"]))
+        if "max_entry_price" in cfg:
+            MAX_STOCK_ENTRY_PRICE = max(1.0, float(cfg["max_entry_price"]))
+        if "entry_window_min" in cfg:
+            ENTRY_WINDOW_END_MIN = max(5, int(cfg["entry_window_min"]))
+        if "cooldown_stops" in cfg:
+            SYMBOL_COOLDOWN_MIN_STOPS = max(1, int(cfg["cooldown_stops"]))
+    except Exception as e:
+        log.warning(f"apply risk guards: {e}")
+
+
+def _load_risk_guards() -> None:
+    try:
+        import json as _j
+        with open(_RISK_GUARDS_FILE) as fh:
+            _apply_risk_guards(_j.load(fh))
+        log.info("[risk-guards] restored saved entry guards")
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+
+@socketio.on("set_risk_guards")
+@require_auth
+def on_set_risk_guards(data):
+    """Operator-editable entry guards: sector cap, gap-risk price cap, entry
+    window, repeat-loser cooldown. Persisted across restarts."""
+    if not isinstance(data, dict):
+        return
+    _apply_risk_guards(data)
+    try:
+        import json as _j
+        os.makedirs(os.path.dirname(_RISK_GUARDS_FILE), exist_ok=True)
+        with open(_RISK_GUARDS_FILE, "w") as fh:
+            _j.dump(data, fh)
+    except Exception as e:
+        log.warning(f"persist risk guards: {e}")
+    _emit_log(f"Entry guards updated: ≤{MAX_POSITIONS_PER_SECTOR}/sector · "
+              f"≤${MAX_STOCK_ENTRY_PRICE:.0f}/share · entry ≤{ENTRY_WINDOW_END_MIN}min · "
+              f"cooldown ≥{SYMBOL_COOLDOWN_MIN_STOPS} stops", level="INFO")
     emit_state()
 
 
@@ -4528,6 +4590,7 @@ if __name__ == "__main__":
     _load_trades_today()      # restore today's closed trades (#17)
     _load_real_pos_snapshot() # restore real-position snapshot so restart ≠ phantom closes
     _load_exit_config()       # restore operator-edited exit thresholds
+    _load_risk_guards()       # restore operator-edited entry guards (edge review 2026-06-27)
     socketio.start_background_task(price_ticker)
     socketio.start_background_task(scheduler)
     socketio.start_background_task(_scheduler_supervisor)   # respawn scheduler if it dies
