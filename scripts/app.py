@@ -454,6 +454,82 @@ def _stock_qty_for(price) -> int:
     return _size_position("stocks", price)
 
 
+def _stock_qty_for_row(r: dict) -> int:
+    """DESK-8 (2026-06-29, gated): vol-based sizing — when enabled, risk a CONSTANT
+    dollar amount (STOCK_RISK_USD) per position using the per-share stop distance
+    (the prescribed setup stop, else a 2×ATR proxy from hv20), so a high-vol name
+    takes fewer shares than a quiet one. Never exceeds the equal-dollar notional and
+    falls back to it whenever a stop distance can't be derived. Flag off → unchanged."""
+    price = float(r.get("price") or 0.0)
+    if price <= 0:
+        return 0
+    base = _stock_qty_for(price)              # equal-dollar ceiling / fallback
+    if not VOL_SIZING_ENABLED:
+        return base
+    params = SETUP_EXIT_PARAMS.get(str(r.get("setup") or ""))
+    if params and params.get("stop_pct"):
+        stop_dist = price * float(params["stop_pct"])
+    else:
+        stop_dist = 2.0 * _atr_proxy(price, r.get("hv20"))
+    if stop_dist <= 0:
+        return base                            # no risk basis → equal-dollar
+    return max(1, min(int(STOCK_RISK_USD // stop_dist), base))
+
+
+def _market_regime_ok(data: dict) -> bool:
+    """DESK-7 (2026-06-29): True when the market proxy (REGIME_PROXY_SYMBOL, in the
+    screener universe) is at/above its daily EMA20 — a risk-on tape where fresh longs
+    are sensible. Both -$5k cliff days (06-05, 06-23) were broad risk-off. Reuses the
+    screener's already-computed `ema20_d` (no extra fetch). Fail-OPEN: any missing data
+    returns True so a feed hiccup never blocks trading; only a confirmed down-tape gates."""
+    try:
+        rows = data.get("dt", []) if isinstance(data, dict) else []
+        proxy = next((x for x in rows
+                      if str(x.get("sym", "")).upper() == REGIME_PROXY_SYMBOL), None)
+        if not proxy:
+            return True
+        price = float(proxy.get("price") or 0.0)
+        ma = float(proxy.get("ema20_d") or 0.0)
+        if price <= 0 or ma <= 0:
+            return True
+        return price >= ma
+    except Exception as e:
+        log.debug(f"[regime] check failed, fail-open: {e}")
+        return True
+
+
+def _account_equity() -> float:
+    """Total account equity (cash + positions). 0.0 if unreadable."""
+    try:
+        c = getattr(trader, "TRADING_CLIENT", None)
+        if c is None:
+            return 0.0
+        return float(c.get_account().equity or 0.0)
+    except Exception:
+        return 0.0
+
+
+def exposure_snapshot() -> dict:
+    """DESK-6 (2026-06-29): book-level market exposure — net long $ (long-only today),
+    gross $, and net as a multiple of equity, plus the informational ceiling. Surfaced
+    for the UI/EOD so a one-big-beta-bet book is visible, not just a position count."""
+    try:
+        positions = _account_equity_positions()
+        def _mv(p):
+            return float(p.get("mkt_value") or (p.get("qty", 0) * p.get("last", 0)) or 0.0)
+        gross = sum(abs(_mv(p)) for p in positions)
+        net = sum(_mv(p) for p in positions)
+        eq = _account_equity()
+        net_x = round(net / eq, 2) if eq > 0 else 0.0
+        return {"net_long_usd": round(net, 0), "gross_usd": round(gross, 0),
+                "equity_usd": round(eq, 0), "net_long_x": net_x,
+                "ceiling_x": MAX_NET_LONG_EXPOSURE_X,
+                "over_ceiling": net_x > MAX_NET_LONG_EXPOSURE_X}
+    except Exception as e:
+        log.debug(f"[exposure] snapshot failed: {e}")
+        return {}
+
+
 def _free_cash() -> float:
     """Settled CASH available (operator 2026-06-05: NO MARGIN — only deploy cash, never
     borrow; margin amplifies losses). Negative = already on margin → buy nothing. Returns a
@@ -770,6 +846,7 @@ def _detect_real_stock_closes() -> None:
             "entry": round(entry, 2), "exit": round(exit_px, 2),
             "pnl_usd": pnl_usd, "pnl_pct": pnl_pct,
             "reason": _classify_exit_reason(pnl_pct, partial),
+            "setup": _entry_meta.get(sym, {}).get("setup", ""),  # DESK-5: per-setup attribution
             "dry_run": False,
         })
         log.info(f"[real-ledger] {sym} closed {closed}sh @ ${exit_px:.2f} "
@@ -1068,6 +1145,45 @@ def _manage_option_positions() -> None:
 # per-strategy exit instead of a generic one. Populated on each screener refresh.
 _strategy_hint: dict = {}   # sym -> strategy string (canonical or descriptive)
 _atr_hint:      dict = {}   # sym -> entry-time ATR14
+# DESK-1/2/3/5 (2026-06-29): per-symbol entry metadata captured at BUY time so the
+# exit engine can apply the validated per-setup exit and the ledger can attribute
+# P&L to its setup. {sym: {"setup": str, "atr": float, "entry_ts": ISO-ET}}.
+# Persisted so a restart still knows each open position's setup + entry time.
+_entry_meta: dict = {}
+_ENTRY_META_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "entry_meta.json")
+
+
+def _load_entry_meta() -> None:
+    global _entry_meta
+    try:
+        with open(_ENTRY_META_FILE) as fh:
+            _entry_meta = _json_dedup.load(fh)
+    except (FileNotFoundError, _json_dedup.JSONDecodeError, OSError):
+        _entry_meta = {}
+
+
+def _save_entry_meta() -> None:
+    os.makedirs(os.path.dirname(_ENTRY_META_FILE), exist_ok=True)
+    tmp = _ENTRY_META_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            _json_dedup.dump(_entry_meta, fh)
+        os.replace(tmp, _ENTRY_META_FILE)
+    except OSError as e:
+        log.warning(f"[entry-meta] could not persist: {e}")
+
+
+def _atr_proxy(price: float, hv20: float) -> float:
+    """DESK-3: the screener carries no ATR, so derive a daily-ATR proxy from the
+    annualized historical vol (hv20, %). daily σ = hv20/100/√252; ATR ≈ price·σ.
+    Returns 0.0 when inputs are unusable (caller falls back to the flat stop)."""
+    try:
+        p = float(price); hv = float(hv20)
+        if p <= 0 or hv <= 0:
+            return 0.0
+        return round(p * (hv / 100.0) / (252 ** 0.5), 4)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _protect_untracked_stocks() -> None:
@@ -1083,10 +1199,13 @@ def _protect_untracked_stocks() -> None:
         tracked = {p.get("sym") for p in auto_engine._load_positions()}
         for p in acct:
             if p["sym"] not in tracked:
+                _meta = _entry_meta.get(p["sym"], {})
                 auto_engine.record_stock_position(
                     p["sym"], p["qty"], p["entry"],
                     strategy=_strategy_hint.get(p["sym"], "screener/manual"),
-                    atr=float(_atr_hint.get(p["sym"], 0.0)))
+                    atr=float(_meta.get("atr") or _atr_hint.get(p["sym"], 0.0)),
+                    setup=_meta.get("setup", ""),
+                    entry_ts=_meta.get("entry_ts", ""))
     except Exception as e:
         log.debug(f"protect untracked stocks: {e}")
 
@@ -2743,6 +2862,11 @@ from config import SYMBOL_COOLDOWN_WINDOW_DAYS, SYMBOL_COOLDOWN_MIN_STOPS  # rep
 from config import MAX_POSITIONS_PER_SECTOR  # correlation cap: max open positions per correlated group
 from config import MAX_STOCK_ENTRY_PRICE     # gap-risk: skip fresh stock entries above this price
 from config import ENTRY_WINDOW_END_MIN      # restrict NEW auto-buys to the first N min after open
+# DESK review (2026-06-29) — 🔴 economics flags default OFF (backtest + sign-off to enable)
+from config import SETUP_EXIT_PARAMS                      # DESK-1/2/3 per-setup validated exits
+from config import VOL_SIZING_ENABLED, STOCK_RISK_USD     # DESK-8 volatility-based sizing
+from config import REGIME_FILTER_ENABLED, REGIME_PROXY_SYMBOL, REGIME_MA_DAYS  # DESK-7 regime filter
+from config import MAX_NET_LONG_EXPOSURE_X               # DESK-6 net-long exposure ceiling (informational)
 
 # Merged-picks feature flag. When ON, the screener becomes ONE KB-ranked pick list
 # (data["picks"]) that drives the display AND both auto-exec lanes — so "what's shown
@@ -3464,6 +3588,11 @@ def _auto_exec_stocks(data: dict) -> None:
         log.info(f"[auto-buy] outside entry window (open+{_mins_since_open}min "
                  f"> {ENTRY_WINDOW_END_MIN}min) — no new stock entries")
         return
+    # DESK-7 (2026-06-29, gated): regime filter — no fresh longs into a risk-off tape.
+    if REGIME_FILTER_ENABLED and not _market_regime_ok(data):
+        _emit_log(f"AUTO-BUY ⛔ skipping stocks — {REGIME_PROXY_SYMBOL} below its EMA20 "
+                  f"(risk-off regime, DESK-7)", level="INFO")
+        return
 
     today = datetime.now(ET).strftime("%Y-%m-%d")
     with _auto_exec_lock:
@@ -3576,8 +3705,8 @@ def _auto_exec_stocks(data: dict) -> None:
         # log-kb-principle TODO: print the FULL KB principles satisfied, not just §#
         if sc.get("matched"):
             _emit_log(f"AUTO-BUY ✓ {sym} KB: " + " · ".join(sc["matched"][:4]), level="INFO")
-        # Equal-dollar sizing: ~$5000 per stock position (operator 2026-06-04)
-        qty = _stock_qty_for(r.get("price"))
+        # Equal-dollar sizing (~$5000/position) OR DESK-8 vol-based sizing when enabled.
+        qty = _stock_qty_for_row(r)
         if qty <= 0:
             _emit_log(f"AUTO-BUY ⛔ {sym} skipped — no usable price for $5000 sizing", level="INFO")
             with _auto_exec_lock:
@@ -3599,6 +3728,14 @@ def _auto_exec_stocks(data: dict) -> None:
                 _stk_slots -= 1           # concentration cap: one more position open
                 _grp_count[_grp] = _grp_count.get(_grp, 0) + 1  # sector cap: one more in this group
                 _held_stock_syms.add(sym) # keep the held set current within the cycle
+                # DESK-1/2/3/5: capture entry metadata so the exit engine can apply the
+                # validated per-setup exit and the ledger can attribute P&L by setup.
+                _entry_meta[sym] = {
+                    "setup": str(r.get("setup") or ""),
+                    "atr": _atr_proxy(float(r.get("price") or 0.0), r.get("hv20")),
+                    "entry_ts": datetime.now(ET).isoformat(),
+                }
+                _save_entry_meta()
             res["sym"] = sym
             res["message"] = (f"AUTO-BUY {qty} {sym} (~${qty*float(r.get('price') or 0):.0f})"
                               if res.get("success")
@@ -4589,6 +4726,7 @@ if __name__ == "__main__":
     _load_auto_exec_state()   # restore today's dedup set if mid-day restart
     _load_trades_today()      # restore today's closed trades (#17)
     _load_real_pos_snapshot() # restore real-position snapshot so restart ≠ phantom closes
+    _load_entry_meta()        # DESK-1/2/3/5: restore per-symbol setup/ATR/entry-ts
     _load_exit_config()       # restore operator-edited exit thresholds
     _load_risk_guards()       # restore operator-edited entry guards (edge review 2026-06-27)
     socketio.start_background_task(price_ticker)

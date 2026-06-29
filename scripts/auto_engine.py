@@ -27,6 +27,39 @@ from strategy import default_registry
 from risk_brain import RiskBrain
 from router import route_signal, RouteDecision, SPREADS_ENABLED
 from exit_engine import ExitEngine, ExitState
+import config
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _setup_exit_decision(p: dict, chg: float, params: dict) -> tuple[str, str]:
+    """DESK-1/2/3 (2026-06-29): exit decision from a position's VALIDATED per-setup
+    params (config.SETUP_EXIT_PARAMS) — the fixed target, the prescribed tight stop,
+    and the same-day horizon these intraday edges require (they decay overnight).
+    Returns (action, why); 'hold' when none fire."""
+    import datetime as _dt
+    tgt = params.get("target_pct")
+    if tgt is not None and chg >= tgt:
+        return "exit", f"setup target +{tgt*100:.1f}%"
+    stop = params.get("stop_pct")
+    if stop is not None and chg <= -stop:
+        return "exit", f"setup stop -{stop*100:.1f}%"
+    if params.get("same_day"):
+        now = _dt.datetime.now(_ET)
+        mh = params.get("max_hold_min")
+        ent = p.get("entry_ts")
+        held_min = None
+        if ent:
+            try:
+                held_min = (now - _dt.datetime.fromisoformat(ent)).total_seconds() / 60
+            except Exception:
+                held_min = None
+        if mh is not None and held_min is not None and held_min >= mh:
+            return "exit", f"setup time-stop {int(held_min)}min ≥ {mh}min"
+        if now.hour >= 16 or (now.hour == 15 and now.minute >= 55):
+            return "exit", "setup same-day EOD close"
+    return "hold", ""
 
 log = logging.getLogger("auto_engine")
 
@@ -510,7 +543,8 @@ def execute_plan(plan: dict, dry_run: bool = False,
 
 def record_stock_position(sym: str, qty: int, entry: float, strategy: str = "external",
                           atr: float = 0.0, dry_run: bool = False,
-                          stop_pct: float = 0.08) -> bool:
+                          stop_pct: float = 0.08, setup: str = "",
+                          entry_ts: str = "") -> bool:
     """Bring an externally-bought stock (screener auto-buy, manual, or any account
     position opened outside the engine) under dynamic exit management (REQ-608/609):
     append it to the managed store with an exit_state so manage_exits trails a stop,
@@ -526,12 +560,23 @@ def record_stock_position(sym: str, qty: int, entry: float, strategy: str = "ext
     positions = _load_positions()
     if any(p.get("sym") == sym for p in positions):
         return False
-    init_stop = (entry - 2.0 * atr) if (atr and atr > 0) else entry * (1.0 - stop_pct)
+    # DESK-3 (2026-06-29): when the setup-exit is enabled and this position's setup
+    # has a PRESCRIBED stop, use it (it's the tight 1–1.5% the backtest validated);
+    # else the 2×ATR stop when ATR is known; else the flat fallback.
+    _params = config.SETUP_EXIT_PARAMS.get(setup) if config.SETUP_EXIT_ENABLED else None
+    if _params and _params.get("stop_pct"):
+        init_stop = entry * (1.0 - float(_params["stop_pct"]))
+    elif atr and atr > 0:
+        init_stop = entry - 2.0 * atr
+    else:
+        init_stop = entry * (1.0 - stop_pct)
     st = ExitEngine().init_position(entry=entry, init_stop=init_stop)
     positions.append({
         "sym": sym, "strategy": strategy, "route": "stocks",
         "qty": int(qty), "entry_price": entry, "signal_price": entry,
         "atr": float(atr or 0.0),     # entry-time ATR for the validated 2×ATR exit stop
+        "setup": setup,               # DESK-1/2/3: drives the per-setup validated exit
+        "entry_ts": entry_ts,         # DESK-1: entry timestamp (ET ISO) for same-day horizon
         "entry_slippage_bps": 0.0, "entry_date": _date.today().isoformat(),
         "order_id": None, "exit_state": _asdict(st), "dry_run": dry_run,
     })
@@ -645,10 +690,30 @@ def manage_exits(dry_run: bool = False) -> None:
             stall_min = 0.0
         stalled = chg >= STALL_MIN_PROFIT_PCT and stall_min >= STALL_MINUTES
         held_days = (_date.today() - _date.fromisoformat(p["entry_date"])).days
-        # GAP FIX 2026-06-18: apply each position's VALIDATED exit, not a uniform
-        # +6%/−3%. (backtest_connors_daily exits per strategy.)
-        kind = _strategy_kind(p.get("strategy"))
-        if kind == "mean_rev":
+        # DESK-1/2/3 (2026-06-29, gated): when the setup-exit is enabled and this
+        # position's setup is known, honor its VALIDATED target/stop/same-day horizon
+        # (the live exits were not trading the backtested system). Falls through to the
+        # legacy per-kind logic when the flag is off or the setup is unknown.
+        _setup_params = (config.SETUP_EXIT_PARAMS.get(p.get("setup", ""))
+                         if config.SETUP_EXIT_ENABLED else None)
+        if _setup_params:
+            action, why = _setup_exit_decision(p, chg, _setup_params)
+            if action != "exit":
+                # not yet — still let the trailing ladder ratchet so a profit floor forms
+                st = ExitState(**p["exit_state"])
+                _a2, _w2, st = eng.update(st, high=px, low=px, last=px)
+                p["exit_state"] = _asdict(st)
+                if _a2 == "exit":
+                    action, why = "exit", _w2 or "trail stop"
+            if action == "exit" or held_days >= TIME_CAP_DAYS:
+                pass  # handled by the shared close block below
+            # skip the legacy kind branches for setup-managed positions
+            kind = "_setup_managed"
+        else:
+            kind = _strategy_kind(p.get("strategy"))
+        if kind == "_setup_managed":
+            pass
+        elif kind == "mean_rev":
             # Connors/Bollinger: bank the bounce at RSI(2)≥70, 2×ATR stop, 10d cap.
             rsi2_now, atr_now = _daily_rsi2_atr(p["sym"])
             atr = float(p.get("atr") or atr_now or 0.0)

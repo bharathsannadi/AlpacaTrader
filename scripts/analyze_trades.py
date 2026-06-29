@@ -116,6 +116,81 @@ def _drawdown(rows: list[dict]) -> None:
     print()
 
 
+# Backtested per-setup reference — MIRRORS screener_engine.BT_METRICS (kept inline so
+# this report stays hermetic / dependency-free). Used by the DESK-4 tracking-error check.
+BT_REFERENCE = {
+    "Breakout":    {"pf": 1.88, "win_pct": 51.5},
+    "Bull Flag":   {"pf": 1.44, "win_pct": 61.5},
+    "RSI Dip":     {"pf": 1.41, "win_pct": 53.7},
+    "Gap+Vol":     {"pf": 1.37, "win_pct": 50.6},
+}
+
+
+def _profit_factor(pnl: list[float]) -> float:
+    gains = sum(p for p in pnl if p > 0)
+    losses = abs(sum(p for p in pnl if p < 0))
+    return (gains / losses) if losses else float("inf")
+
+
+def _risk_adjusted(rows: list[dict]) -> None:
+    """DESK-10 (2026-06-29): risk-adjusted performance on the REAL book — profit
+    factor, per-trade Sharpe/Sortino, and max drawdown. These are the metrics the
+    GO_LIVE_CHECKLIST gates on, measured continuously on live paper (not just expectancy)."""
+    pnl = [r.get("pnl_usd", 0.0) for r in rows]
+    if len(pnl) < 2:
+        print("── Risk-adjusted (DESK-10): too few trades\n")
+        return
+    mean = st.mean(pnl)
+    sd = st.pstdev(pnl)
+    downside = st.pstdev([min(p, 0.0) for p in pnl]) or 0.0
+    sharpe = (mean / sd * (len(pnl) ** 0.5)) if sd else 0.0          # per-window Sharpe
+    sortino = (mean / downside * (len(pnl) ** 0.5)) if downside else 0.0
+    cum = peak = maxdd = 0.0
+    for r in sorted(rows, key=lambda r: r.get("ts", "")):
+        cum += r.get("pnl_usd", 0.0)
+        peak = max(peak, cum)
+        maxdd = min(maxdd, cum - peak)
+    print("── Risk-adjusted performance (DESK-10)")
+    print(f"     profit factor {_profit_factor(pnl):6.2f}")
+    print(f"     Sharpe        {sharpe:6.2f}      Sortino {sortino:6.2f}   (per-trade)")
+    print(f"     max drawdown  ${maxdd:>9,.0f}")
+    print()
+
+
+def _tracking_error(rows: list[dict]) -> None:
+    """DESK-4 (2026-06-29): live-vs-backtest tracking error per setup. The screener
+    promised a backtested win% / PF on each pick; this compares what actually happened.
+    A desk halts a strategy on tracking-error, not on a single down day. Needs the
+    `setup` field on ledger rows (DESK-5) — silently skips setups it can't attribute."""
+    by_setup: dict = collections.defaultdict(list)
+    for r in rows:
+        s = r.get("setup")
+        if s:
+            by_setup[s].append(r.get("pnl_usd", 0.0))
+    if not by_setup:
+        print("── Tracking error (DESK-4): no per-setup data yet "
+              "(ledger rows need the `setup` field — DESK-5)\n")
+        return
+    print("── Live-vs-backtest tracking error (DESK-4)")
+    print(f"     {'setup':12s} {'n':>4} {'live WR':>8} {'bt WR':>7} {'ΔWR':>7} "
+          f"{'live PF':>8} {'bt PF':>6}  flag")
+    for s, pnl in sorted(by_setup.items()):
+        if not pnl:
+            continue
+        wr = sum(1 for p in pnl if p > 0) / len(pnl) * 100
+        pf = _profit_factor(pnl)
+        ref = BT_REFERENCE.get(s, {})
+        bt_wr = ref.get("win_pct"); bt_pf = ref.get("pf")
+        dwr = (wr - bt_wr) if bt_wr is not None else None
+        flag = "⚠ UNDER" if (dwr is not None and dwr <= -10) else ""
+        pf_s = f"{pf:6.2f}" if pf != float("inf") else "   inf"
+        print(f"     {s[:12]:12s} {len(pnl):>4} {wr:>7.1f}% "
+              f"{(f'{bt_wr:.1f}%' if bt_wr is not None else '   —'):>7} "
+              f"{(f'{dwr:+.1f}' if dwr is not None else '  —'):>7} "
+              f"{pf_s:>8} {(f'{bt_pf:.2f}' if bt_pf is not None else '  —'):>6}  {flag}")
+    print("     (ΔWR ≤ −10 pts ⇒ live materially under model — review/halt the setup)\n")
+
+
 def main() -> None:
     args = sys.argv[1:]
     date_from = args[0] if len(args) >= 1 else None
@@ -139,6 +214,8 @@ def main() -> None:
     _by(rows, lambda r: r.get("sym", "?"), "Worst 10 symbols (biggest drains)",
         top=10, reverse=False)
     _drawdown(rows)
+    _risk_adjusted(rows)      # DESK-10: risk-adjusted performance
+    _tracking_error(rows)     # DESK-4: live-vs-backtest tracking error per setup
 
 
 if __name__ == "__main__":

@@ -14,6 +14,85 @@ Deep audit performed: 2026-05-12 (mid-session). Defer code changes until after m
 > walk-forward + operator sign-off before it ships, per the standing convention
 > and `feedback-live-never-relax-kb`).
 
+### 🏦 BUY-SIDE DESK REVIEW — institutional lens (added 2026-06-29)
+
+> Reviewed as a Fidelity/Schwab desk trader + risk officer would, grounded in the
+> real ledger (`data/real_trades.jsonl`, 67 closes Jun 17–26) and the real equity
+> curve (−$5,263 / −4.87% on the month). Full analysis in memory
+> `edge-review-2026-06-27.md`. The desk's verdict: **the strategy is not failing
+> because the edge is absent — it's failing because live execution does not trade
+> the system that was backtested, and there is no control loop catching the drift.**
+> Tags: 🟢 safe (no trade-economics change) · 🔴 gated (changes trade behavior →
+> needs ≥3bp walk-forward + sign-off, per the standing convention).
+
+**A. Execution fidelity — the #1 leak (live ≠ backtested system)**
+- [ ] 🔴 **DESK-1 — Honor each setup's prescribed exit horizon.** Breakout is a
+  SAME-DAY edge ("signal-day PF 28.42, next-day 0.84 — edge gone by tomorrow",
+  `screener_engine.SETUP_STRATEGY`) but `_strategy_kind` routes it to the "trend"
+  family which holds up to `TIME_CAP_DAYS=21` with NO same-day exit
+  (`auto_engine.py:663-668`). Force-close same-day setups by their horizon (≤ EOD).
+  This is the direct cause of the 06-23 overnight-gap wipeout. **Highest leverage.**
+- [ ] 🔴 **DESK-2 — Apply the prescribed fixed target.** The trend exit takes "NO
+  fixed target", so the 2–3% targets the backtested PF depends on are never banked;
+  winners drift back to scratch. Add the setup target to the exit.
+- [ ] 🔴 **DESK-3 — Fix the degenerate stop.** Screener rows carry no `atr` field, so
+  trend positions store `atr=0` and the 2×ATR stop collapses to a flat ~3% (vs the
+  prescribed 1–1.5%) — losers run ~2× the backtest assumption. Propagate/derive ATR
+  (from `day_range`/`hv20`) OR use the setup's prescribed stop. NOTE: do NOT widen
+  the stop — these are intraday setups; tighten to spec.
+
+**B. Tracking-error / model-risk control loop (none exists today)**
+- [ ] 🟢 **DESK-4 — Live-vs-backtest tracking-error monitor.** Every pick logs its
+  backtested `bt_pf`/`bt_win`/`dir_pct`; nothing compares them to realized. Add a
+  rolling report (extend `analyze_trades.py`): realized WR vs `dir_pct`, realized PF
+  vs `bt_pf`, per setup. Alert when live underperforms model by >N pts over M trades
+  (today's gap: 54%→31%). A desk halts a strategy on tracking-error, not on a down day.
+- [ ] 🟢 **DESK-5 — Per-setup expectancy in the ledger.** `real_trades.jsonl` has no
+  `setup`/`strategy` field, so we can't attribute live P&L to setup and confirm which
+  setups actually pay. Record the entry setup on each close; report per-setup edge.
+
+**C. Risk management — book-level exposure the count-cap misses**
+- [ ] 🟢 **DESK-6 — Net/gross & beta-adjusted market exposure.** The book is 100% long,
+  unhedged; the count cap + new sector cap limit names but not directional beta. Track
+  net long $ and beta-weighted exposure; cap it. Both cliff days (06-05, 06-23) were
+  market-wide risk-off — a beta cap or index hedge would have blunted them.
+- [ ] 🔴 **DESK-7 — Regime/market filter on new longs.** Suppress fresh long entries
+  when SPY/SMH is below VWAP or its 20-day MA. Macro version of the sector cap.
+- [ ] 🔴 **DESK-8 — Volatility-based sizing.** Sizing is flat equal-dollar ($5,000),
+  so a 6%-ATR name and a 1.5%-ATR name carry wildly different risk. Size by ATR/vol
+  (risk-parity per position) so each trade risks a constant dollar amount. (Folds with
+  the dormant Kelly work in 3R-B.1.)
+
+**D. Books-&-records / reconciliation (a bug just slipped through here)**
+- [ ] 🟢 **DESK-9 — Automated daily ledger↔broker reconciliation.** The −$863 phantom
+  double-log went undetected until a manual review. Add a daily job that reconciles
+  `real_trades.jsonl` realized P&L against `equity_history.json` / the Alpaca account
+  and alerts on drift > $X. (OB-4 reconciled positions; this reconciles *realized P&L*.)
+- [ ] 🟢 **DESK-10 — Risk-adjusted performance on the REAL book.** Surface Sharpe/Sortino,
+  max-DD, and profit factor on `real_trades.jsonl` (not just expectancy) — the metrics
+  the GO_LIVE_CHECKLIST gates on must be measured on live paper, continuously.
+
+**Desk priority:** DESK-1 → DESK-2 → DESK-3 (make live match the backtest — could
+flip expectancy on its own) → DESK-4/5 (so we can *see* whether it worked) → DESK-6/7/8
+(book risk) → DESK-9/10 (controls). DESK-4, 5, 9, 10 are 🟢 and shippable now; the
+🔴 items still go through the standing backtest gate before they touch live economics.
+
+> **STATUS — ALL 10 IMPLEMENTED 2026-06-29.** 🟢 items (DESK-4/5/6/9/10) are LIVE.
+> 🔴 economics items (DESK-1/2/3/7/8) shipped behind config flags that **DEFAULT OFF**
+> (`SETUP_EXIT_ENABLED`, `REGIME_FILTER_ENABLED`, `VOL_SIZING_ENABLED`) — per the
+> standing convention they need a ≥3bp walk-forward + operator sign-off before being
+> flipped True. Code map:
+> - DESK-1/2/3 — `config.SETUP_EXIT_PARAMS` + `auto_engine._setup_exit_decision` /
+>   `record_stock_position` (setup-aware stop) + `_atr_proxy` for the missing ATR.
+> - DESK-4/10 — `analyze_trades._tracking_error` / `_risk_adjusted`.
+> - DESK-5 — `setup` field now written on every `real_trades.jsonl` close (via the
+>   persisted `_entry_meta` captured at buy).
+> - DESK-6 — `app.exposure_snapshot()`.   DESK-7 — `app._market_regime_ok(data)`.
+>   DESK-8 — `app._stock_qty_for_row()` (risk-parity, capped at the $5k sleeve).
+> - DESK-9 — `scripts/reconcile_ledger.py` (cron-safe; exit 1 on duplicate closes).
+> Tests: +12 (test_auto_engine setup-exit; test_session_hardening regime/vol-sizing).
+> Deploy note: live app must be reloaded under launchd to pick these up.
+
 ### Trade-logic — 🔴 GATED (backtest + sign-off required, do NOT hot-apply)
 - [ ] **Stock ±2% rotation** — stocks exit at +2%/−2% then rotate into the next screener pick. Needs A/B vs current exits on the Polygon backtest.
 - [ ] **Options ±20% on net debit** — options exit at +20%/−20% of net debit; existing exit ladder stays as the backstop. Backtest-gate before default-on.

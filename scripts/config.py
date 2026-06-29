@@ -89,6 +89,47 @@ MAX_STOCK_ENTRY_PRICE = 300.0
 ENTRY_WINDOW_END_MIN = 90   # 09:30 + 90 min = 11:00 ET cutoff for NEW entries
 
 
+# ═══ DESK REVIEW IMPLEMENTATION (2026-06-29) ═════════════════════════════════
+# Buy-side desk review (TODO.md §BUY-SIDE DESK REVIEW). The 🔴 items below change
+# trade economics, so per the standing convention they ship behind flags that
+# DEFAULT OFF — flip to True only after a ≥3bp walk-forward + operator sign-off.
+# The 🟢 observability items (DESK-4/5/6/9/10) are live and need no flag.
+
+# DESK-1/2/3 — honor each setup's VALIDATED exit (horizon / target / stop) instead
+# of the one-size flat band. When True, manage_exits uses SETUP_EXIT_PARAMS for any
+# position whose `setup` is known; otherwise falls back to the existing kind logic.
+SETUP_EXIT_ENABLED = False
+
+# Per-setup exit params — machine-readable form of screener_engine.SETUP_STRATEGY.
+#   same_day      : force an intraday close (these edges decay overnight)
+#   max_hold_min  : minutes from entry to force-close (None → hold to EOD)
+#   stop_pct      : hard stop as a fraction of entry (the PRESCRIBED tight stop)
+#   target_pct    : fixed take-profit as a fraction of entry (None → no fixed target)
+# RSI Dip is a next-day mean-reversion handled by daily_trader (NOT same-day) — wide
+# stop, hold to EOD, no fixed target.
+SETUP_EXIT_PARAMS = {
+    "Breakout":  {"same_day": True,  "max_hold_min": 90,   "stop_pct": 0.0125, "target_pct": 0.025},
+    "Bull Flag": {"same_day": True,  "max_hold_min": 15,   "stop_pct": 0.015,  "target_pct": 0.010},
+    "Gap+Vol":   {"same_day": True,  "max_hold_min": 120,  "stop_pct": 0.0175, "target_pct": 0.030},
+    "RSI Dip":   {"same_day": False, "max_hold_min": None, "stop_pct": 0.020,  "target_pct": None},
+}
+
+# DESK-7 — regime filter: block NEW long entries when the market proxy is below its
+# moving average (both -$5k cliff days were broad risk-off). Observability when off.
+REGIME_FILTER_ENABLED = False
+REGIME_PROXY_SYMBOL   = "SPY"
+REGIME_MA_DAYS        = 20
+
+# DESK-8 — volatility-based sizing: size each position so it risks a CONSTANT dollar
+# amount (risk = STOCK_RISK_USD, shares = risk / per-share stop distance) instead of
+# a flat $5000 notional. Falls back to equal-dollar when ATR/stop is unknown.
+VOL_SIZING_ENABLED = False
+STOCK_RISK_USD     = 175.0    # target $ risk per stock position (3.5% of a $5k sleeve)
+
+# DESK-6 — book exposure cap (observability + optional gate). Net long $ as a multiple
+# of equity; a long-only book of correlated names is one big beta bet.
+MAX_NET_LONG_EXPOSURE_X = 1.5  # informational ceiling surfaced by exposure_snapshot
+
 def size_position(route: str, price: float = 0.0, per_contract_cost: float = 0.0,
                   ceiling: float = OPT_HARD_MAX_USD) -> int:
     """Shared equal-dollar sizing (CR-6) — ONE place both executors and the router can size.

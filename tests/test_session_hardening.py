@@ -455,3 +455,45 @@ def test_options_lane_blocked_when_portfolio_full(monkeypatch):
     app._auto_exec_options(data)
     assert placed == []                                          # nothing opened
     assert any("portfolio full" in m for m in logs)
+
+
+# ── DESK review (2026-06-29): regime filter, vol sizing, exposure ────────────
+def test_regime_filter_blocks_below_ma(monkeypatch):
+    """DESK-7: proxy below its EMA20 → risk-off → block new longs. Above → allow.
+    Missing proxy row → fail-open (allow)."""
+    monkeypatch.setattr(app, "REGIME_PROXY_SYMBOL", "SPY")
+    below = {"dt": [{"sym": "SPY", "price": 500.0, "ema20_d": 510.0}]}
+    above = {"dt": [{"sym": "SPY", "price": 520.0, "ema20_d": 510.0}]}
+    missing = {"dt": [{"sym": "NVDA", "price": 100.0, "ema20_d": 90.0}]}
+    assert app._market_regime_ok(below) is False
+    assert app._market_regime_ok(above) is True
+    assert app._market_regime_ok(missing) is True          # fail-open
+
+
+def test_vol_sizing_off_is_equal_dollar(monkeypatch):
+    """DESK-8 OFF (default): sizing is unchanged equal-dollar."""
+    monkeypatch.setattr(app, "VOL_SIZING_ENABLED", False)
+    r = {"price": 200.0, "setup": "Breakout", "hv20": 40.0}
+    assert app._stock_qty_for_row(r) == app._stock_qty_for(200.0)   # ~$5000 → 25
+
+
+def test_vol_sizing_on_cuts_high_vol_name(monkeypatch):
+    """DESK-8 ON: a HIGH-vol name (no prescribed setup → 2×ATR-proxy stop) is sized DOWN
+    so it risks ~STOCK_RISK_USD instead of a full $5000 sleeve. price $200, hv20 80% →
+    ATR≈$10.08, 2×ATR stop ≈$20.16/sh; $175 risk → 8 sh (vs equal-dollar 25)."""
+    monkeypatch.setattr(app, "VOL_SIZING_ENABLED", True)
+    monkeypatch.setattr(app, "STOCK_RISK_USD", 175.0)
+    monkeypatch.setattr(app, "SETUP_EXIT_PARAMS", {})       # no setup → ATR-proxy path
+    r = {"price": 200.0, "setup": "", "hv20": 80.0}
+    assert app._stock_qty_for_row(r) == 8                   # risk-sized below the sleeve
+
+
+def test_vol_sizing_capped_at_equal_dollar(monkeypatch):
+    """A tiny stop distance must NOT size above the equal-dollar notional ceiling."""
+    monkeypatch.setattr(app, "VOL_SIZING_ENABLED", True)
+    monkeypatch.setattr(app, "STOCK_RISK_USD", 175.0)
+    monkeypatch.setattr(app, "SETUP_EXIT_PARAMS",
+                        {"Breakout": {"stop_pct": 0.0001, "target_pct": 0.025,
+                                      "same_day": True, "max_hold_min": 90}})
+    r = {"price": 200.0, "setup": "Breakout", "hv20": 40.0}
+    assert app._stock_qty_for_row(r) == app._stock_qty_for(200.0)   # capped at equal-dollar

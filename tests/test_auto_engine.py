@@ -83,3 +83,41 @@ def test_max_concurrent_cap_via_open_count():
             for i in range(10)]
     plan = build_plan(sigs, equity=107_846, etf_set=ETF, open_count=7, max_concurrent=8, max_new=5)
     assert len(plan["planned"]) == 1   # only 1 slot left (8-7)
+
+
+# ── DESK-1/2/3 (2026-06-29): per-setup validated exit decision ────────────────
+import datetime as _dt
+from zoneinfo import ZoneInfo as _ZI
+import auto_engine as _ae
+
+_BREAKOUT = {"same_day": True, "max_hold_min": 90, "stop_pct": 0.0125, "target_pct": 0.025}
+
+
+def test_setup_exit_takes_fixed_target():
+    """DESK-2: a setup with a fixed target exits when reached (winners get banked)."""
+    p = {"entry_ts": _dt.datetime.now(_ZI("America/New_York")).isoformat()}
+    action, why = _ae._setup_exit_decision(p, 0.03, _BREAKOUT)
+    assert action == "exit" and "target" in why
+
+
+def test_setup_exit_honors_tight_stop():
+    """DESK-3: the prescribed tight stop fires (not the old flat ~3%)."""
+    p = {"entry_ts": _dt.datetime.now(_ZI("America/New_York")).isoformat()}
+    action, why = _ae._setup_exit_decision(p, -0.013, _BREAKOUT)   # -1.3% < -1.25% stop
+    assert action == "exit" and "stop" in why
+
+
+def test_setup_exit_same_day_time_stop():
+    """DESK-1: a same-day setup force-closes past its max-hold horizon (no overnight hold)."""
+    old = (_dt.datetime.now(_ZI("America/New_York")) - _dt.timedelta(minutes=120)).isoformat()
+    p = {"entry_ts": old}
+    action, why = _ae._setup_exit_decision(p, 0.005, _BREAKOUT)    # green but past 90 min
+    assert action == "exit" and "time-stop" in why
+
+
+def test_setup_exit_holds_within_horizon():
+    """Flat and inside the hold window → no target/stop exit. The only allowed exit is
+    the same-day EOD backstop (if the suite happens to run after 15:55 ET)."""
+    p = {"entry_ts": _dt.datetime.now(_ZI("America/New_York")).isoformat()}
+    action, why = _ae._setup_exit_decision(p, 0.005, _BREAKOUT)
+    assert action == "hold" or why == "setup same-day EOD close"
