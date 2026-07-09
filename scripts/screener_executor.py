@@ -105,13 +105,38 @@ _PAPER_CACHE = None
 
 
 def _is_paper() -> bool:
+    """Paper/live resolution. Prefers the app's authenticated client mode
+    (trader.PAPER_MODE — refreshed on every login, so a paper→live re-login
+    can't leave a stale answer here); falls back to .env resolution cached
+    per process. Fails SAFE (live → strict) when neither resolves."""
     global _PAPER_CACHE
+    import sys as _sys
+    _trader = _sys.modules.get("spy_auto_trader")   # only if the app imported it
+    if _trader is not None and getattr(_trader, "TRADING_CLIENT", None) is not None:
+        return bool(getattr(_trader, "PAPER_MODE", False))
     if _PAPER_CACHE is None:
         try:
             _PAPER_CACHE = bool(_load_env()[2])
         except Exception:
             _PAPER_CACHE = False   # unknown → treat as live → strict (never relax)
     return _PAPER_CACHE
+
+
+def _offload(fn, *args, **kwargs):
+    """Run a blocking / CPU-heavy call (yfinance fetch + pandas parse) on a real
+    OS thread via eventlet.tpool when the eventlet hub is active, so the hub
+    keeps servicing /health, price_ticker and position_monitor (the 2026-06-17
+    hub jam). Plain passthrough outside eventlet (CLI, tests)."""
+    _use_tpool = False
+    try:
+        import eventlet
+        from eventlet import tpool
+        _use_tpool = eventlet.patcher.is_monkey_patched("socket")
+    except ImportError:
+        pass
+    if _use_tpool:
+        return tpool.execute(fn, *args, **kwargs)
+    return fn(*args, **kwargs)
 
 
 def _relax_liquidity() -> bool:
@@ -172,7 +197,20 @@ def _load_env() -> tuple[str, str, bool]:
 
 
 def _make_clients():
-    """Returns (TradingClient, OptionHistoricalDataClient, is_paper)."""
+    """Returns (TradingClient, OptionHistoricalDataClient, is_paper).
+
+    Prefers the clients the app authenticated (trader.TRADING_CLIENT /
+    OPTION_CLIENT) so the executor always trades the SAME Alpaca account the
+    dashboard shows — previously the executor built its own clients from .env,
+    so a UI login with different credentials meant two identities were active
+    at once. The .env path remains as fallback for CLI / headless usage."""
+    import sys as _sys
+    _trader = _sys.modules.get("spy_auto_trader")   # only if the app imported it
+    if _trader is not None:
+        tc = getattr(_trader, "TRADING_CLIENT", None)
+        oc = getattr(_trader, "OPTION_CLIENT", None)
+        if tc is not None and oc is not None:
+            return tc, oc, bool(getattr(_trader, "PAPER_MODE", True))
     from alpaca.trading.client import TradingClient
     from alpaca.data.historical.option import OptionHistoricalDataClient
     key, secret, paper = _load_env()
@@ -243,9 +281,9 @@ def _verify_fill(tc, order_id: str, timeout_sec: int = 30,
     return last
 
 
-def _live_option_mid(opt_client, occ: str) -> float | None:
-    """Get live mid price for an OCC symbol via Alpaca data API.
-    Falls back to yfinance if Alpaca unavailable."""
+def _live_option_quote(opt_client, occ: str) -> dict | None:
+    """Live NBBO for an OCC symbol: {bid, ask, mid, source}. Alpaca first (most
+    current), yfinance fallback (delayed ~15 min). None when no usable quote."""
     # Try Alpaca first (most current)
     try:
         from alpaca.data.requests import OptionLatestQuoteRequest
@@ -257,7 +295,8 @@ def _live_option_mid(opt_client, occ: str) -> float | None:
             bid = float(q.bid_price)
             ask = float(q.ask_price)
             if bid > 0 and ask > 0:
-                return (bid + ask) / 2.0
+                return {"bid": bid, "ask": ask, "mid": (bid + ask) / 2.0,
+                        "source": "alpaca"}
     except Exception:
         pass
     # Fallback: yfinance (slightly delayed)
@@ -269,13 +308,39 @@ def _live_option_mid(opt_client, occ: str) -> float | None:
         date_part  = occ[-15:-9]          # YYMMDD
         expiry     = f"20{date_part[:2]}-{date_part[2:4]}-{date_part[4:6]}"
         opt_type   = "calls" if occ[-9] == "C" else "puts"
-        chain      = getattr(yf.Ticker(underlying).option_chain(expiry), opt_type)
+        chain      = getattr(_offload(yf.Ticker(underlying).option_chain, expiry), opt_type)
         row        = chain[chain["contractSymbol"] == occ]
         if not row.empty:
-            return float((row.iloc[0]["bid"] + row.iloc[0]["ask"]) / 2.0)
+            bid = float(row.iloc[0]["bid"])
+            ask = float(row.iloc[0]["ask"])
+            if bid > 0 and ask > 0:
+                return {"bid": bid, "ask": ask, "mid": (bid + ask) / 2.0,
+                        "source": "yfinance"}
     except Exception:
         pass
     return None
+
+
+def _live_option_mid(opt_client, occ: str) -> float | None:
+    """Live mid price for an OCC symbol (kept for daily_trader callers)."""
+    q = _live_option_quote(opt_client, occ)
+    return q["mid"] if q else None
+
+
+def _marketable_limit(quote: dict | None, fallback_mid: float, side: str) -> float:
+    """Limit price that crosses 25% of the half-spread instead of a flat nickel —
+    a flat ±$0.05 is a huge concession on a $0.50 contract and a meaningless one
+    on a $20 contract. Buys cap at the ask, sells floor at the bid."""
+    if quote:
+        mid, bid, ask = quote["mid"], quote["bid"], quote["ask"]
+        step = max(0.01, 0.25 * (ask - bid) / 2.0)
+        if side == "buy":
+            return round(min(mid + step, ask), 2)
+        return round(max(mid - step, bid, 0.01), 2)
+    mid = float(fallback_mid)
+    if side == "buy":
+        return round(mid + 0.05, 2)
+    return round(max(mid - 0.05, mid * 0.90, 0.01), 2)
 
 
 def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
@@ -290,14 +355,14 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
     try:
         import yfinance as yf
         ticker = yf.Ticker(sym)
-        hist = ticker.history(period="1d")
+        hist = _offload(ticker.history, period="1d")
         if hist.empty:
             return {"ok": None, "reason": "no spot price"}
         spot = float(hist["Close"].iloc[-1])
         try:
-            chain = ticker.option_chain(expiry)
+            chain = _offload(ticker.option_chain, expiry)
         except Exception:
-            avail = list(ticker.options or ())
+            avail = list(_offload(lambda: ticker.options) or ())
             if not avail:
                 return {"ok": None, "reason": "no option chain"}
             try:
@@ -305,7 +370,7 @@ def liquidity_check(sym: str, expiry: str, opt_type: str = "Call") -> dict:
                 expiry = min(avail, key=lambda d: abs((_dt.strptime(d, "%Y-%m-%d").date() - tgt).days))
             except Exception:
                 expiry = avail[0]
-            chain = ticker.option_chain(expiry)
+            chain = _offload(ticker.option_chain, expiry)
         opts = (chain.calls if opt_type == "Call" else chain.puts)
         opts = opts[opts["bid"] > 0].copy()
         if opts.empty:
@@ -378,8 +443,9 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
       2. Find ATM strike (closest to spot)
       3. Apply KB §9 liquidity gates (OI, bid-ask)
       4. For "Debit Call Spread": find OTM short leg (KB §5)
-      5. Get live Alpaca quote for limit price
-      6. Submit BTO (+ STO for spread) via Alpaca trading API
+      5. Refresh leg quotes from Alpaca; re-check §9 on the LIVE spread
+      6. Submit the order: single-leg BTO, or an atomic MLEG spread order
+         (both legs fill together at a net-debit limit — no naked-leg window)
       7. Return result dict
 
     Returns dict with keys:
@@ -414,7 +480,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
 
         # ── 1. Spot price ────────────────────────────────────────────────────
         ticker = yf.Ticker(sym)
-        hist   = ticker.history(period="1d")
+        hist   = _offload(ticker.history, period="1d")
         if hist.empty:
             raise ValueError(f"Cannot get spot price for {sym}")
         spot = float(hist["Close"].iloc[-1])
@@ -428,13 +494,13 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         # nearest available expiry that's still ≥ DTE_MIN to preserve the
         # KB §1 21-28 DTE window intent.
         try:
-            chain = ticker.option_chain(expiry)
+            chain = _offload(ticker.option_chain, expiry)
         except Exception as e:
             # Try to recover by picking the nearest valid expiry.
             try:
                 from datetime import datetime as _dt
                 target_dt = _dt.strptime(expiry, "%Y-%m-%d").date()
-                available = list(ticker.options or ())
+                available = list(_offload(lambda: ticker.options) or ())
                 _trail(f"FALLBACK  sym={sym}  requested={expiry}  available={available}")
                 if not available:
                     raise ValueError(f"No option chain available for {sym}")
@@ -472,7 +538,7 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                 )
                 _trail(f"FALLBACK_PICK  sym={sym}  was={expiry}  now={chosen_str}  dte={chosen_dte}")
                 expiry = chosen_str   # update for the rest of this execution
-                chain  = ticker.option_chain(expiry)
+                chain  = _offload(ticker.option_chain, expiry)
             except Exception as inner:
                 raise ValueError(f"Cannot load option chain {sym}/{expiry}: {inner}")
 
@@ -611,17 +677,101 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         tc, oc, paper = _make_clients()
         result["paper"] = paper
 
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
-        from alpaca.trading.enums    import OrderSide, TimeInForce
+        from alpaca.trading.requests import (LimitOrderRequest, MarketOrderRequest,
+                                             OptionLegRequest)
+        from alpaca.trading.enums    import OrderClass, OrderSide, TimeInForce
 
-        # Refresh long leg price from Alpaca (more current than yfinance EOD)
-        live_long_mid = _live_option_mid(oc, atm_occ) or atm_mid
-        long_limit    = round(live_long_mid + 0.05, 2)   # pay slightly above mid
+        # Refresh leg prices from Alpaca (the yfinance chain above is ~15 min
+        # delayed) and RE-CHECK the §9 spread gate on the LIVE quote — a
+        # contract that looked tight 15 minutes ago can be wide at order time.
+        long_quote    = _live_option_quote(oc, atm_occ)
+        live_long_mid = long_quote["mid"] if long_quote else atm_mid
+        if long_quote and long_quote["source"] == "alpaca" and live_long_mid > 0:
+            live_ba = (long_quote["ask"] - long_quote["bid"]) / live_long_mid
+            if live_ba > OPT_MAX_BID_ASK_PCT and not _relax_liquidity():
+                raise ValueError(
+                    f"{sym}: KB §9 Liquidity (LIVE) — bid-ask {live_ba*100:.1f}% "
+                    f"> {OPT_MAX_BID_ASK_PCT*100:.0f}% at order time "
+                    f"(stale-chain pass overridden)")
+        long_limit = _marketable_limit(long_quote, atm_mid, "buy")
 
-        # ── BTO long leg ─────────────────────────────────────────────────────
-        # operator relaxed-fill: market order so it fills even on a wide spread
-        # (you pay the ask). Otherwise a limit slightly above mid.
-        _use_mkt = _market_orders()    # paper-only; live forces limit-order discipline
+        # operator relaxed-fill: market orders (paper only) so wide spreads fill;
+        # otherwise marketable limits.
+        _use_mkt  = _market_orders()
+        acct_type = "📄 PAPER" if paper else "🔴 LIVE"
+
+        if use_spread and short_occ:
+            # ── Atomic multi-leg spread (MLEG) ───────────────────────────────
+            # Both legs execute together at a NET-debit limit, so an unfilled
+            # or rejected leg can never leave a naked position. This replaces
+            # the old BTO→STO two-step and its cancel/flatten rollback path
+            # (which could also leg a naked short in if the BTO was still
+            # pending when the STO filled).
+            short_quote    = _live_option_quote(oc, short_occ)
+            live_short_mid = short_quote["mid"] if short_quote else short_mid
+            live_net_mid   = max(live_long_mid - live_short_mid, 0.01)
+            half_spreads   = 0.0
+            if long_quote:
+                half_spreads += (long_quote["ask"] - long_quote["bid"]) / 2.0
+            if short_quote:
+                half_spreads += (short_quote["ask"] - short_quote["bid"]) / 2.0
+            net_limit = round(live_net_mid + max(0.01, 0.25 * half_spreads), 2)
+            legs = [
+                OptionLegRequest(symbol=atm_occ,   ratio_qty=1, side=OrderSide.BUY),
+                OptionLegRequest(symbol=short_occ, ratio_qty=1, side=OrderSide.SELL),
+            ]
+            if _use_mkt:
+                req = MarketOrderRequest(qty=qty, order_class=OrderClass.MLEG,
+                                         legs=legs, time_in_force=TimeInForce.DAY)
+            else:
+                req = LimitOrderRequest(qty=qty, order_class=OrderClass.MLEG,
+                                        legs=legs, limit_price=net_limit,
+                                        time_in_force=TimeInForce.DAY)
+            order    = tc.submit_order(req)
+            order_id = str(order.id)
+            # Same atomic order id on both keys — callers key dedup/tracking off
+            # long_order_id and close legs by OCC symbol, so the shape holds.
+            result["long_order_id"]  = order_id
+            result["short_order_id"] = order_id
+            result["order_class"]    = "mleg"
+            log.info(f"  MLEG BTO {atm_occ} / STO {short_occ}  "
+                     f"{'MKT' if _use_mkt else f'net_lmt=${net_limit:.2f}'}  "
+                     f"id={order_id}  paper={paper}")
+
+            fill = _verify_fill(tc, order_id)
+            result["long_fill_status"]  = fill["status"]
+            result["short_fill_status"] = fill["status"]
+            result["long_filled_qty"]   = fill["filled_qty"]
+            result["short_filled_qty"]  = fill["filled_qty"]
+            result["long_fill_price"]   = fill["filled_avg_price"]   # NET debit/spread
+            log.info(f"  MLEG fill: {fill['raw_status']}  qty={fill['filled_qty']}  "
+                     f"net=${fill['filled_avg_price'] or 0:.2f}")
+            _record_slippage(sym, "long", live_net_mid, fill["filled_avg_price"],
+                             fill["filled_qty"], strategy=structure)   # OB-1: net vs model
+            if fill["status"] == "rejected":
+                result["error"]   = f"MLEG spread rejected by Alpaca: {fill['raw_status']}"
+                result["message"] = f"❌ {sym} spread rejected: {fill['raw_status']}"
+                log.error(result["message"])
+                return result
+
+            actual_debit = round(fill["filled_avg_price"] or net_limit, 2)
+            pending_note = ("  [order still working — limit not yet reached]"
+                            if fill["status"] == "pending" else "")
+            result.update({
+                "success":      True,
+                "actual_debit": actual_debit,
+                "message": (
+                    f"✅ {acct_type}  MLEG BTO {atm_occ} / STO {short_occ}  "
+                    f"net_debit=${actual_debit:.2f}  structure={structure}  "
+                    f"strike=${atm_strike:.2f}  expiry={expiry}{pending_note}"
+                ),
+            })
+            log.info(result["message"])
+            _trail(f"OK    sym={sym}  mleg long={atm_occ}  short={short_occ}  "
+                   f"debit=${actual_debit}  paper={paper}")
+            return result
+
+        # ── Single-leg BTO (naked ATM call/put) ──────────────────────────────
         if _use_mkt:
             req = MarketOrderRequest(symbol=atm_occ, qty=qty, side=OrderSide.BUY,
                                      time_in_force=TimeInForce.DAY)
@@ -634,9 +784,8 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                  f"id={long_order_id}  paper={paper}")
         result["long_order_id"] = long_order_id
 
-        # ── Fill verification (BTO) ──────────────────────────────────────────
-        # Catches the case where submit_order succeeded but Alpaca rejected
-        # the order downstream (insufficient buying power, bad contract, etc.)
+        # Fill verification — catches submit_order succeeding but Alpaca
+        # rejecting downstream (insufficient buying power, bad contract, etc.)
         long_fill = _verify_fill(tc, long_order_id)
         result["long_fill_status"]   = long_fill["status"]
         result["long_filled_qty"]    = long_fill["filled_qty"]
@@ -647,104 +796,29 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
                          long_fill["filled_qty"], strategy=structure)   # OB-1
 
         if long_fill["status"] == "rejected":
-            # Order was rejected downstream — no position taken, no rollback
-            # needed. Mark trade as failed and return.
             result["error"]   = f"BTO rejected by Alpaca: {long_fill['raw_status']}"
             result["message"] = f"❌ {sym} BTO rejected: {long_fill['raw_status']}"
             log.error(result["message"])
             return result
 
-        # ── STO short leg (spread) ────────────────────────────────────────────
-        short_order_id   = None
-        actual_short_mid = 0.0
-
-        if use_spread and short_occ:
-            live_short_mid = _live_option_mid(oc, short_occ) or short_mid
-            short_limit    = round(max(live_short_mid - 0.05,
-                                       live_short_mid * 0.90, 0.01), 2)
-            try:
-                if _use_mkt:
-                    req = MarketOrderRequest(symbol=short_occ, qty=qty, side=OrderSide.SELL,
-                                             time_in_force=TimeInForce.DAY)
-                else:
-                    req = LimitOrderRequest(symbol=short_occ, qty=qty, side=OrderSide.SELL,
-                                            time_in_force=TimeInForce.DAY, limit_price=short_limit)
-                order          = tc.submit_order(req)
-                short_order_id = str(order.id)
-                actual_short_mid = live_short_mid
-                log.info(f"  STO {short_occ}  {'MKT' if _use_mkt else f'lmt=${short_limit:.2f}'}  id={short_order_id}")
-
-                # Verify STO didn't get rejected downstream. If it did, we
-                # have an unhedged long — trigger the same rollback path as
-                # a submit failure (cancel BTO if unfilled, flatten if filled).
-                short_fill = _verify_fill(tc, short_order_id)
-                result["short_fill_status"] = short_fill["status"]
-                result["short_filled_qty"]  = short_fill["filled_qty"]
-                result["short_fill_price"]  = short_fill["filled_avg_price"]
-                log.info(f"  STO fill: {short_fill['raw_status']}  "
-                         f"qty={short_fill['filled_qty']}")
-                _record_slippage(sym, "short", live_short_mid, short_fill["filled_avg_price"],
-                                 short_fill["filled_qty"], strategy=structure)   # OB-1
-                if short_fill["status"] == "rejected":
-                    raise RuntimeError(
-                        f"STO rejected downstream by Alpaca: {short_fill['raw_status']}"
-                    )
-            except Exception as e:
-                # ── Naked-leg rollback ─────────────────────────────────────
-                # The STO failed AFTER the BTO was submitted. To avoid being
-                # left holding undefined-risk naked long premium, try to:
-                #   1. Cancel the BTO if it hasn't filled yet
-                #   2. If it has filled, place a market sell to flatten
-                log.error(f"  STO {short_occ} failed: {e} — initiating rollback of long leg")
-                rolled_back = False
-                try:
-                    # Check fill status of long leg
-                    long_order = tc.get_order_by_id(long_order_id)
-                    long_status = str(long_order.status).lower()
-                    log.info(f"  rollback: long leg status = {long_status}")
-                    if "filled" not in long_status and "canceled" not in long_status:
-                        tc.cancel_order_by_id(long_order_id)
-                        log.info(f"  rollback: cancelled unfilled BTO {long_order_id}")
-                        rolled_back = True
-                    elif "filled" in long_status:
-                        # Already filled — flatten the ACTUAL filled qty with a market sell
-                        from alpaca.trading.requests import MarketOrderRequest
-                        _flat_qty = int(result.get("long_filled_qty") or qty)
-                        req_flat = MarketOrderRequest(
-                            symbol=atm_occ, qty=max(1, _flat_qty),
-                            side=OrderSide.SELL,
-                            time_in_force=TimeInForce.DAY,
-                        )
-                        flat_order = tc.submit_order(req_flat)
-                        log.warning(f"  rollback: BTO already filled — submitted "
-                                    f"market SELL {flat_order.id} to flatten naked long")
-                        rolled_back = True
-                except Exception as rb_err:
-                    log.error(f"  rollback FAILED: {rb_err} — POSITION MAY BE NAKED LONG, "
-                              f"manual intervention required for order {long_order_id}")
-                result["error"] = (
-                    f"STO failed: {e}. " +
-                    ("Long leg rolled back successfully." if rolled_back
-                     else "ROLLBACK FAILED — check Alpaca dashboard for naked long.")
-                )
-                raise   # re-raise so caller marks the trade as failed
-
-        actual_debit = round(long_limit - actual_short_mid, 2)
-        acct_type    = "📄 PAPER" if paper else "🔴 LIVE"
-        spread_part  = f" / STO {short_occ}" if short_order_id else ""
+        actual_debit = round(long_fill["filled_avg_price"] or long_limit, 2)
+        pending_note = ""
+        if long_fill["status"] == "pending":
+            pending_note = "  [order still working — limit not yet reached]"
+        elif long_fill["status"] == "partial" and long_fill["filled_qty"] < qty:
+            pending_note = (f"  [partial: {long_fill['filled_qty']}/{qty} filled — "
+                            f"remainder working as a DAY order]")
         result.update({
-            "success":        True,
-            "short_order_id": short_order_id,
-            "actual_debit":   actual_debit,
+            "success":      True,
+            "actual_debit": actual_debit,
             "message": (
-                f"✅ {acct_type}  BTO {atm_occ}@${long_limit:.2f}{spread_part}  "
-                f"net_debit=${actual_debit:.2f}  structure={structure}  "
-                f"strike=${atm_strike:.2f}  expiry={expiry}"
+                f"✅ {acct_type}  BTO {atm_occ}@${actual_debit:.2f}  "
+                f"structure={structure}  strike=${atm_strike:.2f}  "
+                f"expiry={expiry}{pending_note}"
             ),
         })
         log.info(result["message"])
-        _trail(f"OK    sym={sym}  long={atm_occ}  short={short_occ}  "
-               f"debit=${actual_debit}  paper={paper}")
+        _trail(f"OK    sym={sym}  long={atm_occ}  debit=${actual_debit}  paper={paper}")
         return result
 
     except Exception as exc:

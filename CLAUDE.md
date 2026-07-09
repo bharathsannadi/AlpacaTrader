@@ -63,6 +63,11 @@ the dependencies because Homebrew Python and the venv site-packages are split.
 # Install dev dependencies (one-time)
 pip install -r requirements-dev.txt
 
+# requirements.txt states minimums; requirements.lock pins the exact versions
+# the deployed venv runs. Rebuild a machine with `pip install -r requirements.lock`;
+# after a deliberate upgrade regenerate it with
+# `venv/bin/python3.11 -m pip freeze > requirements.lock`.
+
 # Run the full suite
 PYTHONPATH=venv/lib/python3.11/site-packages \
   /usr/local/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/bin/python3.11 \
@@ -99,10 +104,11 @@ PYTHONPATH=venv/lib/python3.11/site-packages \
 - See `.env.example` for the documented template
 - `ALPACA_AUTO_KEY` / `ALPACA_AUTO_SECRET` — used by `_auto_login` to connect
   at server startup so the app trades headless
-- `ALPACA_API_KEY` / `ALPACA_API_SECRET` — used by `screener_executor` for
-  manual + auto-execution of options orders
-- All three are typically the same paper-trading key pair; the duplication is
-  a known smell tracked in the todo list
+- `ALPACA_API_KEY` / `ALPACA_API_SECRET` — canonical pair (see
+  `scripts/credentials.py` for the fallback chain)
+- `screener_executor` reuses the app's authenticated clients
+  (`trader.TRADING_CLIENT`) and only falls back to `.env` for CLI/headless
+  use — the executor and the dashboard always trade the same account
 
 ---
 
@@ -137,9 +143,10 @@ headless auto-execution path see [`docs/AUTO_EXECUTE.md`](docs/AUTO_EXECUTE.md).
   nothing in the browser and confuses connection state.
 - **eventlet is the async mode** and the deprecation warning is acknowledged.
   Long-term migration: gevent or ASGI (FastAPI + python-socketio async).
-- **`SocketIOHandler` broadcasts every log record to all connected clients.**
-  Be careful what you log — API key prefixes and stack traces will hit the
-  browser. Tracked as a todo item.
+- **`SocketIOHandler` streams every log record to all AUTHENTICATED clients**
+  (the `authed` socket.io room — unauthenticated sockets no longer get the
+  firehose). Still: be careful what you log — key prefixes and stack traces
+  hit the browser of anyone logged in.
 - **The watchdog (`com.spy_auto_trader.watchdog`) will kill the app after 3
   failed `/health` checks.** During long-running operations make sure
   `_beat("position_monitor")` and `_beat("scheduler")` are called inside any
@@ -171,7 +178,8 @@ When touching anything that places orders:
 4. Cap orders per day (`MAX_AUTO_EXEC_PER_DAY = 3` for headless mode)
 5. Persist any dedup / order-tracking state to disk (see `data/auto_exec_state.json`)
 6. Provide a circuit breaker (see `DAILY_LOSS_LIMIT_PCT = 2.0`)
-7. Roll back partial fills — never leave a naked leg (see
-   `screener_executor.py` STO failure path)
+7. Never leg into a spread — multi-leg orders go out as ONE atomic MLEG
+   order (see `screener_executor.py` spread path) so a rejected or unfilled
+   leg can't leave a naked position
 
 If you can't honor all seven, ship behind a feature flag that defaults to off.

@@ -185,7 +185,8 @@ def validate_time(value: str) -> tuple[int, int]:
 SECURITY_HEADERS = {
     "X-Frame-Options":           "DENY",
     "X-Content-Type-Options":    "nosniff",
-    "X-XSS-Protection":          "1; mode=block",
+    # X-XSS-Protection intentionally omitted — deprecated no-op in every modern
+    # browser; the CSP below is the real control.
     "Referrer-Policy":           "strict-origin-when-cross-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
     "Permissions-Policy":        "geolocation=(), microphone=(), camera=()",

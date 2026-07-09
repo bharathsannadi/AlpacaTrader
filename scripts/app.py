@@ -31,7 +31,7 @@ from functools import wraps
 from zoneinfo import ZoneInfo
 
 from flask import Flask, render_template, request, jsonify, session, make_response
-from flask_socketio import SocketIO, disconnect
+from flask_socketio import SocketIO, disconnect, join_room, leave_room
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
@@ -107,7 +107,10 @@ socketio = SocketIO(
     app,
     cors_allowed_origins=[],          # No cross-origin WebSocket
     async_mode=_ASYNC_MODE,           # eventlet preferred, threading fallback
-    cookie="__Host-spy_io",
+    # NOTE: no "__Host-" prefix — that prefix requires the Secure attribute and
+    # HTTPS, so browsers silently REJECT it on http://localhost and the cookie
+    # was never actually set.
+    cookie="spy_io",
     manage_session=False,
     # Tolerate brief eventlet-hub stalls (network blips, slow yfinance) without
     # dropping the socket — a drop forces a reconnect that logs the browser out.
@@ -322,6 +325,12 @@ except Exception as _e:
 
 
 # ── Custom SocketIO log handler ───────────────────────────────────────────────
+# Socket.io room holding only authenticated clients. The log firehose (every
+# root-logger record: key prefixes, equity, stack traces) must not reach a
+# socket that merely connected to localhost:5000 without logging in.
+AUTHED_ROOM = "authed"
+
+
 class SocketIOHandler(logging.Handler):
     def emit(self, record):
         # Skip log streaming when paused
@@ -329,7 +338,8 @@ class SocketIOHandler(logging.Handler):
             return
         try:
             msg = self.format(record)
-            socketio.emit("log", {"message": msg, "level": record.levelname})
+            socketio.emit("log", {"message": msg, "level": record.levelname},
+                          to=AUTHED_ROOM)
         except Exception:
             pass
 
@@ -1921,6 +1931,7 @@ def on_connect():
             and getattr(trader, "TRADING_CLIENT", None) is not None):
         with _state_lock:
             authenticated_sids.add(request.sid)
+        join_room(AUTHED_ROOM)
         _reauthed = True
         security_log.info(f"Re-authenticated reconnecting browser from {ip} (session cookie)")
     # Per-client state with `logged_in` reflecting this specific socket's auth.
@@ -2078,20 +2089,23 @@ def on_disconnect():
 @socketio.on("login")
 @limiter.limit(LOGIN_RATE_LIMIT, key_func=get_remote_address)
 def on_login(data):
+    data = data if isinstance(data, dict) else {}
     ip = request.remote_addr
-    _kp = str((data or {}).get("api_key", ""))[:6]
+    _kp = str(data.get("api_key", ""))[:6]
     login_log.info(f"◀ login attempt  ip={ip}  sid={getattr(request,'sid','?')}  "
-                   f"key={_kp}…  paper={(data or {}).get('paper', True)}")
+                   f"key={_kp}…  paper={data.get('paper', True)}")
 
     locked, remaining = login_tracker.is_locked(ip)
     if locked:
         mins = remaining // 60 + 1
         login_log.warning(f"✗ blocked — IP locked, {remaining}s remaining")
         security_log.warning(f"Blocked login from locked IP {ip} ({remaining}s remaining)")
+        # to=request.sid: login results must never broadcast — other connected
+        # clients would see (and react to) this session's failures.
         socketio.emit("login_result", {
             "success": False,
             "error":   f"Too many failed attempts. Try again in {mins} minute(s)."
-        })
+        }, to=request.sid)
         return
 
     try:
@@ -2100,7 +2114,8 @@ def on_login(data):
         paper      = bool(data.get("paper", True))
     except ValueError as e:
         login_tracker.record_failure(ip)
-        socketio.emit("login_result", {"success": False, "error": str(e)})
+        socketio.emit("login_result", {"success": False, "error": str(e)},
+                      to=request.sid)
         return
 
     # 3R-A.3 — live login gate: refuse if paper risk overrides exceed the
@@ -2127,7 +2142,8 @@ def on_login(data):
             )
             log.warning(f"🚫 {msg}")
             socketio.emit("login_result", {"success": False, "error": msg,
-                                           "risk_override_conflict": True})
+                                           "risk_override_conflict": True},
+                          to=request.sid)
             return
 
     # Fast path: the server is often already authenticated via _auto_login
@@ -2183,13 +2199,14 @@ def on_login(data):
         socketio.emit("login_result", {
             "success": False,
             "error":   f"Login failed: {err[:120] if err else 'invalid credentials'}"
-        })
+        }, to=request.sid)
         return
 
     with _state_lock:
         state["logged_in"]   = True
         state["paper_mode"]  = paper
         authenticated_sids.add(request.sid)
+    join_room(AUTHED_ROOM)                      # receive the log stream
     session.permanent         = True            # honor PERMANENT_SESSION_LIFETIME (8h)
     session["authenticated"]  = True            # allows /api/status + reconnect re-auth
     session["api_key_prefix"] = api_key[:6] + "…"
@@ -2261,20 +2278,50 @@ def on_login(data):
 @socketio.on("logout")
 @require_auth
 def on_logout():
-    # Stop all running sessions before clearing clients
+    # Stop all running entry sessions regardless of what happens below.
     for sym in _SYMBOLS_ORDERED:
         _session_stop_events[sym].set()
-    trader.TRADING_CLIENT = None
-    trader.DATA_CLIENT    = None
-    trader.OPTION_CLIENT  = None
+
+    # position_monitor gates on state["logged_in"] and needs TRADING_CLIENT to
+    # fire stops. Tearing both down with positions still open used to leave
+    # them UNMANAGED until the next server restart's _auto_login. If anything
+    # is open (or the check fails — fail SAFE), de-auth only this browser and
+    # keep the broker connection alive for exit management.
+    keep_broker = False
+    try:
+        tc = getattr(trader, "TRADING_CLIENT", None)
+        if tc is not None:
+            open_positions = tc.get_all_positions()
+            keep_broker = bool(open_positions)
+    except Exception as e:
+        log.warning(f"logout: open-position check failed ({e}) — "
+                    f"keeping broker connection alive as a precaution")
+        keep_broker = getattr(trader, "TRADING_CLIENT", None) is not None
+
     with _state_lock:
         authenticated_sids.discard(request.sid)
-        state["logged_in"] = False
         for sym in _SYMBOLS_ORDERED:
             state["sessions"][sym] = False
+        if not keep_broker:
+            state["logged_in"] = False
+    if not keep_broker:
+        trader.TRADING_CLIENT = None
+        trader.DATA_CLIENT    = None
+        trader.OPTION_CLIENT  = None
+    else:
+        log.warning("Logout with OPEN positions — browser de-authenticated, but "
+                    "the Alpaca connection stays up so stop-loss/target "
+                    "execution keeps running.")
+    leave_room(AUTHED_ROOM)
     session.clear()
-    security_log.info(f"Logout from {request.remote_addr}")
-    emit_state()
+    security_log.info(f"Logout from {request.remote_addr} "
+                      f"(broker kept alive: {keep_broker})")
+    # The global snapshot keeps logged_in=True while the broker stays alive for
+    # exits — but THIS browser just logged out, so override its copy or the UI
+    # would immediately re-render as authenticated.
+    snap = _state_snapshot()
+    socketio.emit("state", {**snap, "logged_in": False}, to=request.sid)
+    socketio.emit("state", snap, skip_sid=request.sid)
 
 
 @socketio.on("set_dry_run")
