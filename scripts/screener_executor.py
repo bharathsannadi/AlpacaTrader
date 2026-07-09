@@ -123,19 +123,19 @@ def _is_paper() -> bool:
 
 
 def _offload(fn, *args, **kwargs):
-    """Run a blocking / CPU-heavy call (yfinance fetch + pandas parse) on a real
-    OS thread via eventlet.tpool when the eventlet hub is active, so the hub
-    keeps servicing /health, price_ticker and position_monitor (the 2026-06-17
-    hub jam). Plain passthrough outside eventlet (CLI, tests)."""
-    _use_tpool = False
-    try:
-        import eventlet
-        from eventlet import tpool
-        _use_tpool = eventlet.patcher.is_monkey_patched("socket")
-    except ImportError:
-        pass
-    if _use_tpool:
-        return tpool.execute(fn, *args, **kwargs)
+    """Seam for moving blocking / CPU-heavy calls (yfinance fetch + pandas
+    parse) off the eventlet hub — currently a PASSTHROUGH.
+
+    2026-07-09 field finding: routing these through eventlet.tpool crashed the
+    hub timer with "greenlet.error: Cannot switch to a different thread".
+    Under the global monkey-patch, yfinance/requests share module-level locks
+    (sessions, caches) that are GREEN semaphores; when a tpool native thread
+    and a hub greenlet contend on the same green lock, the waiter wakes on the
+    wrong thread's hub. tpool is only safe for code that shares NO green
+    primitives with hub-side callers — yfinance is called from the scheduler
+    on the hub too, so it doesn't qualify. The real fix for the 2026-06-17 hub
+    jam (see config.AUTO_EXEC_OPTIONS_ENABLED) is a dedicated worker process
+    or the ASGI migration, not tpool."""
     return fn(*args, **kwargs)
 
 
