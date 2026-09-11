@@ -128,6 +128,15 @@ class TestRiskConstants:
         assert OPT_SPREAD_RATIO_LO == 0.25
         assert OPT_SPREAD_RATIO_HI == 0.45
 
+    def test_option_exit_band_is_symmetric_20_pct(self):
+        """Edge review 2026-06-12: the +80%/−50% band bled −$11/trade (avg win
+        $12 vs avg loss $271). The operator's ±20%-of-net-debit directive is
+        the re-enable condition for AUTO_EXEC_OPTIONS_ENABLED — widening either
+        side back out should be a deliberate, test-breaking change."""
+        import screener_executor as _se
+        assert _se.OPT_TAKE_PROFIT_PCT == 0.20
+        assert _se.OPT_STOP_LOSS_PCT   == 0.20
+
 
 # ── _marketable_limit ─────────────────────────────────────────────────────────
 
@@ -285,3 +294,100 @@ class TestMlegSpreadExecution:
         assert result["success"] is True
         assert result["long_order_id"] == "dry_run"
         assert tc.submit_order.call_count == 0
+
+
+# ── select_contracts (off-hub selection, 2026-07-09) ──────────────────────────
+
+class TestSelectContracts:
+    """The yfinance-heavy half of an execution, extracted so it can run in a
+    worker subprocess (hub-jam fix). Pure + JSON-safe."""
+
+    def test_returns_json_safe_spread_plan(self, monkeypatch):
+        import sys, json
+        monkeypatch.setitem(sys.modules, "yfinance", _fake_yf_module())
+        sel = se.select_contracts("TST", "2026-08-14", "Debit Call Spread",
+                                  "Call", max_risk=400)
+        assert sel["use_spread"] is True
+        assert sel["atm_occ"]   == "TST260814C00100000"
+        assert sel["short_occ"] == "TST260814C00105000"
+        assert sel["net_debit"] == pytest.approx(2.10)   # 5.10 mid − 3.00 bid
+        json.dumps(sel)   # must survive the worker pipe
+
+    def test_gate_failure_raises_value_error(self, monkeypatch):
+        import sys
+        yf = _fake_yf_module()
+        # Widen the ATM quote so §9 bid-ask fails (mid 5.10, spread ~43%)
+        chain = yf.Ticker.return_value.option_chain.return_value
+        chain.calls.loc[0, "bid"], chain.calls.loc[0, "ask"] = 4.00, 6.20
+        monkeypatch.setitem(sys.modules, "yfinance", yf)
+        monkeypatch.setattr(se, "_PAPER_CACHE", False)   # strict — no relax
+        with pytest.raises(ValueError, match="§9"):
+            se.select_contracts("TST", "2026-08-14", "ATM Call", "Call")
+
+    def test_execute_uses_worker_when_offhub(self, monkeypatch):
+        """offhub_selection=True must route selection through the worker and
+        never touch yfinance in-process."""
+        import sys
+        monkeypatch.setitem(sys.modules, "yfinance", None)   # would blow up if used
+        plan = {"sym": "TST", "expiry": "2026-08-14", "structure": "ATM Call",
+                "opt_type": "Call", "use_spread": False, "spot": 100.0,
+                "atm_occ": "TST260814C00100000", "atm_strike": 100.0,
+                "atm_mid": 5.10, "atm_bid": 5.00, "atm_ask": 5.20, "atm_oi": 500,
+                "short_occ": None, "short_strike": None, "short_mid": 0.0,
+                "net_debit": 5.10}
+        called = {}
+
+        def _fake_worker(payload):
+            called["payload"] = payload
+            return plan
+
+        monkeypatch.setattr(se, "_select_contracts_worker", _fake_worker)
+        result = se.execute_screener_option(
+            {"sym": "TST", "expiry": "2026-08-14", "structure": "ATM Call",
+             "opt_type": "Call", "max_risk": 600},
+            dry_run=True, offhub_selection=True)
+        assert result["success"] is True
+        assert called["payload"]["sym"] == "TST"
+        assert result["long_occ"] == "TST260814C00100000"
+
+
+class TestSelectContractsWorker:
+    """_select_contracts_worker subprocess plumbing — no network, subprocess
+    mocked. The worker must fail LOUD (ValueError), never fall back in-process."""
+
+    def _proc(self, stdout="", stderr="", rc=0):
+        p = MagicMock()
+        p.stdout, p.stderr, p.returncode = stdout, stderr, rc
+        return p
+
+    def test_parses_last_json_line(self, monkeypatch):
+        import subprocess
+        out = 'yfinance noise\n{"ok": true, "sym": "TST", "net_debit": 2.1}\n'
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: self._proc(stdout=out))
+        sel = se._select_contracts_worker({"sym": "TST"})
+        assert sel["net_debit"] == 2.1
+        assert "ok" not in sel
+
+    def test_gate_rejection_raises_with_message(self, monkeypatch):
+        import subprocess
+        out = '{"ok": false, "error": "TST: KB \\u00a79 Liquidity \\u2014 illiquid"}'
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: self._proc(stdout=out))
+        with pytest.raises(ValueError, match="§9"):
+            se._select_contracts_worker({"sym": "TST"})
+
+    def test_empty_output_raises(self, monkeypatch):
+        import subprocess
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: self._proc(stderr="boom", rc=1))
+        with pytest.raises(ValueError, match="no output"):
+            se._select_contracts_worker({"sym": "TST"})
+
+    def test_timeout_raises(self, monkeypatch):
+        import subprocess
+        def _t(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="x", timeout=1)
+        monkeypatch.setattr(subprocess, "run", _t)
+        with pytest.raises(ValueError, match="timed out"):
+            se._select_contracts_worker({"sym": "TST"})

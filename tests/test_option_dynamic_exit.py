@@ -1,10 +1,13 @@
 """REQ-608 — dynamic breakeven+trail ladder on the live option stop path.
 
 Verifies app._manage_option_positions():
-  * flag OFF  → behaviour unchanged (flat -50% stop; winners just hold)
+  * flag OFF  → behaviour unchanged (flat -20% stop; winners inside the ±20%
+                band just hold)
   * flag ON   → the stop ratchets up so a winner that reverses exits at the
-                locked floor instead of riding all the way down to -50%
-  * flag ON   → a never-green loser still exits at the -50% initial stop
+                locked floor instead of riding all the way down to the stop
+  * flag ON   → a never-green loser still exits at the initial stop
+
+Band is ±20% of net debit since the 2026-06-12 edge-review fix (was +80%/−50%).
 """
 import importlib
 from types import SimpleNamespace
@@ -61,27 +64,35 @@ def harness(monkeypatch):
 
 def test_flag_off_winner_holds(harness):
     se.OPT_DYNAMIC_EXIT_ENABLED = False
-    harness.leg.unrealized_pl = "290"      # +41% — below +80% TP, above -50% stop
+    harness.leg.unrealized_pl = "105"      # +15% — below +20% TP, above -20% stop
     app._manage_option_positions()
     assert harness.client.closed == []     # nothing closed
 
 
-def test_flag_off_loser_hits_flat_stop(harness):
+def test_flag_off_winner_takes_profit_at_20(harness):
     se.OPT_DYNAMIC_EXIT_ENABLED = False
-    harness.leg.unrealized_pl = "-450"     # -64% — past the flat -50% stop
+    harness.leg.unrealized_pl = "175"      # +25% — past the +20% TP (was unreachable at +80%)
     app._manage_option_positions()
     assert harness.leg.symbol in harness.client.closed
-    assert any("stop -50%" in m for m in harness.emitted)
+    assert any("take-profit +20%" in m for m in harness.emitted)
+
+
+def test_flag_off_loser_hits_flat_stop(harness):
+    se.OPT_DYNAMIC_EXIT_ENABLED = False
+    harness.leg.unrealized_pl = "-180"     # -26% — past the flat -20% stop
+    app._manage_option_positions()
+    assert harness.leg.symbol in harness.client.closed
+    assert any("stop -20%" in m for m in harness.emitted)
 
 
 def test_flag_on_winner_protected_after_reversal(harness):
     se.OPT_DYNAMIC_EXIT_ENABLED = True
-    # tick 1: +41% gain → ladder ratchets the stop up to the +10% locked floor
-    harness.leg.unrealized_pl = "290"
+    # tick 1: +15% gain (below the +20% TP) → ladder ratchets stop to breakeven
+    harness.leg.unrealized_pl = "105"
     app._manage_option_positions()
     assert harness.client.closed == []     # still holding, but floor now raised
-    # tick 2: reverses to +6% (value 750) — below the locked floor (~775) → exit
-    harness.leg.unrealized_pl = "45"
+    # tick 2: reverses to -2% (value 691) — below the breakeven floor (705) → exit
+    harness.leg.unrealized_pl = "-14"
     app._manage_option_positions()
     assert harness.leg.symbol in harness.client.closed
     assert any("dynamic stop" in m for m in harness.emitted)
@@ -89,7 +100,7 @@ def test_flag_on_winner_protected_after_reversal(harness):
 
 def test_flag_on_loser_still_exits_at_initial_stop(harness):
     se.OPT_DYNAMIC_EXIT_ENABLED = True
-    harness.leg.unrealized_pl = "-450"     # never green → init stop = -50% still fires
+    harness.leg.unrealized_pl = "-450"     # never green → the -20% init stop fires
     app._manage_option_positions()
     assert harness.leg.symbol in harness.client.closed
     assert any("dynamic stop" in m for m in harness.emitted)

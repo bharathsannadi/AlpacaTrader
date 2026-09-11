@@ -602,7 +602,8 @@ def _execute_option(signal, decision, dry_run: bool = False) -> Optional[dict]:
         "opt_type":  opt_type,
         "max_risk":  min(float(decision.est_risk_usd or 500.0), 500.0),  # REQ-607 $500/trade
     }
-    res = screener_executor.execute_screener_option(payload, dry_run=dry_run)
+    res = screener_executor.execute_screener_option(payload, dry_run=dry_run,
+                                                    offhub_selection=True)   # hub-jam fix
     if not res.get("success"):
         log.info(f"[auto-engine] {signal.symbol} option not placed — {res.get('message','')}")
         return None

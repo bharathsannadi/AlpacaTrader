@@ -11,20 +11,32 @@ the static hard caps + sizing.
 from __future__ import annotations
 
 # ── Option lane kill-switch (edge review 2026-06-12) ─────────────────────────
-# analyze_trades.py over 600 closed trades (Jun 2–12) found the autonomous OPTION
-# lane has NEGATIVE expectancy: 60 trades, 92% win rate, yet −$682 total / −$11 a
-# trade. Avg win $12 vs avg loss $271 (payoff 0.05) — it needs a 95.7% win rate
-# just to break even. The 90-min stall timer caps every winner at ~$12 while the
-# −50% stop lets losers run, so the structure is a guaranteed bleed. Entries are
-# paused until the exit logic earns its keep; EXITS still run (open legs stay
-# managed). Re-run `python scripts/analyze_trades.py` and flip back to True only
-# once the option lane shows positive per-trade expectancy. Reversible.
-# Re-enable attempt 2026-06-17 (operator) jammed the eventlet hub on boot
-# (/health 15–25s, flapping) — the entry path does heavy synchronous Alpaca/
-# yfinance work across all option picks on the single hub. Reverted to restore
-# stability; needs the entry work moved off-hub before re-enabling. See
-# [[project-architecture-hardening]].
-AUTO_EXEC_OPTIONS_ENABLED = False
+# HISTORY: analyze_trades.py over 600 closed trades (Jun 2–12) found the
+# autonomous OPTION lane had NEGATIVE expectancy: 60 trades, 92% win rate, yet
+# −$682 total / −$11 a trade. Avg win $12 vs avg loss $271 (payoff 0.05) — it
+# needed a 95.7% win rate just to break even: the 90-min stall timer capped
+# every winner at ~$12 while the −50% stop let losers run. A re-enable attempt
+# 2026-06-17 also jammed the eventlet hub (/health 15–25s) — the entry path did
+# heavy synchronous yfinance work across all option picks on the single hub —
+# and the 2026-07-09 tpool offload crashed the hub outright (green locks cross
+# OS threads under the monkey-patch).
+#
+# RE-ENABLED 2026-07-09 after fixing BOTH root causes:
+#   1. Exit economics — the band is now symmetric ±20% of net debit
+#      (screener_executor.OPT_TAKE_PROFIT_PCT / OPT_STOP_LOSS_PCT, was
+#      +80%/−50%), per the operator's 2026-06-02 ±20% directive. Breakeven win
+#      rate drops from 95.7% to ~50% before costs; the stall close remains as
+#      the theta backstop only.
+#   2. Hub jam — contract selection now runs in a clean worker SUBPROCESS
+#      (screener_executor._select_contracts_worker; the app calls
+#      execute_screener_option(offhub_selection=True)), so yfinance/pandas
+#      never touch the hub. The parent greenlet waits on the pipe via green
+#      I/O and /health keeps beating.
+#
+# WATCH: re-run `python scripts/analyze_trades.py` after ~2 weeks of closes; if
+# per-trade expectancy is still negative under the ±20% band, flip back to
+# False. Daily cap stays at MAX_AUTO_EXEC_PER_DAY=2 while on probation.
+AUTO_EXEC_OPTIONS_ENABLED = True
 
 # ── Option caps (operator 2026-06-04) ────────────────────────────────────────
 OPT_HARD_MAX_USD      = 600.0     # HARD ceiling per option trade — ALL incl. ETFs

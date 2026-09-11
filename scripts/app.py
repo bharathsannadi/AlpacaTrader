@@ -3310,11 +3310,9 @@ def _auto_exec_options(data: dict) -> None:
     global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_attempts
     global _session_start_equity, _session_start_date
 
-    # Edge review 2026-06-12 (analyze_trades.py): the option lane is −EV
-    # (−$11/trade over 60 closes). Entries are paused via config kill-switch
-    # until the exit logic shows positive expectancy. Exits are unaffected —
-    # they run from position_monitor regardless. Flip AUTO_EXEC_OPTIONS_ENABLED
-    # back to True in config.py to re-arm.
+    # Option-lane kill switch — full history + re-enable rationale live on
+    # config.AUTO_EXEC_OPTIONS_ENABLED (edge review 2026-06-12 −EV pause;
+    # re-enabled 2026-07-09 with symmetric ±20% exits + off-hub selection).
     if not AUTO_EXEC_OPTIONS_ENABLED:
         return
 
@@ -3483,7 +3481,10 @@ def _auto_exec_options(data: dict) -> None:
         log.info(f"[auto-exec] {sym}  {payload['structure']}  "
                  f"{payload['expiry']}  dry={dry}")
         try:
-            result = screener_executor.execute_screener_option(payload, dry_run=dry)
+            # offhub_selection: the yfinance chain work runs in a worker
+            # subprocess so a slow pick can't stall the hub (2026-06-17 jam fix)
+            result = screener_executor.execute_screener_option(
+                payload, dry_run=dry, offhub_selection=True)
             socketio.emit("screener_order_result", result)
             level = "INFO" if result.get("success") else "WARNING"
             _emit_log(
@@ -3996,7 +3997,8 @@ def on_execute_screener_option(data=None):
              f"expiry={data.get('expiry')}  dry_run={dry}  gate={gate_reason}")
 
     def _run():
-        result = screener_executor.execute_screener_option(data, dry_run=dry)
+        result = screener_executor.execute_screener_option(
+            data, dry_run=dry, offhub_selection=True)   # chain work off-hub
         socketio.emit("screener_order_result", result)   # broadcast to all clients
         level = "INFO" if result.get("success") else "WARNING"
         _emit_log(f"SCREENER EXEC  {result.get('message', '')}", level=level)

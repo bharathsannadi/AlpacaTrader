@@ -82,8 +82,16 @@ try:
     _ETF_SET = set(_ETFS_T) | set(_ETFS_H)
 except Exception:
     _ETF_SET = set()
-OPT_TAKE_PROFIT_PCT  = 0.80    # KB §24 / _position_exit_plan: take +80% of premium
-OPT_STOP_LOSS_PCT    = 0.50    # KB §9: stop at 50% of premium paid
+# Edge review 2026-06-12 fix (analyze_trades.py, 60 option closes): the option
+# lane bled −$11/trade at a 92% win rate because the exit band was asymmetric —
+# the +80% TP was effectively unreachable inside the 90-min stall window (every
+# winner got time-stopped at ~+2% / $12) while the −50% stop let losers average
+# −$271 (payoff 0.05 → needs a 95.7% win rate to break even). Operator directive
+# 2026-06-02 (see _manage_option_positions): exit at ±20% of the NET DEBIT,
+# symmetric — 1:1 payoff, 50% breakeven before costs. Stall stays as the theta
+# backstop for positions that go green then flatline.
+OPT_TAKE_PROFIT_PCT  = 0.20    # take-profit at +20% of net debit (was 0.80 — unreachable)
+OPT_STOP_LOSS_PCT    = 0.20    # stop at −20% of net debit (was 0.50 — let losers run)
 OPT_STALL_MINUTES    = 90      # time-stop: close a green-but-stalled option after N min
 from config import OPT_MAX_OPEN   # AH-2: max concurrent option positions (single source)
 # REQ-608: apply exit_engine's breakeven+trail ladder to the option STOP side
@@ -133,9 +141,11 @@ def _offload(fn, *args, **kwargs):
     and a hub greenlet contend on the same green lock, the waiter wakes on the
     wrong thread's hub. tpool is only safe for code that shares NO green
     primitives with hub-side callers — yfinance is called from the scheduler
-    on the hub too, so it doesn't qualify. The real fix for the 2026-06-17 hub
-    jam (see config.AUTO_EXEC_OPTIONS_ENABLED) is a dedicated worker process
-    or the ASGI migration, not tpool."""
+    on the hub too, so it doesn't qualify. The worker-process fix landed
+    2026-07-09: the ENTRY path's selection now runs off-hub via
+    _select_contracts_worker. This passthrough remains for the lighter
+    residual callers (liquidity_check ranking, _live_option_quote fallback)
+    until the ASGI migration."""
     return fn(*args, **kwargs)
 
 
@@ -427,7 +437,236 @@ def _record_slippage(sym: str, leg: str, expected_mid, fill_price, qty, strategy
         log.debug(f"slippage record failed: {e}")
 
 
-def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
+def select_contracts(sym: str, expiry: str, structure: str = "ATM Call",
+                     opt_type: str = "Call", max_risk: float = RISK_BUDGET,
+                     dry_run: bool = False) -> dict:
+    """Contract selection (steps 1–4 of the execution flow) as a PURE, JSON-safe
+    function: spot price, option chain (with nearest-expiry fallback), ATM long
+    leg + KB §9 liquidity gates, and the KB §5 OTM short leg for spreads.
+
+    This is the yfinance/pandas-heavy half of an execution — the part that
+    jammed the eventlet hub on 2026-06-17 when run inline across all option
+    picks. It deliberately touches NO Alpaca clients and NO app state so it can
+    run in a clean worker subprocess (see _select_contracts_worker) and hand a
+    flat dict back over a pipe.
+
+    Raises ValueError on any gate failure (same messages the inline path used).
+
+    Returns (all JSON-serializable):
+      sym, expiry, structure, opt_type — echoed back; expiry/structure may be
+          UPDATED (nearest-expiry fallback; spread downgraded to naked)
+      use_spread    — bool, True when a valid short leg was found
+      spot          — float underlying price
+      atm_occ / atm_strike / atm_mid / atm_bid / atm_ask / atm_oi — long leg
+      short_occ / short_strike / short_mid — short leg (None/0.0 when naked)
+      net_debit     — per-contract debit: atm_mid (naked) or long mid − short bid
+    """
+    sym = sym.upper()
+    import yfinance as yf
+
+    # ── 1. Spot price ────────────────────────────────────────────────────────
+    ticker = yf.Ticker(sym)
+    hist   = _offload(ticker.history, period="1d")
+    if hist.empty:
+        raise ValueError(f"Cannot get spot price for {sym}")
+    spot = float(hist["Close"].iloc[-1])
+    log.info(f"[screener_executor] {sym} spot=${spot:.2f}  expiry={expiry}  "
+             f"structure={structure}  opt_type={opt_type}  dry_run={dry_run}")
+
+    # ── 2. Option chain for chosen expiry ────────────────────────────────────
+    # The screener computes expiry from a Friday-cadence heuristic. Many
+    # symbols (e.g. COHR) list Thursday weeklies instead — requesting the
+    # Friday throws "Expiration X cannot be found". Fall back to the
+    # nearest available expiry that's still ≥ DTE_MIN to preserve the
+    # KB §1 21-28 DTE window intent.
+    try:
+        chain = _offload(ticker.option_chain, expiry)
+    except Exception as e:
+        # Try to recover by picking the nearest valid expiry.
+        try:
+            from datetime import datetime as _dt
+            target_dt = _dt.strptime(expiry, "%Y-%m-%d").date()
+            available = list(_offload(lambda: ticker.options) or ())
+            _trail(f"FALLBACK  sym={sym}  requested={expiry}  available={available}")
+            if not available:
+                raise ValueError(f"No option chain available for {sym}")
+
+            # Prefer the closest expiry with DTE >= 21 (KB §1 window).
+            # If none qualify, take the closest one overall.
+            today = _dt.now().date()
+            MIN_DTE = 21
+            candidates = []
+            for d_str in available:
+                try:
+                    d = _dt.strptime(d_str, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                dte = (d - today).days
+                delta = abs((d - target_dt).days)
+                candidates.append((dte, delta, d_str, d))
+
+            if not candidates:
+                raise ValueError(f"Cannot parse any expiry from {available}")
+
+            # Pick: among DTE >= 21, the one closest to the requested date.
+            # Otherwise the one with the largest DTE under 21.
+            qualifying = [c for c in candidates if c[0] >= MIN_DTE]
+            if qualifying:
+                qualifying.sort(key=lambda c: c[1])    # closest-to-requested wins
+                chosen_dte, _, chosen_str, chosen_d = qualifying[0]
+            else:
+                candidates.sort(key=lambda c: -c[0])   # max DTE under 21
+                chosen_dte, _, chosen_str, chosen_d = candidates[0]
+
+            log.warning(
+                f"[screener_executor] {sym}: requested expiry {expiry} not "
+                f"available — falling back to {chosen_str} (DTE={chosen_dte})"
+            )
+            _trail(f"FALLBACK_PICK  sym={sym}  was={expiry}  now={chosen_str}  dte={chosen_dte}")
+            expiry = chosen_str   # update for the rest of this execution
+            chain  = _offload(ticker.option_chain, expiry)
+        except Exception as inner:
+            raise ValueError(f"Cannot load option chain {sym}/{expiry}: {inner}")
+
+    opts = chain.calls if opt_type == "Call" else chain.puts
+    opts = opts[opts["bid"] > 0].copy()
+    if opts.empty:
+        raise ValueError(f"No liquid {opt_type} contracts for {sym}/{expiry}")
+
+    opts["mid"]  = (opts["bid"] + opts["ask"]) / 2.0
+    opts["dist"] = (opts["strike"] - spot).abs()
+
+    # ── 3. ATM long leg ──────────────────────────────────────────────────────
+    atm        = opts.sort_values("dist").iloc[0]
+    atm_strike = float(atm["strike"])
+    atm_mid    = float(atm["mid"])
+    atm_bid    = float(atm["bid"])
+    atm_ask    = float(atm["ask"])
+    atm_oi     = int(atm.get("openInterest", 0) or 0)
+    atm_occ    = str(atm["contractSymbol"])
+
+    # ── KB §9 liquidity gates ────────────────────────────────────────────────
+    # bid-ask is the hard, reliable gate; OI is satisfied by a real count OR a
+    # very tight live spread (proves liquidity when yfinance OI is stale, #28).
+    if atm_mid <= 0:
+        raise ValueError(f"{sym}: KB §9 Liquidity — ATM mid ≤ 0 (no valid quote)")
+    ba_pct = (atm_ask - atm_bid) / atm_mid if atm_mid > 0 else 1.0
+    _wide   = ba_pct > OPT_MAX_BID_ASK_PCT
+    _thinOI = atm_oi < OPT_MIN_OI and ba_pct > OPT_TIGHT_BA_PCT
+    if _wide or _thinOI:
+        _why = (f"bid-ask spread {ba_pct*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}% max"
+                if _wide else f"ATM OI {atm_oi} < {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight")
+        if _relax_liquidity():        # paper-only relaxed-fill: allow it
+            if not dry_run:            # audit ONLY real orders (not dry-run sims)
+                _log_kb_relaxed(sym, "§9 liquidity",
+                                f"{_why} — filled at market, paid the spread")
+        else:
+            raise ValueError(f"{sym}: KB §9 Liquidity — {_why} — illiquid, would not fill")
+
+    log.info(f"  ATM: {atm_occ}  strike=${atm_strike:.2f}  mid=${atm_mid:.2f}  "
+             f"OI={atm_oi}  ba={ba_pct*100:.1f}%")
+
+    # ── 4. Short leg for spread ──────────────────────────────────────────────
+    short_occ    = None
+    short_strike = None
+    short_mid    = 0.0
+    net_debit    = atm_mid
+    use_spread   = "Spread" in structure
+
+    if use_spread:
+        otm_opts = opts[opts["strike"] > atm_strike].sort_values("strike")
+        spread_found = False
+        for _, srow in otm_opts.head(8).iterrows():
+            s_strike = float(srow["strike"])
+            s_bid    = float(srow["bid"])
+            s_mid    = float(srow["mid"])
+            s_oi     = int(srow.get("openInterest", 0) or 0)
+            if s_bid <= 0 or s_oi < OPT_MIN_OI:
+                continue
+            width = s_strike - atm_strike
+            nd    = atm_mid - s_bid   # KB §5: pay mid on long, receive bid on short
+            if nd <= 0 or width <= 0:
+                continue
+            ratio = nd / width
+            if not (OPT_SPREAD_RATIO_LO <= ratio <= OPT_SPREAD_RATIO_HI):
+                continue
+            # KB §25: spread width > 3× per-leg bid-ask
+            if width < 3 * (atm_ask - atm_bid):
+                continue
+            if nd * 100 > max_risk:
+                continue
+            short_occ    = str(srow["contractSymbol"])
+            short_strike = s_strike
+            short_mid    = s_mid
+            net_debit    = nd
+            spread_found = True
+            log.info(f"  Short: {short_occ}  strike=${s_strike:.2f}  bid=${s_bid:.2f}  "
+                     f"net_debit=${nd:.2f}  ratio={ratio:.0%}  width=${width:.2f}")
+            break
+        if not spread_found:
+            # Fallback to naked if no spread leg passes all KB gates
+            log.warning(f"  No valid spread leg found for {sym} — falling back to ATM naked")
+            use_spread = False
+            structure  = "ATM Call" if opt_type == "Call" else "ATM Put"
+            net_debit  = atm_mid
+
+    return {
+        "sym": sym, "expiry": expiry, "structure": structure, "opt_type": opt_type,
+        "use_spread": use_spread, "spot": spot,
+        "atm_occ": atm_occ, "atm_strike": atm_strike, "atm_mid": atm_mid,
+        "atm_bid": atm_bid, "atm_ask": atm_ask, "atm_oi": atm_oi,
+        "short_occ": short_occ, "short_strike": short_strike, "short_mid": short_mid,
+        "net_debit": net_debit,
+    }
+
+
+SELECT_WORKER_TIMEOUT_SEC = 120   # yfinance chain pulls can take tens of seconds
+
+
+def _select_contracts_worker(payload: dict) -> dict:
+    """Run select_contracts in a CLEAN worker subprocess and return its plan.
+
+    This is the fix for the 2026-06-17 hub jam (history in config.AUTO_EXEC_
+    OPTIONS_ENABLED): the yfinance fetch + pandas parse ran inline on the
+    eventlet hub and stalled /health 15–25s across picks, and the 2026-07-09
+    tpool attempt crashed the hub because yfinance's module-level locks are
+    green under the monkey-patch. A worker PROCESS shares nothing with the
+    hub — the child is plain un-patched Python, and the parent greenlet waits
+    on the pipe via green I/O, so price_ticker/position_monitor keep beating.
+
+    Raises ValueError on gate rejection or worker failure — the same contract
+    as select_contracts. There is deliberately NO in-process fallback: falling
+    back would reintroduce the jam exactly when the worker is struggling.
+    """
+    import sys, json, subprocess
+    sym = payload.get("sym", "?")
+    cmd = [sys.executable, os.path.abspath(__file__), "--select", json.dumps(payload)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=SELECT_WORKER_TIMEOUT_SEC, env=os.environ.copy())
+    except subprocess.TimeoutExpired:
+        _trail(f"WORKER TIMEOUT  sym={sym}  after {SELECT_WORKER_TIMEOUT_SEC}s")
+        raise ValueError(f"{sym}: contract-selection worker timed out "
+                         f"after {SELECT_WORKER_TIMEOUT_SEC}s")
+    lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    if not lines:
+        err = (proc.stderr or "")[-300:]
+        _trail(f"WORKER EMPTY  sym={sym}  rc={proc.returncode}  stderr={err}")
+        raise ValueError(f"{sym}: selection worker produced no output "
+                         f"(rc={proc.returncode}): {err}")
+    try:
+        out = json.loads(lines[-1])   # last line — library noise may precede it
+    except json.JSONDecodeError:
+        _trail(f"WORKER BAD-JSON  sym={sym}  out={lines[-1][:200]}")
+        raise ValueError(f"{sym}: selection worker returned unparseable output")
+    if not out.pop("ok", False):
+        raise ValueError(out.get("error") or f"{sym}: contract selection failed")
+    out.pop("error", None)
+    return out
+
+
+def execute_screener_option(opt_row: dict, dry_run: bool = False,
+                            offhub_selection: bool = False) -> dict:
     """
     Execute a screener options recommendation.
 
@@ -438,11 +677,13 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
       opt_type   — "Call" | "Put"
       max_risk   — int, default 400  ($400 max loss)
 
+    offhub_selection — pass True from inside the eventlet app: the yfinance-
+      heavy contract selection runs in a worker subprocess so it cannot stall
+      the hub. Leave False for CLI / headless / test callers.
+
     Execution flow:
-      1. Fetch live option chain via yfinance for given expiry
-      2. Find ATM strike (closest to spot)
-      3. Apply KB §9 liquidity gates (OI, bid-ask)
-      4. For "Debit Call Spread": find OTM short leg (KB §5)
+      1–4. select_contracts(): spot, chain (nearest-expiry fallback), ATM long
+           leg + KB §9 liquidity gates, KB §5 OTM short leg for spreads
       5. Refresh leg quotes from Alpaca; re-check §9 on the LIVE spread
       6. Submit the order: single-leg BTO, or an atomic MLEG spread order
          (both legs fill together at a net-debit limit — no naked-leg window)
@@ -466,7 +707,8 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
     max_risk  = float(opt_row.get("max_risk", RISK_BUDGET))
 
     _trail(f"ENTRY  sym={sym}  structure={structure}  expiry={expiry}  "
-           f"opt_type={opt_type}  max_risk=${max_risk}  dry_run={dry_run}")
+           f"opt_type={opt_type}  max_risk=${max_risk}  dry_run={dry_run}  "
+           f"offhub={offhub_selection}")
 
     result = {
         "success": False, "message": "", "sym": sym,
@@ -476,155 +718,23 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
     }
 
     try:
-        import yfinance as yf
-
-        # ── 1. Spot price ────────────────────────────────────────────────────
-        ticker = yf.Ticker(sym)
-        hist   = _offload(ticker.history, period="1d")
-        if hist.empty:
-            raise ValueError(f"Cannot get spot price for {sym}")
-        spot = float(hist["Close"].iloc[-1])
-        log.info(f"[screener_executor] {sym} spot=${spot:.2f}  expiry={expiry}  "
-                 f"structure={structure}  opt_type={opt_type}  dry_run={dry_run}")
-
-        # ── 2. Option chain for chosen expiry ────────────────────────────────
-        # The screener computes expiry from a Friday-cadence heuristic. Many
-        # symbols (e.g. COHR) list Thursday weeklies instead — requesting the
-        # Friday throws "Expiration X cannot be found". Fall back to the
-        # nearest available expiry that's still ≥ DTE_MIN to preserve the
-        # KB §1 21-28 DTE window intent.
-        try:
-            chain = _offload(ticker.option_chain, expiry)
-        except Exception as e:
-            # Try to recover by picking the nearest valid expiry.
-            try:
-                from datetime import datetime as _dt
-                target_dt = _dt.strptime(expiry, "%Y-%m-%d").date()
-                available = list(_offload(lambda: ticker.options) or ())
-                _trail(f"FALLBACK  sym={sym}  requested={expiry}  available={available}")
-                if not available:
-                    raise ValueError(f"No option chain available for {sym}")
-
-                # Prefer the closest expiry with DTE >= 21 (KB §1 window).
-                # If none qualify, take the closest one overall.
-                today = _dt.now().date()
-                MIN_DTE = 21
-                candidates = []
-                for d_str in available:
-                    try:
-                        d = _dt.strptime(d_str, "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
-                    dte = (d - today).days
-                    delta = abs((d - target_dt).days)
-                    candidates.append((dte, delta, d_str, d))
-
-                if not candidates:
-                    raise ValueError(f"Cannot parse any expiry from {available}")
-
-                # Pick: among DTE >= 21, the one closest to the requested date.
-                # Otherwise the one with the largest DTE under 21.
-                qualifying = [c for c in candidates if c[0] >= MIN_DTE]
-                if qualifying:
-                    qualifying.sort(key=lambda c: c[1])    # closest-to-requested wins
-                    chosen_dte, _, chosen_str, chosen_d = qualifying[0]
-                else:
-                    candidates.sort(key=lambda c: -c[0])   # max DTE under 21
-                    chosen_dte, _, chosen_str, chosen_d = candidates[0]
-
-                log.warning(
-                    f"[screener_executor] {sym}: requested expiry {expiry} not "
-                    f"available — falling back to {chosen_str} (DTE={chosen_dte})"
-                )
-                _trail(f"FALLBACK_PICK  sym={sym}  was={expiry}  now={chosen_str}  dte={chosen_dte}")
-                expiry = chosen_str   # update for the rest of this execution
-                chain  = _offload(ticker.option_chain, expiry)
-            except Exception as inner:
-                raise ValueError(f"Cannot load option chain {sym}/{expiry}: {inner}")
-
-        opts = chain.calls if opt_type == "Call" else chain.puts
-        opts = opts[opts["bid"] > 0].copy()
-        if opts.empty:
-            raise ValueError(f"No liquid {opt_type} contracts for {sym}/{expiry}")
-
-        opts["mid"]  = (opts["bid"] + opts["ask"]) / 2.0
-        opts["dist"] = (opts["strike"] - spot).abs()
-
-        # ── 3. ATM long leg ──────────────────────────────────────────────────
-        atm        = opts.sort_values("dist").iloc[0]
-        atm_strike = float(atm["strike"])
-        atm_mid    = float(atm["mid"])
-        atm_bid    = float(atm["bid"])
-        atm_ask    = float(atm["ask"])
-        atm_oi     = int(atm.get("openInterest", 0) or 0)
-        atm_occ    = str(atm["contractSymbol"])
-        result["long_occ"] = atm_occ
-
-        # ── KB §9 liquidity gates ────────────────────────────────────────────
-        # bid-ask is the hard, reliable gate; OI is satisfied by a real count OR a
-        # very tight live spread (proves liquidity when yfinance OI is stale, #28).
-        if atm_mid <= 0:
-            raise ValueError(f"{sym}: KB §9 Liquidity — ATM mid ≤ 0 (no valid quote)")
-        ba_pct = (atm_ask - atm_bid) / atm_mid if atm_mid > 0 else 1.0
-        _wide   = ba_pct > OPT_MAX_BID_ASK_PCT
-        _thinOI = atm_oi < OPT_MIN_OI and ba_pct > OPT_TIGHT_BA_PCT
-        if _wide or _thinOI:
-            _why = (f"bid-ask spread {ba_pct*100:.1f}% > {OPT_MAX_BID_ASK_PCT*100:.0f}% max"
-                    if _wide else f"ATM OI {atm_oi} < {OPT_MIN_OI} and spread {ba_pct*100:.1f}% not tight")
-            if _relax_liquidity():        # paper-only relaxed-fill: allow it
-                if not dry_run:            # audit ONLY real orders (not dry-run sims)
-                    _log_kb_relaxed(sym, "§9 liquidity",
-                                    f"{_why} — filled at market, paid the spread")
-            else:
-                raise ValueError(f"{sym}: KB §9 Liquidity — {_why} — illiquid, would not fill")
-
-        log.info(f"  ATM: {atm_occ}  strike=${atm_strike:.2f}  mid=${atm_mid:.2f}  "
-                 f"OI={atm_oi}  ba={ba_pct*100:.1f}%")
-
-        # ── 4. Short leg for spread ──────────────────────────────────────────
-        short_occ    = None
-        short_strike = None
-        short_mid    = 0.0
-        net_debit    = atm_mid
-        use_spread   = "Spread" in structure
-
-        if use_spread:
-            otm_opts = opts[opts["strike"] > atm_strike].sort_values("strike")
-            spread_found = False
-            for _, srow in otm_opts.head(8).iterrows():
-                s_strike = float(srow["strike"])
-                s_bid    = float(srow["bid"])
-                s_mid    = float(srow["mid"])
-                s_oi     = int(srow.get("openInterest", 0) or 0)
-                if s_bid <= 0 or s_oi < OPT_MIN_OI:
-                    continue
-                width = s_strike - atm_strike
-                nd    = atm_mid - s_bid   # KB §5: pay mid on long, receive bid on short
-                if nd <= 0 or width <= 0:
-                    continue
-                ratio = nd / width
-                if not (OPT_SPREAD_RATIO_LO <= ratio <= OPT_SPREAD_RATIO_HI):
-                    continue
-                # KB §25: spread width > 3× per-leg bid-ask
-                if width < 3 * (atm_ask - atm_bid):
-                    continue
-                if nd * 100 > max_risk:
-                    continue
-                short_occ    = str(srow["contractSymbol"])
-                short_strike = s_strike
-                short_mid    = s_mid
-                net_debit    = nd
-                spread_found = True
-                result["short_occ"] = short_occ
-                log.info(f"  Short: {short_occ}  strike=${s_strike:.2f}  bid=${s_bid:.2f}  "
-                         f"net_debit=${nd:.2f}  ratio={ratio:.0%}  width=${width:.2f}")
-                break
-            if not spread_found:
-                # Fallback to naked if no spread leg passes all KB gates
-                log.warning(f"  No valid spread leg found for {sym} — falling back to ATM naked")
-                use_spread = False
-                structure  = "ATM Call" if opt_type == "Call" else "ATM Put"
-                net_debit  = atm_mid
+        # ── 1–4. Contract selection (yfinance-heavy — off-hub when asked) ────
+        sel_args = dict(sym=sym, expiry=expiry, structure=structure,
+                        opt_type=opt_type, max_risk=max_risk, dry_run=dry_run)
+        sel = (_select_contracts_worker(sel_args) if offhub_selection
+               else select_contracts(**sel_args))
+        expiry     = sel["expiry"]      # may have moved to the nearest listed expiry
+        structure  = sel["structure"]   # spread may have downgraded to ATM naked
+        use_spread = bool(sel["use_spread"])
+        atm_occ    = sel["atm_occ"]
+        atm_strike = float(sel["atm_strike"])
+        atm_mid    = float(sel["atm_mid"])
+        short_occ  = sel["short_occ"]
+        short_strike = sel["short_strike"]
+        short_mid  = float(sel["short_mid"] or 0.0)
+        net_debit  = float(sel["net_debit"])
+        result["long_occ"]  = atm_occ
+        result["short_occ"] = short_occ
 
         # ── Risk gate ────────────────────────────────────────────────────────
         # HARD sanity ceiling first — ALWAYS blocks, even in relaxed mode, so a
@@ -830,3 +940,21 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False) -> dict:
         _trail(f"FAIL  sym={sym}  exc={type(exc).__name__}: {exc}")
         _trail(f"  traceback: {_tb.format_exc().replace(chr(10), ' | ')}")
         return result
+
+
+if __name__ == "__main__":
+    # Worker-process entrypoint: `screener_executor.py --select '<json payload>'`
+    # runs select_contracts in THIS clean (un-monkey-patched) interpreter and
+    # prints ONE JSON line for the parent app to parse — see
+    # _select_contracts_worker for why this exists (2026-06-17 hub jam).
+    import sys as _sys
+    import json as _json
+    if len(_sys.argv) >= 3 and _sys.argv[1] == "--select":
+        try:
+            _out = dict(select_contracts(**_json.loads(_sys.argv[2])), ok=True)
+        except Exception as _e:      # gate rejections and fetch errors alike
+            _out = {"ok": False, "error": str(_e)}
+        print(_json.dumps(_out), flush=True)
+    else:
+        print(_json.dumps({"ok": False,
+                           "error": "usage: screener_executor.py --select '<json>'"}))
