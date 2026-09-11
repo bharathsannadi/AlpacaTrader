@@ -17,7 +17,8 @@ def test_empty_signals_empty_plan():
 def test_plan_routes_and_sizes():
     sigs = [
         Signal("AAPL", "bull", "connors_rsi2", price=200, atr=4, has_vol_edge=False),
-        Signal("SPY", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22),
+        Signal("SPY", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22,
+               hv5=26, hv30=18, iv30=15),
     ]
     plan = build_plan(sigs, equity=107_846, etf_set=ETF)
     routes = {pt.signal.symbol: pt.decision.route for pt in plan["planned"]}

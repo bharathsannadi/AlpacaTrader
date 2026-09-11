@@ -16,6 +16,7 @@ def _data():
         ],
         "options": [
             {"sym": "SPY", "direction": "bull", "ivr": "IVR 22", "kb_match": 85,
+             "hv5": 26, "hv30": 18, "iv30": 15,
              "action": "✅ BUY", "source": "Connors RSI(2) Daily", "dir_pct": 66.4,
              "pf": 1.32, "expiry": "2099-01-15", "structure": "ATM Call"},
             {"sym": "XLF", "direction": "bull", "ivr": "IVR 22", "spot": 50, "kb_match": 59,

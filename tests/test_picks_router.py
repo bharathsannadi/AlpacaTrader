@@ -20,7 +20,7 @@ def test_no_option_row_routes_shares():
 def test_option_low_ivr_routes_naked_option():
     dec = router.route_for_pick(
         {"sym": "SPY", "price": 120, "atr": 3},
-        {"sym": "SPY", "direction": "bull", "ivr": "IVR 22"}, _rb())
+        {"sym": "SPY", "direction": "bull", "ivr": "IVR 22", "hv5": 26, "hv30": 18, "iv30": 15}, _rb())
     assert dec.route == "options"
     assert dec.structure and dec.structure.startswith("naked")
 
@@ -29,7 +29,7 @@ def test_high_ivr_spreads_disabled_falls_back_to_shares():
     # spread required (IVR>50) but harness disabled → never naked, route to shares
     dec = router.route_for_pick(
         {"sym": "QQQ", "price": 50, "atr": 1},
-        {"sym": "QQQ", "direction": "bull", "ivr": "IVR 60"},
+        {"sym": "QQQ", "direction": "bull", "ivr": "IVR 60", "hv5": 26, "hv30": 18, "iv30": 15},
         _rb(), spreads_enabled=False)
     assert dec.route == "stocks"
 
@@ -38,7 +38,7 @@ def test_high_ivr_spreads_enabled_routes_spread():
     # cheap underlying so the debit spread fits the $400 budget
     dec = router.route_for_pick(
         {"sym": "QQQ", "price": 50, "atr": 1},
-        {"sym": "QQQ", "direction": "bull", "ivr": "IVR 60"},
+        {"sym": "QQQ", "direction": "bull", "ivr": "IVR 60", "hv5": 26, "hv30": 18, "iv30": 15},
         _rb(), spreads_enabled=True)
     assert dec.route == "options"
     assert "spread" in (dec.structure or "")

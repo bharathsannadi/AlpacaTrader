@@ -55,6 +55,27 @@ AUTO_EXEC_OPTIONS_ENABLED = True
 # router.route_signal, which is the single chokepoint both option lanes reach.
 OPTIONS_UNDERLYINGS = ("SPY", "QQQ")
 
+# ── Variance-risk-premium gate on long premium (KB §22, 2026-09-11) ──────────
+# KB §2 authorises buying naked premium when IVR < 30. The rule is fine; the
+# INPUT was not. screener_engine sets `ivr = round(hv20)` — a raw annualised
+# REALISED-vol level handed to a 0-100 PERCENTILE threshold. Measured over the
+# trailing year, SPY's HV20 was below 30 on 100% of sessions and QQQ's on 94%,
+# so the router read "IVR 9 → cheap premium" every single day and bought naked
+# calls unconditionally, without ever testing whether options were cheap.
+#
+# KB §22 (Sinclair): implied exceeds subsequent realised vol ~70% of months, by
+# 2-4 vol points. Buying that unconditionally is negative expectancy before
+# direction is considered — the likeliest reading of the option lane's 60 trades
+# at a 92% win rate for −$682.
+#
+# When True, options additionally require vol_edge.long_premium_ok(): the KB §22
+# blended forecast must exceed IV30. Missing inputs REFUSE and the signal falls
+# back to shares under §5 — so until real IV30/HV are plumbed onto the Signal,
+# this holds the option lane closed. That is the intended fail-safe, not a bug:
+# the lane should stay shut until it can prove premium is cheap. Set False to
+# restore the previous unconditional behaviour.
+VOL_EDGE_REQUIRED_FOR_LONG_PREMIUM = True
+
 # ── Option caps (operator 2026-06-04) ────────────────────────────────────────
 OPT_HARD_MAX_USD      = 600.0     # HARD ceiling per option trade — ALL incl. ETFs
 OPT_HARD_MAX_USD_ETF  = 600.0     # ETFs capped at $600 too (was $1500)
