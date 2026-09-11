@@ -145,6 +145,15 @@ def _get_hv21(df: pd.DataFrame) -> float:
     return float(lr.tail(21).std() * np.sqrt(252))
 
 
+def _get_hv5(df: pd.DataFrame) -> float:
+    """5-day annualized historical vol — the fastest-reacting term in the KB §22
+    forecast blend (Sinclair weights it 0.45, the single best 5-day predictor)."""
+    lr = np.log(df["close"] / df["close"].shift(1)).dropna()
+    if len(lr) < 5:
+        return float("nan")
+    return float(lr.tail(5).std() * np.sqrt(252))
+
+
 def _get_hv_range_252(df: pd.DataFrame) -> tuple[float, float]:
     """Return (min, max) of the 21-day rolling HV over the last 252 trading days.
     Used to build an IVR proxy: ivr = (current_iv - hv_min) / (hv_max - hv_min).
@@ -178,6 +187,7 @@ def compute_indicators(sym: str) -> dict | None:
         "rsi2_prev":  float(row_prv["rsi2"]),
         "atr14":      float(row["atr14"]),
         "hv21":       _get_hv21(df),
+        "hv5":        _get_hv5(df),     # KB §22 forecast blend
         "hv252_min":  hv252_min,   # IVR proxy lower bound
         "hv252_max":  hv252_max,   # IVR proxy upper bound
     }
@@ -274,7 +284,8 @@ def _compute_ivr_proxy(atm_iv: float, hv252_min: float, hv252_max: float) -> flo
 def _get_option_context(sym: str, spot: float, hv21: float,
                         hv252_min: float = float("nan"),
                         hv252_max: float = float("nan"),
-                        vix_spike: bool = False) -> dict | None:
+                        vix_spike: bool = False,
+                        hv5: float = float("nan")) -> dict | None:
     """
     Select the best option structure for a Connors RSI(2) bull entry.
 
@@ -287,6 +298,17 @@ def _get_option_context(sym: str, spot: float, hv21: float,
 
     Returns option fields dict to merge into the position record, or None to skip.
     """
+    # ── Options underlying whitelist (operator 2026-09-11) ──────────────────
+    # This lane builds its own contracts and never calls router.route_signal, so
+    # it was not covered by the whitelist enforced there — it was still opening
+    # single-name options (observed placing an NVDA call on the 2026-09-11
+    # restart). Checked first: cheapest possible rejection, before any network.
+    import config as _cfg
+    _allowed = tuple(getattr(_cfg, "OPTIONS_UNDERLYINGS", ()) or ())
+    if _allowed and sym.upper() not in _allowed:
+        print(f"  {sym}: not in the options whitelist {'/'.join(_allowed)} — skip")
+        return None
+
     import yfinance as yf
     try:
         expirations = yf.Ticker(sym).options
@@ -327,6 +349,24 @@ def _get_option_context(sym: str, spot: float, hv21: float,
     atm_iv     = float(atm.get("impliedVolatility", float("nan")))
     atm_oi     = int(atm.get("openInterest", 0) or 0)
     atm_occ    = str(atm["contractSymbol"])
+
+    # ── KB §22: refuse to pay the variance risk premium ─────────────────────
+    # Sinclair: implied exceeds subsequent realised vol ~70% of months by 2-4
+    # points. Buying that unconditionally is negative expectancy before
+    # direction is considered. Unlike the screener lane, this path has a REAL
+    # implied vol (atm_iv, straight off the chain) and real HV, so the §22
+    # forecast test can actually run here. hv5/hv21/atm_iv are all fractions;
+    # vol_edge works in percentage points.
+    import vol_edge as _ve
+    if getattr(_cfg, "VOL_EDGE_REQUIRED_FOR_LONG_PREMIUM", False):
+        _ok, _why = _ve.long_premium_ok(
+            hv5=None if np.isnan(hv5) else hv5 * 100.0,
+            hv30=None if np.isnan(hv21) else hv21 * 100.0,
+            iv30=None if np.isnan(atm_iv) else atm_iv * 100.0,
+        )
+        if not _ok:
+            print(f"  {sym}: {_why} — skip")
+            return None
 
     # Liquidity gates — KB §9
     # Note: bid-ask % gate is enforced at morning order submission (live quotes),
@@ -560,6 +600,7 @@ def generate_signals(indicators: dict[str, dict],
                         ind.get("hv252_min", float("nan")),
                         ind.get("hv252_max", float("nan")),
                         vix_spike=vix_spike,
+                        hv5=ind.get("hv5", float("nan")),
                     )
                     if opt is None:
                         print(f"  {sym}: RSI2={ind['rsi2']:.1f} — no option passes KB gates, skip")

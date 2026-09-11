@@ -76,6 +76,7 @@ OPT_MARKET_ORDERS    = False   # use LIMIT orders — don't pay the full (wide) 
 OPT_ENFORCE_MAX_RISK = True    # enforce the per-trade max-risk cap (now aligned to $600)
 # AH-2: caps live in config.py (single source); imported here so screener_executor.OPT_*
 # references keep working. HARD ceiling = ALWAYS enforced even in relaxed mode.
+import config
 from config import OPT_HARD_MAX_USD, OPT_HARD_MAX_USD_ETF, size_position as _size_position
 try:
     from universe import ETFS_TRADE as _ETFS_T, ETFS_HEDGE as _ETFS_H
@@ -716,6 +717,21 @@ def execute_screener_option(opt_row: dict, dry_run: bool = False,
         "long_order_id": None, "short_order_id": None,
         "actual_debit": 0.0, "paper": True, "error": None,
     }
+
+    # ── Options underlying whitelist — last line of defence (2026-09-11) ──────
+    # The routing decision already enforces this, but that lives one layer up and
+    # a future caller reaching this function directly would bypass it. Enforcing
+    # at the point of ORDER PLACEMENT means the whitelist cannot be lost by a
+    # refactor: no path can open an option on a non-whitelisted underlying.
+    _allowed = tuple(getattr(config, "OPTIONS_UNDERLYINGS", ()) or ())
+    if _allowed and sym not in _allowed:
+        msg = (f"{sym} is not in the options whitelist "
+               f"{'/'.join(_allowed)} — refusing to place")
+        _trail(f"BLOCKED  {msg}")
+        log.warning(f"[screener-exec] {msg}")
+        result["message"] = msg
+        result["error"] = "underlying not whitelisted"
+        return result
 
     try:
         # ── 1–4. Contract selection (yfinance-heavy — off-hub when asked) ────
