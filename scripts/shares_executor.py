@@ -189,6 +189,29 @@ def held_quantities() -> dict | None:
         return None
 
 
+def resting_sell_quantities() -> dict | None:
+    """symbol → total share qty currently resting in open SELL orders.
+
+    Lets the exit loop VERIFY its protective stops against the broker instead of
+    trusting a stored order id. A stop can vanish without the app knowing — the
+    stale-order sweep cancelled all 8 on 2026-09-11 — and a stored id that no
+    longer exists is worse than no id, because it suppresses the re-place.
+    Returns None on failure; callers must read that as "unknown", never as
+    "nothing is resting", or a transient blip would re-place every stop."""
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus, OrderSide
+        out: dict = {}
+        for o in _client().get_orders(GetOrdersRequest(
+                status=QueryOrderStatus.OPEN, side=OrderSide.SELL)):
+            sym = str(o.symbol).upper()
+            out[sym] = out.get(sym, 0) + int(float(o.qty or 0))
+        return out
+    except Exception as e:
+        log.debug(f"[shares] resting sell-order lookup failed: {e}")
+        return None
+
+
 def last_sell_fill(symbol: str) -> float | None:
     """Fill price of the most recent closed SELL on `symbol` — prices an exit that
     happened outside the engine, i.e. a resting protective stop that triggered."""

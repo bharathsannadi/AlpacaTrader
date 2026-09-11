@@ -384,3 +384,68 @@ class TestReconcilerExemptsProtectiveStops:
         for orders we can't classify."""
         import app
         assert app._is_protective_order(type("O", (), {})()) is False
+
+
+# ── Self-healing: verify the stop against the broker, don't trust the store ────
+
+class TestStopVerification:
+    """A stored stop_order_id is not proof the stop exists. The stale-order sweep
+    cancelled all 8 on 2026-09-11 and the app carried on believing they were
+    there — a stale id is worse than none, because it suppresses the re-place."""
+
+    @pytest.fixture
+    def store(self, monkeypatch):
+        saved = {}
+        entry_date = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        saved["v"] = [{"sym": "AAPL", "route": "stocks", "qty": 10,
+                       "entry_price": 100.0, "entry_date": entry_date,
+                       "dry_run": False, "stop_resting_at": 97.0,
+                       "stop_order_id": "gone",
+                       "exit_state": {"entry": 100.0, "hwm": 100.0, "stop": 97.0,
+                                      "tier": 0}}]
+        monkeypatch.setattr(auto_engine, "_load_positions",
+                            lambda: [dict(p) for p in saved["v"]])
+        monkeypatch.setattr(auto_engine, "_save_positions",
+                            lambda v: saved.__setitem__("v", v))
+        monkeypatch.setattr(shares_executor, "held_quantities", lambda: {"AAPL": 10})
+        monkeypatch.setattr(shares_executor, "current_price", lambda s: 100.0)
+        return saved
+
+    def test_replaces_a_stop_that_vanished(self, store, monkeypatch):
+        placed = []
+        monkeypatch.setattr(shares_executor, "resting_sell_quantities", lambda: {})
+        monkeypatch.setattr(auto_engine, "_rest_protective_stop",
+                            lambda sym, qty, stop, dry, px=None:
+                            placed.append(qty) or "oid-new")
+        auto_engine.manage_exits(dry_run=False)
+        assert placed == [10]
+        assert store["v"][0]["stop_order_id"] == "oid-new"
+
+    def test_replaces_an_undersized_resting_stop(self, store, monkeypatch):
+        placed = []
+        monkeypatch.setattr(shares_executor, "resting_sell_quantities",
+                            lambda: {"AAPL": 1})       # 1 of 10 — the HOOD case
+        monkeypatch.setattr(auto_engine, "_rest_protective_stop",
+                            lambda sym, qty, stop, dry, px=None:
+                            placed.append(qty) or "oid-new")
+        auto_engine.manage_exits(dry_run=False)
+        assert placed == [10]
+
+    def test_leaves_a_correct_stop_alone(self, store, monkeypatch):
+        placed = []
+        monkeypatch.setattr(shares_executor, "resting_sell_quantities",
+                            lambda: {"AAPL": 10})
+        monkeypatch.setattr(auto_engine, "_rest_protective_stop",
+                            lambda *a, **k: placed.append(a) or "x")
+        auto_engine.manage_exits(dry_run=False)
+        assert placed == [], "a healthy stop must not be churned every tick"
+
+    def test_failed_lookup_does_not_churn(self, store, monkeypatch):
+        """None means unknown — re-placing every stop on an API blip would cancel
+        and resubmit real protection for no reason."""
+        placed = []
+        monkeypatch.setattr(shares_executor, "resting_sell_quantities", lambda: None)
+        monkeypatch.setattr(auto_engine, "_rest_protective_stop",
+                            lambda *a, **k: placed.append(a) or "x")
+        auto_engine.manage_exits(dry_run=False)
+        assert placed == []

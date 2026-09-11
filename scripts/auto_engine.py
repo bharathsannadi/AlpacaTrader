@@ -762,6 +762,9 @@ def manage_exits(dry_run: bool = False) -> None:
     # between ticks, so a managed position may already be gone; None means the
     # lookup failed and we must not reap anything this pass.
     live_qty = None if dry_run else shares_executor.held_quantities()
+    # What is ACTUALLY resting at the broker, so the stop can be verified rather
+    # than assumed. Fetched once per pass alongside the position lookup.
+    resting_q = None if dry_run else shares_executor.resting_sell_quantities()
     for p in positions:
         if p.get("route") == "options":
             if _manage_option_exit(p, dry_run=dry_run):
@@ -903,6 +906,19 @@ def manage_exits(dry_run: bool = False) -> None:
                 p["qty"] = _acct_q
                 p["stop_resting_at"] = None
                 p.pop("stop_rest_attempts", None)
+            # VERIFY the stop against the broker rather than trusting the stored
+            # id. A stop can disappear without the app knowing (the stale-order
+            # sweep cancelled all 8 on 2026-09-11), and a stale id is worse than
+            # none because it suppresses the re-place. None = lookup failed =
+            # unknown, so leave it alone.
+            if resting_q is not None and p.get("stop_resting_at") is not None:
+                _have = resting_q.get(p["sym"], 0)
+                if _have != int(p.get("qty") or 0):
+                    log.warning(f"[auto-engine] {p['sym']} protective stop is "
+                                f"{_have}sh at the broker, expected {p.get('qty')}sh "
+                                f"— re-placing")
+                    p["stop_resting_at"] = None
+                    p.pop("stop_rest_attempts", None)
             # Keep the broker-resting stop in step with the ladder, so the profit
             # floor holds even when this process isn't there to enforce it.
             _sync_protective_stop(p, dry_run, px)
