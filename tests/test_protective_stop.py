@@ -311,6 +311,30 @@ class TestManageExitsReconciliation:
         auto_engine.manage_exits(dry_run=False)
         assert [p["sym"] for p in store["v"]] == ["AAPL"]
 
+    def test_resizes_stop_when_account_qty_drifted(self, store, monkeypatch):
+        """record_stock_position no-ops on an already-tracked symbol, so adding to
+        a position left the managed qty stale. Harmless for close_position, but it
+        SIZES the resting stop — the 2026-09-11 rollout rested a stop on 1 share
+        of HOOD's 40."""
+        placed = []
+        monkeypatch.setattr(shares_executor, "held_quantities", lambda: {"AAPL": 40})
+        monkeypatch.setattr(shares_executor, "current_price", lambda s: 100.0)
+        monkeypatch.setattr(auto_engine, "_rest_protective_stop",
+                            lambda sym, qty, stop, dry, px=None:
+                            placed.append(qty) or "oid-new")
+        auto_engine.manage_exits(dry_run=False)
+        assert placed == [40], "stop must be re-placed at the ACCOUNT quantity"
+        assert store["v"][0]["qty"] == 40
+
+    def test_no_resize_when_qty_matches(self, store, monkeypatch):
+        placed = []
+        monkeypatch.setattr(shares_executor, "held_quantities", lambda: {"AAPL": 10})
+        monkeypatch.setattr(shares_executor, "current_price", lambda s: 100.0)
+        monkeypatch.setattr(auto_engine, "_rest_protective_stop",
+                            lambda *a, **k: placed.append(a) or "x")
+        auto_engine.manage_exits(dry_run=False)
+        assert placed == []
+
     def test_missing_price_counts_and_warns(self, store, monkeypatch, caplog):
         """A dead price feed used to skip the stop check SILENTLY, leaving the
         position unmanaged with nothing in the log to say so."""

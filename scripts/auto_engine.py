@@ -888,6 +888,21 @@ def manage_exits(dry_run: bool = False) -> None:
             log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  "
                      f"P&L ${realized:+.0f} ({pnl_pct:+.1f}%)")
         else:
+            # Reconcile the managed size against the account BEFORE syncing the
+            # stop. record_stock_position no-ops on an already-tracked symbol, so
+            # a position that was added to kept its original qty. That drift was
+            # harmless while exits went through close_position (which closes the
+            # whole position regardless), but it SIZES the resting stop — on the
+            # 2026-09-11 rollout HOOD rested a stop on 1 share of 40 and SMCI on
+            # 63 of 124. Clearing stop_resting_at forces a correctly-sized
+            # re-place, and place_protective_stop cancels the undersized one.
+            _acct_q = live_qty.get(p["sym"]) if live_qty is not None else None
+            if _acct_q and _acct_q != p.get("qty"):
+                log.warning(f"[auto-engine] {p['sym']} managed qty {p.get('qty')} "
+                            f"≠ account {_acct_q} — resizing protective stop")
+                p["qty"] = _acct_q
+                p["stop_resting_at"] = None
+                p.pop("stop_rest_attempts", None)
             # Keep the broker-resting stop in step with the ladder, so the profit
             # floor holds even when this process isn't there to enforce it.
             _sync_protective_stop(p, dry_run, px)
