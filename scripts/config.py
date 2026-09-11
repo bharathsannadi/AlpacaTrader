@@ -68,11 +68,34 @@ MAX_PORTFOLIO_POSITIONS = 12      # max concurrent open positions, stocks + opti
 # P&L on that name over the window, block fresh entries until it ages out. The
 # net-negative AND clause is deliberate: a high-churn name that still nets
 # positive keeps trading. Set MIN_STOPS very high to disable.
-SYMBOL_COOLDOWN_WINDOW_DAYS = 5
+# Ledger review 2026-09-11: a 5-day window caught ZERO of the 165 real closes —
+# the repeat-loser re-entries are spaced 7-14 days apart, so every one aged out
+# before the next buy. ORCL re-entered 7× (1W/6L, −$1,355), NVDA 10× (1W, −$543),
+# INTC 5× (0W, −$565), COHR 5× (−$681), SMCI 10× (−$978): −$4,121 across five
+# names the cooldown was built for and never fired on. Replaying the ledger, 30d
+# blocks 15 of those re-entries (15d blocks 13, 60d blocks 20). 30 is the knee —
+# long enough to span the observed re-entry gaps, short enough that a name still
+# ages back in within a normal regime shift.
+SYMBOL_COOLDOWN_WINDOW_DAYS = 30   # was 5 (never fired; see above)
 SYMBOL_COOLDOWN_MIN_STOPS    = 2   # edge review 2026-06-27: 3→2. GLD/MU stopped out
                                   # TWICE before re-entry was blocked (GLD -3% then
                                   # re-bought and -5.5%); two net-negative stops in
                                   # the window is enough signal to sit a name out.
+
+# ── Broker-resting protective stop (ledger review 2026-09-11) ────────────────
+# manage_exits POLLS the stop on the position_monitor tick, so the stop only
+# exists while this process is running it: 17 of 40 stop exits realised worse
+# than -3.5% (SMCI -20.6%, ORCL -12.8%, COHR -11.4%), $2,878 beyond a clean -3%.
+# The poll itself is fine — it stopped HOOD and XLK at -3.1% on the very day SMCI
+# ran to -20.6% mid-session. What it cannot survive is not running: app down or
+# watchdog-killed, monitor wedged, Mac asleep, market closed, or a dead price
+# feed for one symbol. When True, auto_engine rests a GTC SELL stop at the broker
+# on entry and ratchets it as the ladder lifts, so the floor holds regardless.
+# Flip to False to fall back to poll-only exits instantly.
+PROTECTIVE_STOP_ENABLED = True
+# Re-place the resting stop only once the ladder has lifted it this far (fraction
+# of entry), so the 10s monitor tick can't churn cancel/replace pairs all session.
+PROTECTIVE_STOP_SYNC_MIN_MOVE = 0.0025
 
 # ── Sector / correlation concentration cap (edge review 2026-06-27) ──────────
 # The 2026-06-23 wipeout (-$1,674, 0W/12L) was one risk-off semis tape that

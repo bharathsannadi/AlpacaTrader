@@ -11,6 +11,7 @@ The starter test suite. Designed to be **fast** (no network calls, no Alpaca),
 | `test_security.py` | All input validators in `security.py` (api key/secret/risk/vix/stop/profit/dte/time/bool) + `LoginTracker` lockout + per-IP isolation + sliding-window pruning |
 | `test_screener_executor.py` | `_normalize_alpaca_status` enum mapping, `_verify_fill` polling logic (immediate-fill / rejected / timeout / pending-then-fill / API errors / malformed responses), risk-budget constants |
 | `test_auto_exec_persistence.py` | `_load_auto_exec_state` and `_save_auto_exec_state`: roundtrip, stale-file discard, missing-file noop, corrupt-JSON noop, atomic temp-file rename, parent-dir creation, dedup constants guard |
+| `test_protective_stop.py` | Broker-resting GTC stop: dry-run default, GTC/SELL order shape, cancel-before-replace, refusal to rest a stop at/above market (would liquidate instantly), `close()` cancelling reserved shares first, `held_quantities` returning None (not `{}`) on API failure, ratchet semantics (up only, threshold, give-up after 3 failures), `_reap_vanished` never fabricating a closed-trade row, and `manage_exits` reconciliation incl. the dead-price-feed warning |
 
 ## What's NOT covered (yet)
 
