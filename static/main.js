@@ -2100,7 +2100,7 @@ function showLog() {
 // ── Positions tab (#24) ───────────────────────────────────────────────────────
 let _lastPositions = { open: [], auto: [], account: [], options: [] };
 let _lastExitCfg = { stock_tp_pct: 6, stock_sl_pct: 3, stock_stall_days: 3,
-                     opt_tp_pct: 80, opt_sl_pct: 50, opt_stall_min: 90, time_cap_days: 21 };
+                     opt_tp_pct: 20, opt_sl_pct: 20, opt_stall_min: 90, time_cap_days: 21 };
 
 function showPositions() {
   _setViewMode("positions");
@@ -2200,7 +2200,7 @@ function _exitPlanStock(p, e) {
 
 function _exitPlanOption(netCost, mktVal) {
   const cfg = _lastExitCfg || {};
-  const tp = +cfg.opt_tp_pct || 80, sl = +cfg.opt_sl_pct || 50;
+  const tp = +cfg.opt_tp_pct || 20, sl = +cfg.opt_sl_pct || 20;
   const tpVal = netCost * (1 + tp / 100);
   const slVal = netCost * (1 - sl / 100);
   const span = Math.max(tpVal - slVal, 0.0001);

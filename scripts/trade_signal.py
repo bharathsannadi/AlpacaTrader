@@ -26,6 +26,13 @@ class Signal:
     # context for routing (KB §2/§5) — optional, filled when known
     ivr: Optional[float] = None          # implied-vol rank
     iv_hv_ratio: Optional[float] = None  # IV/HV (cheap < 0.8, rich > 1.5)
+    # Raw vol inputs for the KB §22 cheapness test (vol_edge.long_premium_ok).
+    # These are the honest measurements; `ivr` above has historically been fed an
+    # HV LEVEL rather than a percentile by screener_engine, which is why the
+    # router can no longer trust it alone to authorise buying premium.
+    hv5: Optional[float] = None          # 5-day realised vol, annualised %
+    hv30: Optional[float] = None         # 30-day realised vol, annualised %
+    iv30: Optional[float] = None         # current 30-day ATM implied vol, %
     has_vol_edge: bool = False           # True only if a volatility edge is present
     asset_class: str = "stock"           # "stock" | "etf"
     kb_match: Optional[int] = None       # KB-principles match % (REQ-004)

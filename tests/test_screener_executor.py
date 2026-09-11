@@ -128,6 +128,15 @@ class TestRiskConstants:
         assert OPT_SPREAD_RATIO_LO == 0.25
         assert OPT_SPREAD_RATIO_HI == 0.45
 
+    def test_option_exit_band_is_symmetric_20_pct(self):
+        """Edge review 2026-06-12: the +80%/−50% band bled −$11/trade (avg win
+        $12 vs avg loss $271). The operator's ±20%-of-net-debit directive is
+        the re-enable condition for AUTO_EXEC_OPTIONS_ENABLED — widening either
+        side back out should be a deliberate, test-breaking change."""
+        import screener_executor as _se
+        assert _se.OPT_TAKE_PROFIT_PCT == 0.20
+        assert _se.OPT_STOP_LOSS_PCT   == 0.20
+
 
 # ── _marketable_limit ─────────────────────────────────────────────────────────
 
@@ -200,11 +209,11 @@ def _fake_yf_module(spot=100.0):
     """A yfinance stand-in whose chain yields a valid KB §5/§9 debit spread:
     ATM 100C mid 5.10, short 105C bid 3.00 → net 2.10 / width 5 = 42% ratio."""
     calls = pd.DataFrame([
-        {"contractSymbol": "TST260814C00100000", "strike": 100.0,
+        {"contractSymbol": "SPY260814C00100000", "strike": 100.0,
          "bid": 5.00, "ask": 5.20, "openInterest": 500},
-        {"contractSymbol": "TST260814C00105000", "strike": 105.0,
+        {"contractSymbol": "SPY260814C00105000", "strike": 105.0,
          "bid": 3.00, "ask": 3.20, "openInterest": 500},
-        {"contractSymbol": "TST260814C00110000", "strike": 110.0,
+        {"contractSymbol": "SPY260814C00110000", "strike": 110.0,
          "bid": 1.80, "ask": 2.00, "openInterest": 500},
     ])
     chain = MagicMock()
@@ -220,15 +229,15 @@ def _fake_yf_module(spot=100.0):
 
 
 def _spread_row():
-    return {"sym": "TST", "structure": "Debit Call Spread",
+    return {"sym": "SPY", "structure": "Debit Call Spread",
             "expiry": "2026-08-14", "opt_type": "Call", "max_risk": 400}
 
 
 def _quotes(long_wide=False):
     lq = ({"bid": 4.00, "ask": 6.20, "mid": 5.10, "source": "alpaca"} if long_wide
           else {"bid": 5.00, "ask": 5.20, "mid": 5.10, "source": "alpaca"})
-    return {"TST260814C00100000": lq,
-            "TST260814C00105000": {"bid": 3.00, "ask": 3.20, "mid": 3.10,
+    return {"SPY260814C00100000": lq,
+            "SPY260814C00105000": {"bid": 3.00, "ask": 3.20, "mid": 3.10,
                                    "source": "alpaca"}}
 
 
@@ -285,3 +294,140 @@ class TestMlegSpreadExecution:
         assert result["success"] is True
         assert result["long_order_id"] == "dry_run"
         assert tc.submit_order.call_count == 0
+
+
+# ── select_contracts (off-hub selection, 2026-07-09) ──────────────────────────
+
+class TestSelectContracts:
+    """The yfinance-heavy half of an execution, extracted so it can run in a
+    worker subprocess (hub-jam fix). Pure + JSON-safe."""
+
+    def test_returns_json_safe_spread_plan(self, monkeypatch):
+        import sys, json
+        monkeypatch.setitem(sys.modules, "yfinance", _fake_yf_module())
+        sel = se.select_contracts("SPY", "2026-08-14", "Debit Call Spread",
+                                  "Call", max_risk=400)
+        assert sel["use_spread"] is True
+        assert sel["atm_occ"]   == "SPY260814C00100000"
+        assert sel["short_occ"] == "SPY260814C00105000"
+        assert sel["net_debit"] == pytest.approx(2.10)   # 5.10 mid − 3.00 bid
+        json.dumps(sel)   # must survive the worker pipe
+
+    def test_gate_failure_raises_value_error(self, monkeypatch):
+        import sys
+        yf = _fake_yf_module()
+        # Widen the ATM quote so §9 bid-ask fails (mid 5.10, spread ~43%)
+        chain = yf.Ticker.return_value.option_chain.return_value
+        chain.calls.loc[0, "bid"], chain.calls.loc[0, "ask"] = 4.00, 6.20
+        monkeypatch.setitem(sys.modules, "yfinance", yf)
+        monkeypatch.setattr(se, "_PAPER_CACHE", False)   # strict — no relax
+        with pytest.raises(ValueError, match="§9"):
+            se.select_contracts("SPY", "2026-08-14", "ATM Call", "Call")
+
+    def test_execute_uses_worker_when_offhub(self, monkeypatch):
+        """offhub_selection=True must route selection through the worker and
+        never touch yfinance in-process."""
+        import sys
+        monkeypatch.setitem(sys.modules, "yfinance", None)   # would blow up if used
+        plan = {"sym": "SPY", "expiry": "2026-08-14", "structure": "ATM Call",
+                "opt_type": "Call", "use_spread": False, "spot": 100.0,
+                "atm_occ": "SPY260814C00100000", "atm_strike": 100.0,
+                "atm_mid": 5.10, "atm_bid": 5.00, "atm_ask": 5.20, "atm_oi": 500,
+                "short_occ": None, "short_strike": None, "short_mid": 0.0,
+                "net_debit": 5.10}
+        called = {}
+
+        def _fake_worker(payload):
+            called["payload"] = payload
+            return plan
+
+        monkeypatch.setattr(se, "_select_contracts_worker", _fake_worker)
+        result = se.execute_screener_option(
+            {"sym": "SPY", "expiry": "2026-08-14", "structure": "ATM Call",
+             "opt_type": "Call", "max_risk": 600},
+            dry_run=True, offhub_selection=True)
+        assert result["success"] is True
+        assert called["payload"]["sym"] == "SPY"
+        assert result["long_occ"] == "SPY260814C00100000"
+
+
+class TestSelectContractsWorker:
+    """_select_contracts_worker subprocess plumbing — no network, subprocess
+    mocked. The worker must fail LOUD (ValueError), never fall back in-process."""
+
+    def _proc(self, stdout="", stderr="", rc=0):
+        p = MagicMock()
+        p.stdout, p.stderr, p.returncode = stdout, stderr, rc
+        return p
+
+    def test_parses_last_json_line(self, monkeypatch):
+        import subprocess
+        out = 'yfinance noise\n{"ok": true, "sym": "SPY", "net_debit": 2.1}\n'
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: self._proc(stdout=out))
+        sel = se._select_contracts_worker({"sym": "SPY"})
+        assert sel["net_debit"] == 2.1
+        assert "ok" not in sel
+
+    def test_gate_rejection_raises_with_message(self, monkeypatch):
+        import subprocess
+        out = '{"ok": false, "error": "SPY: KB \\u00a79 Liquidity \\u2014 illiquid"}'
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: self._proc(stdout=out))
+        with pytest.raises(ValueError, match="§9"):
+            se._select_contracts_worker({"sym": "SPY"})
+
+    def test_empty_output_raises(self, monkeypatch):
+        import subprocess
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: self._proc(stderr="boom", rc=1))
+        with pytest.raises(ValueError, match="no output"):
+            se._select_contracts_worker({"sym": "SPY"})
+
+    def test_timeout_raises(self, monkeypatch):
+        import subprocess
+        def _t(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="x", timeout=1)
+        monkeypatch.setattr(subprocess, "run", _t)
+        with pytest.raises(ValueError, match="timed out"):
+            se._select_contracts_worker({"sym": "SPY"})
+
+
+# ── Options whitelist at the order-placement layer (2026-09-11) ───────────────
+
+class TestWhitelistAtExecution:
+    """Routing already enforces the whitelist, but that lives a layer up. This is
+    the last line of defence: no path may open an option on a non-whitelisted
+    underlying, even by calling the executor directly."""
+
+    def test_non_whitelisted_underlying_is_refused(self, monkeypatch):
+        import screener_executor as se
+        called = []
+        monkeypatch.setattr(se, "select_contracts",
+                            lambda **k: called.append(k))
+        res = se.execute_screener_option(
+            {"sym": "NVDA", "expiry": "2026-08-14", "structure": "ATM Call",
+             "opt_type": "Call", "max_risk": 400}, dry_run=True)
+        assert res["success"] is False
+        assert res["error"] == "underlying not whitelisted"
+        assert called == [], "must refuse before selecting any contract"
+
+    def test_whitelisted_underlying_is_not_blocked_by_the_gate(self, monkeypatch):
+        import screener_executor as se
+        monkeypatch.setattr(se, "select_contracts",
+                            lambda **k: (_ for _ in ()).throw(RuntimeError("reached")))
+        res = se.execute_screener_option(
+            {"sym": "SPY", "expiry": "2026-08-14", "structure": "ATM Call",
+             "opt_type": "Call", "max_risk": 400}, dry_run=True)
+        assert res["error"] != "underlying not whitelisted"
+
+    def test_empty_whitelist_disables_the_gate(self, monkeypatch):
+        import screener_executor as se
+        import config
+        monkeypatch.setattr(config, "OPTIONS_UNDERLYINGS", ())
+        monkeypatch.setattr(se, "select_contracts",
+                            lambda **k: (_ for _ in ()).throw(RuntimeError("reached")))
+        res = se.execute_screener_option(
+            {"sym": "NVDA", "expiry": "2026-08-14", "structure": "ATM Call",
+             "opt_type": "Call", "max_risk": 400}, dry_run=True)
+        assert res["error"] != "underlying not whitelisted"

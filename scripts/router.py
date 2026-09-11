@@ -26,6 +26,7 @@ from typing import Optional
 
 from trade_signal import Signal
 from risk_brain import RiskBrain
+import config
 
 ATR_STOP_M = 2.0          # shares stop = 2×ATR (matches daily strategy)
 SPREADS_ENABLED = False   # 2S-B blocked — no validated spread harness yet
@@ -76,6 +77,25 @@ def route_signal(sig: Signal, rb: RiskBrain,
     # ── §5: directional-only edge → shares (cheapest vehicle) ──
     if not sig.has_vol_edge:
         return shares_decision("directional-only edge → shares (§5 cost hierarchy)")
+
+    # ── options underlying whitelist (operator 2026-09-11) ──
+    # Checked BEFORE structure selection so a non-whitelisted name never reaches
+    # the option path at all. A directional edge still trades — as shares.
+    _allowed = tuple(getattr(config, "OPTIONS_UNDERLYINGS", ()) or ())
+    if _allowed and sig.symbol.upper() not in _allowed:
+        return shares_decision(
+            f"{sig.symbol} not in the options whitelist {'/'.join(_allowed)} "
+            f"— directional edge expressed as shares")
+
+    # ── KB §22: refuse to pay the variance risk premium ──
+    # Checked before §2 because §2's IVR input is not trustworthy on its own (see
+    # config.VOL_EDGE_REQUIRED_FOR_LONG_PREMIUM). Missing vol data refuses, which
+    # routes the edge to shares under §5 rather than buying blind.
+    if getattr(config, "VOL_EDGE_REQUIRED_FOR_LONG_PREMIUM", False):
+        import vol_edge
+        _ok, _vwhy = vol_edge.long_premium_ok(sig.hv5, sig.hv30, sig.iv30)
+        if not _ok:
+            return shares_decision(_vwhy)
 
     # ── §2: has a volatility edge → options, structure by IVR ──
     structure, why = _structure_for_ivr(sig.ivr, sig.direction)
@@ -134,7 +154,16 @@ def route_for_pick(stock_row: Optional[dict], option_row: Optional[dict],
     strat = (o.get("strategy") or s.get("strategy")
              or o.get("source") or s.get("setup") or "screener")
     _ivr = _ivr_num(o.get("ivr"))
+    def _vol(key):
+        v = o.get(key, s.get(key))
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
     sig = Signal(sym, direction, str(strat), price=price, atr=atr, ivr=_ivr,
+                 # raw vol inputs for the KB §22 cheapness test; absent → refuse
+                 hv5=_vol("hv5"), hv30=_vol("hv30"), iv30=_vol("iv30"),
                  # CR-7: a real vol edge requires a usable IVR, not merely that an option row
                  # exists. No IVR → can't confirm a volatility edge → route as directional (§5).
                  has_vol_edge=bool(o) and _ivr is not None,

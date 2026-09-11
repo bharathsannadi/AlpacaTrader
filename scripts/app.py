@@ -823,6 +823,16 @@ def _detect_real_stock_closes() -> None:
     except Exception as e:
         log.debug(f"[real-ledger] position fetch failed: {e}")
         return
+    # High-water gain per open position, carried across ticks (2026-09-11). The
+    # ledger records what a trade EXITED at but never what it was WORTH at its
+    # best, so "exited +0.2%" and "ran to +5.4% then gave it all back" are
+    # indistinguishable — and telling them apart is the whole question behind the
+    # 45 winners that closed at an average of +1.48% against a +6% target.
+    for _s, _c in cur.items():
+        _prev_peak = _real_pos_prev.get(_s, {}).get("peak_pct")
+        _now_pct = float(_c.get("pnl_pct") or 0.0)
+        _c["peak_pct"] = round(max(_now_pct, float(_prev_peak))
+                               if _prev_peak is not None else _now_pct, 2)
     # First live observation (fresh boot, no saved snapshot): seed without emitting
     # closes so we never mistake pre-existing holdings for closes.
     if not _real_pos_seeded:
@@ -857,6 +867,9 @@ def _detect_real_stock_closes() -> None:
             "pnl_usd": pnl_usd, "pnl_pct": pnl_pct,
             "reason": _classify_exit_reason(pnl_pct, partial),
             "setup": _entry_meta.get(sym, {}).get("setup", ""),  # DESK-5: per-setup attribution
+            # Best unrealized gain this position ever showed. give_back = peak - exit
+            # is how much of a winner the exit logic handed back.
+            "peak_pct": round(float(prev.get("peak_pct", pnl_pct) or 0.0), 2),
             "dry_run": False,
         })
         log.info(f"[real-ledger] {sym} closed {closed}sh @ ${exit_px:.2f} "
@@ -3310,11 +3323,9 @@ def _auto_exec_options(data: dict) -> None:
     global _auto_exec_stock_today, _auto_exec_stock_filled, _auto_exec_attempts
     global _session_start_equity, _session_start_date
 
-    # Edge review 2026-06-12 (analyze_trades.py): the option lane is −EV
-    # (−$11/trade over 60 closes). Entries are paused via config kill-switch
-    # until the exit logic shows positive expectancy. Exits are unaffected —
-    # they run from position_monitor regardless. Flip AUTO_EXEC_OPTIONS_ENABLED
-    # back to True in config.py to re-arm.
+    # Option-lane kill switch — full history + re-enable rationale live on
+    # config.AUTO_EXEC_OPTIONS_ENABLED (edge review 2026-06-12 −EV pause;
+    # re-enabled 2026-07-09 with symmetric ±20% exits + off-hub selection).
     if not AUTO_EXEC_OPTIONS_ENABLED:
         return
 
@@ -3483,7 +3494,10 @@ def _auto_exec_options(data: dict) -> None:
         log.info(f"[auto-exec] {sym}  {payload['structure']}  "
                  f"{payload['expiry']}  dry={dry}")
         try:
-            result = screener_executor.execute_screener_option(payload, dry_run=dry)
+            # offhub_selection: the yfinance chain work runs in a worker
+            # subprocess so a slow pick can't stall the hub (2026-06-17 jam fix)
+            result = screener_executor.execute_screener_option(
+                payload, dry_run=dry, offhub_selection=True)
             socketio.emit("screener_order_result", result)
             level = "INFO" if result.get("success") else "WARNING"
             _emit_log(
@@ -3996,7 +4010,8 @@ def on_execute_screener_option(data=None):
              f"expiry={data.get('expiry')}  dry_run={dry}  gate={gate_reason}")
 
     def _run():
-        result = screener_executor.execute_screener_option(data, dry_run=dry)
+        result = screener_executor.execute_screener_option(
+            data, dry_run=dry, offhub_selection=True)   # chain work off-hub
         socketio.emit("screener_order_result", result)   # broadcast to all clients
         level = "INFO" if result.get("success") else "WARNING"
         _emit_log(f"SCREENER EXEC  {result.get('message', '')}", level=level)

@@ -472,6 +472,88 @@ def _signal_gate(sig, route: str, vix, risk_on: bool) -> tuple[bool, str]:
     return True, f"KB {sc['pct']}% ✓"
 
 
+# ── Broker-resting protective stop (ledger review 2026-09-11) ────────────────
+# 17 of 40 real stop exits came in worse than -3.5% — $2,878 past a clean -3%.
+# The poll itself works: on 2026-07-02 it stopped HOOD and XLK at -3.1%. What it
+# cannot do is act when it never runs, and on that SAME day ORCL exited -12.8%
+# and SMCI -20.6% mid-session. Every gap between polls is unprotected: the app
+# down or watchdog-killed, the monitor wedged, the Mac asleep, a dead price feed
+# for one symbol (see the px-is-None branch in manage_exits), or an overnight
+# hold. A GTC stop RESTING AT THE BROKER covers all of those, because it does not
+# depend on this process being alive. The polled ladder stays on top as the
+# intraday trailing layer; these helpers place that floor and ratchet it upward.
+
+def _rest_protective_stop(sym: str, qty: int, stop: float, dry_run: bool,
+                          last_px: float | None = None) -> str | None:
+    """Place the entry-time resting stop. Returns the order id, or None when the
+    feature is off or the order failed — a failure is non-fatal (the polled stop
+    still applies), it just means this position carries no gap protection."""
+    if not getattr(config, "PROTECTIVE_STOP_ENABLED", False):
+        return None
+    import shares_executor
+    res = shares_executor.place_protective_stop(sym, qty, stop, dry_run=dry_run,
+                                                last_price=last_px)
+    if not res.get("success"):
+        log.warning(f"[auto-engine] {sym} has NO resting stop "
+                    f"({res.get('message', '?')}) — poll-only until it exits")
+        return None
+    return res.get("order_id")
+
+
+def _sync_protective_stop(p: dict, dry_run: bool, last_px: float | None = None) -> None:
+    """Ratchet the broker-resting stop up to the ladder's current level (in place).
+
+    Only ever moves the resting stop UP, and only once the ladder has lifted it by
+    PROTECTIVE_STOP_SYNC_MIN_MOVE of entry — otherwise the 10s monitor tick would
+    churn cancel/replace pairs all session for sub-cent moves."""
+    if not getattr(config, "PROTECTIVE_STOP_ENABLED", False):
+        return
+    entry = float(p.get("entry_price") or 0.0)
+    want = float((p.get("exit_state") or {}).get("stop") or 0.0)
+    if entry <= 0 or want <= 0 or p.get("qty", 0) <= 0:
+        return
+    resting = p.get("stop_resting_at")
+    if resting is not None:
+        min_move = float(getattr(config, "PROTECTIVE_STOP_SYNC_MIN_MOVE", 0.0025))
+        if want - float(resting) < entry * min_move:
+            return                       # unchanged, or lower — never loosen a stop
+    elif p.get("stop_rest_attempts", 0) >= 3:
+        return      # placement keeps failing; stay poll-only rather than retry each tick
+    oid = _rest_protective_stop(p["sym"], int(p["qty"]), want,
+                                p.get("dry_run", dry_run), last_px)
+    if oid:
+        p["stop_order_id"] = oid
+        p["stop_resting_at"] = round(want, 2)
+        p.pop("stop_rest_attempts", None)
+        log.info(f"[auto-engine] {p['sym']} resting stop ratcheted → ${want:.2f}")
+    else:
+        p["stop_rest_attempts"] = p.get("stop_rest_attempts", 0) + 1
+
+
+def _reap_vanished(p: dict) -> None:
+    """Drop a managed position that is no longer in the account — its resting stop
+    filled, or it was closed outside the engine.
+
+    Without this the poll would keep trying to close a position that isn't there,
+    the churn guard would keep it in the store forever, and the stale `held` entry
+    would block re-entry. The closed-trade ROW is deliberately NOT written here:
+    the real-fill ledger in app.py is the single source of truth for closes
+    (2026-06-16), and inventing one is exactly the fabrication that bug caused. We
+    do feed the realized loss to the monthly 6% breaker, priced off the real fill."""
+    import shares_executor
+    entry = float(p.get("entry_price") or 0.0)
+    qty = int(p.get("qty") or 0)
+    fill = shares_executor.last_sell_fill(p["sym"])
+    if entry > 0 and qty > 0 and fill:
+        realized = (fill - entry) * qty
+        _record_realized(realized)
+        log.info(f"[auto-engine] {p['sym']} left the account @ ${fill:.2f} "
+                 f"(resting stop or external close) — P&L ${realized:+.0f}, now unmanaged")
+    else:
+        log.info(f"[auto-engine] {p['sym']} left the account (exit fill unknown) "
+                 f"— now unmanaged")
+
+
 def execute_plan(plan: dict, dry_run: bool = False,
                  vix=None, risk_on: bool = True, equity: float = 0.0) -> list[dict]:
     """Place PAPER orders for the planned trades; record positions w/ exit state.
@@ -525,11 +607,14 @@ def execute_plan(plan: dict, dry_run: bool = False,
         slip_bps = round((fill - s.price) / s.price * 1e4, 1) if s.price else 0.0
         init_stop = fill - 2.0 * s.atr if s.atr > 0 else fill * 0.92
         st = eng.init_position(entry=fill, init_stop=init_stop)
+        stop_oid = _rest_protective_stop(s.symbol, d.qty, init_stop, dry_run)
         positions.append({
             "sym": s.symbol, "strategy": s.strategy, "route": "stocks",
             "qty": d.qty, "entry_price": fill, "signal_price": s.price,
             "entry_slippage_bps": slip_bps,
             "entry_date": _date.today().isoformat(),
+            "stop_order_id": stop_oid,          # broker-resting GTC stop (gap protection)
+            "stop_resting_at": round(init_stop, 2) if stop_oid else None,
             "order_id": res.get("order_id"), "exit_state": _asdict(st), "dry_run": dry_run,
         })
         held.add(s.symbol)
@@ -571,6 +656,9 @@ def record_stock_position(sym: str, qty: int, entry: float, strategy: str = "ext
     else:
         init_stop = entry * (1.0 - stop_pct)
     st = ExitEngine().init_position(entry=entry, init_stop=init_stop)
+    # This is the path the screener auto-buy lane comes through, so it is where
+    # most real positions pick up their gap protection.
+    stop_oid = _rest_protective_stop(sym, int(qty), init_stop, dry_run)
     positions.append({
         "sym": sym, "strategy": strategy, "route": "stocks",
         "qty": int(qty), "entry_price": entry, "signal_price": entry,
@@ -578,11 +666,14 @@ def record_stock_position(sym: str, qty: int, entry: float, strategy: str = "ext
         "setup": setup,               # DESK-1/2/3: drives the per-setup validated exit
         "entry_ts": entry_ts,         # DESK-1: entry timestamp (ET ISO) for same-day horizon
         "entry_slippage_bps": 0.0, "entry_date": _date.today().isoformat(),
+        "stop_order_id": stop_oid,          # broker-resting GTC stop (gap protection)
+        "stop_resting_at": round(init_stop, 2) if stop_oid else None,
         "order_id": None, "exit_state": _asdict(st), "dry_run": dry_run,
     })
     _save_positions(positions)
     log.info(f"[auto-engine] now managing {sym} {qty}sh @ ${entry:.2f} "
-             f"(stop ${init_stop:.2f}) — {strategy}")
+             f"(stop ${init_stop:.2f}{', resting' if stop_oid else ', poll-only'}) "
+             f"— {strategy}")
     return True
 
 
@@ -602,7 +693,8 @@ def _execute_option(signal, decision, dry_run: bool = False) -> Optional[dict]:
         "opt_type":  opt_type,
         "max_risk":  min(float(decision.est_risk_usd or 500.0), 500.0),  # REQ-607 $500/trade
     }
-    res = screener_executor.execute_screener_option(payload, dry_run=dry_run)
+    res = screener_executor.execute_screener_option(payload, dry_run=dry_run,
+                                                    offhub_selection=True)   # hub-jam fix
     if not res.get("success"):
         log.info(f"[auto-engine] {signal.symbol} option not placed — {res.get('message','')}")
         return None
@@ -666,6 +758,10 @@ def manage_exits(dry_run: bool = False) -> None:
         return
     eng = ExitEngine()
     still_open = []
+    # Real account state, fetched ONCE per pass. A broker-resting stop can fill
+    # between ticks, so a managed position may already be gone; None means the
+    # lookup failed and we must not reap anything this pass.
+    live_qty = None if dry_run else shares_executor.held_quantities()
     for p in positions:
         if p.get("route") == "options":
             if _manage_option_exit(p, dry_run=dry_run):
@@ -673,9 +769,28 @@ def manage_exits(dry_run: bool = False) -> None:
             continue
         if p.get("route") != "stocks":
             still_open.append(p); continue
+        if (live_qty is not None and not p.get("dry_run")
+                and live_qty.get(p["sym"], 0) <= 0):
+            _reap_vanished(p)
+            continue
         px = shares_executor.current_price(p["sym"])
         if px is None:
+            # The polled stop cannot evaluate without a price, and this used to be
+            # a SILENT skip — a symbol with a broken feed sat unmanaged
+            # indefinitely with nothing saying so. That is the most likely path to
+            # the mid-session -12.8% (ORCL) and -20.6% (SMCI) exits on 2026-07-02,
+            # a day the same poll stopped HOOD and XLK cleanly at -3.1%. The
+            # broker-resting stop is the actual protection now; this makes the
+            # blind spot visible instead of silent.
+            p["price_misses"] = p.get("price_misses", 0) + 1
+            n = p["price_misses"]
+            if n in (3, 30) or n % 180 == 0:        # ~30s, ~5min, then every ~30min
+                log.warning(
+                    f"[auto-engine] {p['sym']} no price for {n} consecutive ticks — "
+                    f"polled stop is BLIND; resting stop "
+                    f"{'holding at $%.2f' % p['stop_resting_at'] if p.get('stop_resting_at') else 'ABSENT'}")
             still_open.append(p); continue
+        p.pop("price_misses", None)
         entry = p.get("entry_price", px)
         chg = (px - entry) / entry if entry else 0.0
         # Stall tracking (#33): remember the peak gain + when it was last set.
@@ -773,6 +888,24 @@ def manage_exits(dry_run: bool = False) -> None:
             log.info(f"[auto-engine] CLOSED {p['sym']}: {reason}  "
                      f"P&L ${realized:+.0f} ({pnl_pct:+.1f}%)")
         else:
+            # Reconcile the managed size against the account BEFORE syncing the
+            # stop. record_stock_position no-ops on an already-tracked symbol, so
+            # a position that was added to kept its original qty. That drift was
+            # harmless while exits went through close_position (which closes the
+            # whole position regardless), but it SIZES the resting stop — on the
+            # 2026-09-11 rollout HOOD rested a stop on 1 share of 40 and SMCI on
+            # 63 of 124. Clearing stop_resting_at forces a correctly-sized
+            # re-place, and place_protective_stop cancels the undersized one.
+            _acct_q = live_qty.get(p["sym"]) if live_qty is not None else None
+            if _acct_q and _acct_q != p.get("qty"):
+                log.warning(f"[auto-engine] {p['sym']} managed qty {p.get('qty')} "
+                            f"≠ account {_acct_q} — resizing protective stop")
+                p["qty"] = _acct_q
+                p["stop_resting_at"] = None
+                p.pop("stop_rest_attempts", None)
+            # Keep the broker-resting stop in step with the ladder, so the profit
+            # floor holds even when this process isn't there to enforce it.
+            _sync_protective_stop(p, dry_run, px)
             # stash live price + P&L so the UI can show it for free (no extra API call)
             entry = p.get("entry_price", px)
             p["last_price"] = round(px, 2)
