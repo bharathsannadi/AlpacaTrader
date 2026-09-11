@@ -38,7 +38,12 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
 import warnings; warnings.filterwarnings("ignore")
-logging.disable(logging.CRITICAL)
+# NOTE: logging.disable() is PROCESS-WIDE, not module-scoped. This used to run at
+# IMPORT time, and app.py imports this module — so every logger in the whole
+# application was silenced below CRITICAL. That is why screener_executor carries
+# its own direct-to-file trail ("Python logging in this app is fragile"): it
+# wasn't fragile, it was switched off. Quiet the noise only when this module is
+# run as a standalone CLI; see the __main__ block at the bottom.
 
 import numpy as np
 import pandas as pd
@@ -1347,4 +1352,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # CLI only — this is process-wide, so it must never run on import (see the
+    # note at the top of the file).
+    logging.disable(logging.CRITICAL)
     main()

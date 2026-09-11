@@ -99,3 +99,20 @@ class TestHv5:
 
     def test_short_series_is_nan(self):
         assert np.isnan(daily_trader._get_hv5(pd.DataFrame({"close": [100, 101]})))
+
+
+class TestLoggingIsNotDisabledOnImport:
+    """logging.disable() is PROCESS-WIDE. daily_trader called it at import time and
+    app.py imports daily_trader, so every logger in the application was silenced
+    below CRITICAL — which is why screener_executor grew its own file trail and
+    why the protective-stop warnings never reached any log."""
+
+    def test_importing_daily_trader_leaves_warnings_enabled(self):
+        import logging
+        import daily_trader  # noqa: F401  (import is the thing under test)
+        assert logging.getLogger("probe").isEnabledFor(logging.WARNING)
+
+    def test_info_level_also_survives_the_import(self):
+        import logging
+        import daily_trader  # noqa: F401
+        assert logging.getLogger("probe").isEnabledFor(logging.INFO)
