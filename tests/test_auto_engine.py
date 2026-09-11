@@ -17,12 +17,12 @@ def test_empty_signals_empty_plan():
 def test_plan_routes_and_sizes():
     sigs = [
         Signal("AAPL", "bull", "connors_rsi2", price=200, atr=4, has_vol_edge=False),
-        Signal("NVDA", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22),
+        Signal("SPY", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22),
     ]
     plan = build_plan(sigs, equity=107_846, etf_set=ETF)
     routes = {pt.signal.symbol: pt.decision.route for pt in plan["planned"]}
     assert routes["AAPL"] == "stocks"      # directional-only → shares (§5)
-    assert routes["NVDA"] == "options"     # vol edge, IVR<30 → naked (§2)
+    assert routes["SPY"] == "options"     # vol edge, IVR<30 → naked (§2)
 
 
 def test_shares_lane_prioritizes_stocks_over_etf():

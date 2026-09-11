@@ -11,11 +11,11 @@ def _data():
         "dt": [
             {"sym": "AAPL", "price": 200, "atr": 4, "kb_match": 80, "valid": True,
              "is_top": True, "action": "✅ BUY", "setup": "Breakout", "bt_dir": 51.5, "bt_pf": 1.88},
-            {"sym": "NVDA", "price": 120, "atr": 3, "kb_match": 70, "valid": True,
+            {"sym": "SPY", "price": 120, "atr": 3, "kb_match": 70, "valid": True,
              "is_top": False, "setup": "Gap+Vol", "bt_dir": 50.6},
         ],
         "options": [
-            {"sym": "NVDA", "direction": "bull", "ivr": "IVR 22", "kb_match": 85,
+            {"sym": "SPY", "direction": "bull", "ivr": "IVR 22", "kb_match": 85,
              "action": "✅ BUY", "source": "Connors RSI(2) Daily", "dir_pct": 66.4,
              "pf": 1.32, "expiry": "2099-01-15", "structure": "ATM Call"},
             {"sym": "XLF", "direction": "bull", "ivr": "IVR 22", "spot": 50, "kb_match": 59,
@@ -28,14 +28,14 @@ def test_symbol_in_both_lists_collapses_to_one_pick(monkeypatch):
     monkeypatch.setattr(app.trader, "account_value", lambda: 107_846.0, raising=False)
     picks = app._build_picks(_data(), [], vix=18)
     syms = [p["sym"] for p in picks]
-    assert len(picks) == 3 and syms.count("NVDA") == 1   # NVDA was in dt AND options
+    assert len(picks) == 3 and syms.count("SPY") == 1   # NVDA was in dt AND options
 
 
 def test_canonical_kb_match_is_routed_instrument(monkeypatch):
     monkeypatch.setattr(app.trader, "account_value", lambda: 107_846.0, raising=False)
     by = {p["sym"]: p for p in app._build_picks(_data(), [], vix=18)}
     # NVDA has an option (low IVR) → routes options → kb_match == option score (85)
-    assert by["NVDA"]["route"] == "options" and by["NVDA"]["kb_match"] == 85
+    assert by["SPY"]["route"] == "options" and by["SPY"]["kb_match"] == 85
     # AAPL has no option → routes shares → kb_match == stock score (80)
     assert by["AAPL"]["route"] == "stocks" and by["AAPL"]["kb_match"] == 80
 
@@ -46,7 +46,7 @@ def test_illiquid_pick_is_not_a_buy_and_ranks_last(monkeypatch):
     by = {p["sym"]: p for p in picks}
     assert by["XLF"]["kb_match"] == 59 and by["XLF"]["action"] != "✅ BUY"
     # BUY rows (by kb_match desc) first, non-BUY last
-    assert picks[0]["sym"] == "NVDA" and picks[-1]["sym"] == "XLF"
+    assert picks[0]["sym"] == "SPY" and picks[-1]["sym"] == "XLF"
 
 
 def test_no_equity_degrades_to_display_only(monkeypatch):

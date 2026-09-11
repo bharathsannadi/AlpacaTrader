@@ -823,6 +823,16 @@ def _detect_real_stock_closes() -> None:
     except Exception as e:
         log.debug(f"[real-ledger] position fetch failed: {e}")
         return
+    # High-water gain per open position, carried across ticks (2026-09-11). The
+    # ledger records what a trade EXITED at but never what it was WORTH at its
+    # best, so "exited +0.2%" and "ran to +5.4% then gave it all back" are
+    # indistinguishable — and telling them apart is the whole question behind the
+    # 45 winners that closed at an average of +1.48% against a +6% target.
+    for _s, _c in cur.items():
+        _prev_peak = _real_pos_prev.get(_s, {}).get("peak_pct")
+        _now_pct = float(_c.get("pnl_pct") or 0.0)
+        _c["peak_pct"] = round(max(_now_pct, float(_prev_peak))
+                               if _prev_peak is not None else _now_pct, 2)
     # First live observation (fresh boot, no saved snapshot): seed without emitting
     # closes so we never mistake pre-existing holdings for closes.
     if not _real_pos_seeded:
@@ -857,6 +867,9 @@ def _detect_real_stock_closes() -> None:
             "pnl_usd": pnl_usd, "pnl_pct": pnl_pct,
             "reason": _classify_exit_reason(pnl_pct, partial),
             "setup": _entry_meta.get(sym, {}).get("setup", ""),  # DESK-5: per-setup attribution
+            # Best unrealized gain this position ever showed. give_back = peak - exit
+            # is how much of a winner the exit logic handed back.
+            "peak_pct": round(float(prev.get("peak_pct", pnl_pct) or 0.0), 2),
             "dry_run": False,
         })
         log.info(f"[real-ledger] {sym} closed {closed}sh @ ${exit_px:.2f} "

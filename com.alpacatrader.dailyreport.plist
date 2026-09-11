@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alpacatrader.dailyreport</string>
+
+  <!-- Read-only edge report over the real closed-trade ledger. Places no orders
+       and never touches Alpaca, so a failed run can only cost a missing report. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/bin/python3.11</string>
+    <string>-u</string>
+    <string>scripts/daily_report.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/venv/lib/python3.11/site-packages</string>
+  </dict>
+
+  <!-- 16:30 ET, after the close and after the last position_monitor tick has had
+       time to record the day's final exits into the ledger. NOTE: StartCalendar
+       fires on LOCAL machine time; this Mac runs US/Central, so 15:30 local is
+       16:30 ET. Revisit if the machine's timezone changes. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>15</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <!-- Appends, so the file is a running history of daily reports -->
+  <key>StandardOutPath</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/logs/daily_report.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/bsannadi/Desktop/bharath/AlpacaTrader/logs/daily_report.log</string>
+</dict>
+</plist>

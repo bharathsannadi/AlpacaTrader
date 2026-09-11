@@ -5,6 +5,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from trade_signal import Signal
 from risk_brain import RiskBrain
 from router import route_signal
+import config
+import pytest
 
 
 def _rb():
@@ -21,22 +23,22 @@ def test_directional_only_routes_to_shares():
 
 # ── §2: volatility edge → options by IVR ──────────────────────────────────────
 def test_vol_edge_low_ivr_naked_call():
-    sig = Signal("NVDA", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
+    sig = Signal("SPY", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
     d = route_signal(sig, _rb())
     assert d.route == "options" and d.structure == "naked_call"
 
 def test_vol_edge_low_ivr_naked_put_for_bear():
-    sig = Signal("NVDA", "bear", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
+    sig = Signal("SPY", "bear", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
     d = route_signal(sig, _rb())
     assert d.route == "options" and d.structure == "naked_put"
 
 def test_vol_edge_mid_ivr_spread_when_enabled():
-    sig = Signal("MSFT", "bull", "vol", price=400, atr=6, has_vol_edge=True, ivr=40)
+    sig = Signal("QQQ", "bull", "vol", price=400, atr=6, has_vol_edge=True, ivr=40)
     d = route_signal(sig, _rb(), spreads_enabled=True)
     assert d.route == "options" and d.structure == "debit_call_spread"
 
 def test_vol_edge_mid_ivr_spread_disabled_falls_back_to_shares():
-    sig = Signal("MSFT", "bull", "vol", price=400, atr=6, has_vol_edge=True, ivr=40)
+    sig = Signal("QQQ", "bull", "vol", price=400, atr=6, has_vol_edge=True, ivr=40)
     d = route_signal(sig, _rb(), spreads_enabled=False)
     assert d.route == "stocks"
     assert "spreads disabled" in d.reason
@@ -49,7 +51,7 @@ def test_vol_edge_high_ivr_never_naked():
     assert d.route == "stocks"
 
 def test_ivr_unknown_falls_back_to_shares():
-    sig = Signal("AMD", "bull", "vol", price=150, atr=4, has_vol_edge=True, ivr=None)
+    sig = Signal("QQQ", "bull", "vol", price=150, atr=4, has_vol_edge=True, ivr=None)
     d = route_signal(sig, _rb())
     assert d.route == "stocks"
 
@@ -57,7 +59,7 @@ def test_ivr_unknown_falls_back_to_shares():
 # ── REQ-601.3 affordability + risk-brain interaction ──────────────────────────
 def test_option_over_cap_falls_back_to_shares():
     # premium high enough that naked risk > the $600 per-trade cap → option blocked → shares
-    sig = Signal("NVDA", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
+    sig = Signal("SPY", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
     d = route_signal(sig, _rb(), option_premium=7.0)   # 7.00 × 100 = $700 > $600
     assert d.route == "stocks"
     assert "fall back to shares" in d.reason
@@ -75,12 +77,50 @@ def test_skip_when_neither_fits():
     per = OPT_PER_TRADE_MAX_USD
     for _ in range(int(OPT_WEEK_MAX_USD // per)):
         rb.register_entry("options", 100, per, today=t)
-    sig = Signal("NVDA", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
+    sig = Signal("SPY", "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
     d = route_signal(sig, rb)
     assert d.route == "skip"
 
 
 def test_naked_option_risk_within_cap_is_taken():
-    sig = Signal("INTC", "bull", "vol", price=20, atr=0.6, has_vol_edge=True, ivr=20)
+    sig = Signal("QQQ", "bull", "vol", price=20, atr=0.6, has_vol_edge=True, ivr=20)
     d = route_signal(sig, _rb(), option_premium=2.0)   # $200 risk < $500
     assert d.route == "options" and d.est_risk_usd == 200.0
+
+
+# ── Options underlying whitelist (operator 2026-09-11) ────────────────────────
+
+class TestOptionsWhitelist:
+    """Options are restricted to the most liquid index ETFs. The measured cost of
+    trading illiquid single-name options was 225bps of slippage (2026-06-04
+    dial-down), and every catastrophic loss in the stock ledger was single-name
+    gap risk an index can't have."""
+
+    def _vol_sig(self, sym):
+        return Signal(sym, "bull", "vol", price=120, atr=3, has_vol_edge=True, ivr=22)
+
+    def test_whitelisted_underlying_routes_to_options(self):
+        for sym in config.OPTIONS_UNDERLYINGS:
+            d = route_signal(self._vol_sig(sym), _rb())
+            assert d.route == "options", f"{sym} should be option-eligible"
+
+    def test_non_whitelisted_falls_back_to_shares_not_skip(self):
+        """A real directional edge must still trade — just in the cheaper vehicle.
+        Dropping it entirely would throw away signal, not risk."""
+        d = route_signal(self._vol_sig("NVDA"), _rb())
+        assert d.route == "stocks"
+        assert "whitelist" in d.reason
+
+    def test_whitelist_is_case_insensitive(self):
+        assert route_signal(self._vol_sig("spy"), _rb()).route == "options"
+
+    def test_empty_whitelist_disables_the_gate(self, monkeypatch):
+        monkeypatch.setattr(config, "OPTIONS_UNDERLYINGS", ())
+        assert route_signal(self._vol_sig("NVDA"), _rb()).route == "options"
+
+    def test_directional_only_signal_is_unaffected(self):
+        """§5 already sends no-vol-edge signals to shares; the whitelist must not
+        change the reason it reports."""
+        sig = Signal("SPY", "bull", "connors_rsi2", price=200, atr=4, has_vol_edge=False)
+        d = route_signal(sig, _rb())
+        assert d.route == "stocks" and "§5" in d.reason

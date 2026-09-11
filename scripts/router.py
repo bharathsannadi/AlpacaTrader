@@ -26,6 +26,7 @@ from typing import Optional
 
 from trade_signal import Signal
 from risk_brain import RiskBrain
+import config
 
 ATR_STOP_M = 2.0          # shares stop = 2×ATR (matches daily strategy)
 SPREADS_ENABLED = False   # 2S-B blocked — no validated spread harness yet
@@ -76,6 +77,15 @@ def route_signal(sig: Signal, rb: RiskBrain,
     # ── §5: directional-only edge → shares (cheapest vehicle) ──
     if not sig.has_vol_edge:
         return shares_decision("directional-only edge → shares (§5 cost hierarchy)")
+
+    # ── options underlying whitelist (operator 2026-09-11) ──
+    # Checked BEFORE structure selection so a non-whitelisted name never reaches
+    # the option path at all. A directional edge still trades — as shares.
+    _allowed = tuple(getattr(config, "OPTIONS_UNDERLYINGS", ()) or ())
+    if _allowed and sig.symbol.upper() not in _allowed:
+        return shares_decision(
+            f"{sig.symbol} not in the options whitelist {'/'.join(_allowed)} "
+            f"— directional edge expressed as shares")
 
     # ── §2: has a volatility edge → options, structure by IVR ──
     structure, why = _structure_for_ivr(sig.ivr, sig.direction)

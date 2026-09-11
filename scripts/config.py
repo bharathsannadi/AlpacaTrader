@@ -38,6 +38,23 @@ from __future__ import annotations
 # False. Daily cap stays at MAX_AUTO_EXEC_PER_DAY=2 while on probation.
 AUTO_EXEC_OPTIONS_ENABLED = True
 
+# ── Option underlyings whitelist (operator 2026-09-11) ───────────────────────
+# Options are restricted to the two most liquid index ETFs. Rationale, in the
+# order that matters:
+#   1. Liquidity. SPY/QQQ options are penny-wide with deep size at every strike.
+#      The single largest measured cost in this book was fill quality — the
+#      2026-06-04 dial-down logged 225bps of slippage on illiquid legs. On a
+#      single-name option a 5-10% spread is a 5-10% loss taken at entry, before
+#      the thesis gets a chance; KB §9 exists for exactly this.
+#   2. No idiosyncratic gap risk. An index can't miss earnings, get downgraded,
+#      or halt on a CEO headline. Every catastrophic loss in the stock ledger was
+#      single-name (SMCI -20.6%, ORCL -12.8%, COHR -11.4%).
+#   3. Diversification is built in, so position count stops masquerading as
+#      concentration the way it did in the 2026-06-23 all-semis wipeout.
+# An empty set disables the whitelist (all symbols eligible). Enforced in
+# router.route_signal, which is the single chokepoint both option lanes reach.
+OPTIONS_UNDERLYINGS = ("SPY", "QQQ")
+
 # ── Option caps (operator 2026-06-04) ────────────────────────────────────────
 OPT_HARD_MAX_USD      = 600.0     # HARD ceiling per option trade — ALL incl. ETFs
 OPT_HARD_MAX_USD_ETF  = 600.0     # ETFs capped at $600 too (was $1500)
