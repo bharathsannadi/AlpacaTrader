@@ -353,3 +353,34 @@ def test_cooldown_window_spans_observed_reentry_gaps():
     """The 5-day window caught ZERO of the 165 real closes — repeat-loser re-entries
     were spaced 7-14 days apart (ORCL 7x/-$1,355, NVDA 10x/-$543, INTC 5x/-$565)."""
     assert config.SYMBOL_COOLDOWN_WINDOW_DAYS >= 15
+
+
+# ── Stale-order sweep must not eat protective stops ───────────────────────────
+
+class TestReconcilerExemptsProtectiveStops:
+    """_reconcile_orders_positions cancels OPEN orders unfilled for >10 minutes,
+    to clean up entry orders whose fill timeout didn't fire. A protective stop is
+    unfilled and long-lived BY DESIGN and matched that rule exactly: on
+    2026-09-11 it cancelled all 8 protective stops, and had been silently killing
+    daily_trader's GTC stops since that path was written."""
+
+    def _order(self, otype):
+        return type("O", (), {"order_type": otype, "side": "sell",
+                              "symbol": "AAPL", "id": "x", "filled_qty": 0})()
+
+    @pytest.mark.parametrize("otype", ["stop", "OrderType.STOP", "stop_limit",
+                                       "trailing_stop"])
+    def test_stop_orders_are_protected(self, otype):
+        import app
+        assert app._is_protective_order(self._order(otype)) is True
+
+    @pytest.mark.parametrize("otype", ["limit", "market", "OrderType.LIMIT"])
+    def test_entry_orders_are_still_sweepable(self, otype):
+        import app
+        assert app._is_protective_order(self._order(otype)) is False
+
+    def test_missing_type_is_not_treated_as_protective(self):
+        """Fail toward the old behaviour rather than silently disabling the sweep
+        for orders we can't classify."""
+        import app
+        assert app._is_protective_order(type("O", (), {})()) is False

@@ -2722,6 +2722,22 @@ RECONCILE_INTERVAL_SEC = 300     # OB-4: run reconciliation every 5 min
 STALE_ORDER_MINUTES    = 10      # cancel an order left unfilled longer than this
 
 
+def _is_protective_order(o) -> bool:
+    """True for a resting protective STOP — an order that is SUPPOSED to sit
+    unfilled indefinitely.
+
+    The stale-order sweep below exists to clean up ENTRY orders whose fill
+    timeout didn't fire. A protective stop looks identical to it: unfilled, and
+    older than ten minutes within ten minutes of being placed. On 2026-09-11 the
+    sweep cancelled all 8 protective stops the moment they aged past the
+    threshold, and had been quietly doing the same to daily_trader's GTC stops
+    (place_entry_order) since that path was written — so positions believed to be
+    stop-protected were running naked. Identify by ORDER TYPE, not by who placed
+    it, so every lane's stops are covered."""
+    t = str(getattr(o, "order_type", None) or getattr(o, "type", "")).lower()
+    return "stop" in t or "trailing" in t
+
+
 def _reconcile_orders_positions() -> None:
     """OB-4 — state↔broker reconciliation (the gap that left a stale AMZN order open ~24h).
     (1) Cancel OPEN orders that have been unfilled > STALE_ORDER_MINUTES — restores the
@@ -2740,6 +2756,8 @@ def _reconcile_orders_positions() -> None:
         for o in c.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN)):
             try:
                 age_min = (now - o.created_at).total_seconds() / 60.0
+                if _is_protective_order(o):
+                    continue      # resting BY DESIGN — see _is_protective_order
                 if float(o.filled_qty or 0) == 0 and age_min > STALE_ORDER_MINUTES:
                     c.cancel_order_by_id(o.id)
                     _emit_log(f"⚠ RECONCILE: cancelled stale unfilled order {o.symbol} "
